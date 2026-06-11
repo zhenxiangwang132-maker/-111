@@ -1,0 +1,39 @@
+{
+  "openai": {
+    "apiKey": "sk-...",
+    "model": "gpt-4o-mini"
+  },
+  "deepseek": {
+    "apiKey": "sk-...",
+    "model": "deepseek-chat"
+  },
+  "doubao": {
+    "apiKey": "your-volcengine-ark-api-key",
+    "model": "your-doubao-endpoint-model-id"
+  },
+  "qwen": {
+    "apiKey": "sk-...",
+    "model": "qwen-plus"
+  },
+  "zhipu": {
+    "apiKey": "your-zhipu-api-key",
+    "model": "glm-4-flash"
+  },
+  "moonshot": {
+    "apiKey": "sk-...",
+    "model": "moonshot-v1-8k"
+  },
+  "siliconflow": {
+    "apiKey": "sk-...",
+    "model": "Qwen/Qwen2.5-7B-Instruct"
+  },
+  "codebuddy": {
+    "apiKey": "ck_...",
+    "model": "default"
+  },
+  "workbuddy": {
+    "apiKey": "optional-key",
+    "endpoint": "http://localhost:8000/v1/chat/completions",
+    "model": "custom-model"
+  }
+}

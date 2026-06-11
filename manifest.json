@@ -1,0 +1,17 @@
+{
+  "name": "小可课堂 · 投资看板",
+  "short_name": "小可课堂",
+  "description": "小可课堂视频素材、题材标的、AI分析和投研复盘看板",
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#101216",
+  "theme_color": "#101216",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "assets/xiaoke-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

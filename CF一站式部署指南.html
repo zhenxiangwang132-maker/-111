@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>抖音视频代理 — 一站式部署指南</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --card: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --text2: #8b949e;
+    --blue: #58a6ff;
+    --green: #3fb950;
+    --gold: #d2991d;
+    --orange: #f58025;
+    --red: #f85149;
+    --purple: #a371f7;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    line-height: 1.7;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 40px 24px;
+  }
+  h1 { font-size: 28px; margin-bottom: 6px; }
+  h1 span { font-size: 40px; margin-right: 8px; }
+  h2 { font-size: 20px; margin: 36px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  h3 { font-size: 16px; margin: 24px 0 10px; color: var(--blue); }
+  p { margin-bottom: 12px; color: var(--text2); }
+  strong { color: var(--text); }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    margin: 16px 0;
+  }
+  .step-number {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    font-weight: 700;
+    font-size: 15px;
+    margin-right: 10px;
+    flex-shrink: 0;
+  }
+  .step-1 { background: rgba(88,166,255,.15); color: var(--blue); }
+  .step-2 { background: rgba(245,128,37,.15); color: var(--orange); }
+  .step-3 { background: rgba(63,185,80,.15); color: var(--green); }
+  .step-4 { background: rgba(163,113,247,.15); color: var(--purple); }
+  .arrow { font-size: 28px; text-align: center; color: var(--text2); }
+  .url-box {
+    display: block;
+    background: rgba(88,166,255,.06);
+    border: 1px solid rgba(88,166,255,.2);
+    border-radius: 8px;
+    padding: 12px 16px;
+    color: var(--blue);
+    font-size: 14px;
+    word-break: break-all;
+    margin: 10px 0;
+    text-decoration: none;
+  }
+  .url-box:hover { background: rgba(88,166,255,.12); }
+  .copy-btn {
+    display: inline-block;
+    background: var(--blue);
+    color: #000;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 20px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    margin-top: 8px;
+  }
+  .copy-btn:hover { opacity: .85; }
+  .code-block {
+    background: #0d1117;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    overflow-x: auto;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    max-height: 500px;
+    overflow-y: auto;
+    position: relative;
+  }
+  .code-lang {
+    position: absolute;
+    top: 8px;
+    right: 16px;
+    font-size: 10px;
+    color: var(--text2);
+    text-transform: uppercase;
+  }
+  .demo-url {
+    background: rgba(63,185,80,.06);
+    border: 1px solid rgba(63,185,80,.2);
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin: 10px 0;
+    text-align: center;
+  }
+  .demo-url code {
+    display: block;
+    font-size: 14px;
+    color: var(--green);
+    word-break: break-all;
+    margin-bottom: 8px;
+  }
+  .flow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin: 20px 0;
+    font-size: 13px;
+  }
+  .flow-box {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 16px;
+    text-align: center;
+    white-space: nowrap;
+  }
+  .flow-arrow { color: var(--text2); font-size: 20px; }
+  .fail { color: var(--red); text-decoration: line-through; }
+  .ok   { color: var(--green); }
+  .highlight { color: var(--orange); font-weight: 700; }
+  .screenshot-placeholder {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 40px 20px;
+    text-align: center;
+    color: var(--text2);
+    font-size: 12px;
+    margin: 12px 0;
+    position: relative;
+  }
+  .screenshot-placeholder .indicator {
+    position: absolute;
+    border: 2px solid var(--orange);
+    border-radius: 4px;
+    pointer-events: none;
+  }
+  .nav-hint {
+    background: rgba(245,128,37,.08);
+    border-left: 3px solid var(--orange);
+    padding: 10px 14px;
+    margin: 10px 0;
+    font-size: 13px;
+    color: var(--text2);
+    border-radius: 0 8px 8px 0;
+  }
+  .valign { display: flex; align-items: center; gap: 10px; }
+  ul { margin: 8px 0; padding-left: 24px; color: var(--text2); }
+  li { margin-bottom: 6px; }
+</style>
+</head>
+<body>
+
+<h1><span>📺</span>抖音视频代理 — 一站式部署指南</h1>
+<p>这篇文章告诉你：<strong>为什么看不了抖音视频 + 怎么解决 + 完整操作步骤（带图）</strong></p>
+
+<!-- ============ 问题 ============ -->
+<h2>🔍 为什么抖音视频播不了？</h2>
+
+<p>你在看板里贴了抖音分享链接，点击播放显示 ❌。根本原因是<strong>两层限制</strong>：</p>
+
+<div class="flow">
+  <div class="flow-box" style="border-color:var(--red)">🔗 抖音链接<br><small>有防盗链/CORS</small></div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-box" style="border-color:var(--red)">🖥️ 浏览器直接播放<br><small class="fail">被拦截 ❌</small></div>
+</div>
+
+<p>需要一个<strong>"中间人"</strong>帮你去抖音拿视频，再传给浏览器：</p>
+
+<div class="flow">
+  <div class="flow-box" style="border-color:var(--green)">📺 浏览器<br><small>你的看板</small></div>
+  <div class="flow-arrow">→ 请求 →</div>
+  <div class="flow-box" style="border-color:var(--blue)">☁️ 代理服务器<br><small>CF Worker</small></div>
+  <div class="flow-arrow">→ 抓取 →</div>
+  <div class="flow-box" style="border-color:var(--text2)">🎵 抖音<br><small>视频源</small></div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-box" style="border-color:var(--green)">✅ 正常播放</div>
+</div>
+
+<p>之前的方案用 <strong>Vercel</strong> 做"中间人"，但 Vercel 免费版有 <strong class="highlight">4MB 限制</strong>，抖音视频基本都超了。</p>
+<p>现在换 <strong>Cloudflare Workers</strong>：<span class="ok">免费、不限大小、全球加速</span>。</p>
+
+<!-- ============ 总览 ============ -->
+<h2>🗺️ 总体流程（4 步，3 分钟）</h2>
+
+<div class="card">
+  <div class="valign"><span class="step-number step-1">1</span> <strong>复制代码</strong> — 点一下按钮，代码就进剪贴板了</div>
+  <div class="valign" style="margin-top:12px"><span class="step-number step-2">2</span> <strong>打开 Cloudflare</strong> — 你已登录，点链接直达创建页面</div>
+  <div class="valign" style="margin-top:12px"><span class="step-number step-3">3</span> <strong>粘贴 + 部署</strong> — Ctrl+V 粘贴代码 → 点右上角「部署」</div>
+  <div class="valign" style="margin-top:12px"><span class="step-number step-4">4</span> <strong>配置看板</strong> — 复制得到的 URL → 在看板 ⚙️ 里粘贴 → 完成 ✅</div>
+</div>
+
+<!-- ============ 第1步 ============ -->
+<h2><span class="step-number step-1">1</span> 复制代理代码</h2>
+<p>点击下方按钮，代码会自动复制到剪贴板（90行，不需要你手动全选）。</p>
+
+<div class="code-block" id="workerCode">
+  <div class="code-lang">JavaScript</div>
+</div>
+
+<script>
+// 把原始代码塞进代码块
+const code = `/**\n * Cloudflare Workers — 抖音视频代理\n * \n * 直接部署：复制代码到 Cloudflare Dashboard → Workers → 创建 → 粘贴 → 部署\n * 或使用 wrangler 命令行：npx wrangler deploy\n * \n * 特点：无响应大小限制，全球CDN节点，免费100万次/天\n */\n\nexport default {\n  async fetch(request, env, ctx) {\n    const url = new URL(request.url);\n    const shareUrl = url.searchParams.get('url');\n\n    // CORS 预检\n    if (request.method === 'OPTIONS') {\n      return new Response(null, {\n        headers: {\n          'Access-Control-Allow-Origin': '*',\n          'Access-Control-Allow-Methods': 'GET, OPTIONS',\n          'Access-Control-Allow-Headers': '*',\n          'Access-Control-Max-Age': '86400',\n        }\n      });\n    }\n\n    if (!shareUrl) {\n      return new Response('Missing ?url= parameter', { \n        status: 400,\n        headers: { 'Access-Control-Allow-Origin': '*' }\n      });\n    }\n\n    // ====== Step 1: 解析抖音链接 ======\n    const parseApis = [\n      async () => {\n        const r = await fetch(\\`https://tenapi.cn/v2/videodown?url=\\${encodeURIComponent(shareUrl)}\\`);\n        const d = await r.json();\n        if (d.code === 200 && d.data && d.data.url) return d.data.url;\n        throw new Error('tenapi');\n      },\n      async () => {\n        const r = await fetch(\\`https://api.pearktrue.cn/api/video/douyin/?url=\\${encodeURIComponent(shareUrl)}\\`);\n        const d = await r.json();\n        if (d.code === 200 && d.data && d.data.video_url) return d.data.video_url;\n        throw new Error('pearktrue');\n      },\n      async () => {\n        const r = await fetch(\\`https://api.douyin.wtf/api?url=\\${encodeURIComponent(shareUrl)}\\`);\n        const d = await r.json();\n        if (d.video_data && d.video_data.nwm_video_url) return d.video_data.nwm_video_url;\n        throw new Error('douyinwtf');\n      }\n    ];\n\n    let videoUrl = null;\n    for (const fn of parseApis) {\n      try { videoUrl = await fn(); break; } catch(e) { continue; }\n    }\n\n    if (!videoUrl) {\n      return new Response('All parse APIs failed', {\n        status: 502,\n        headers: { 'Access-Control-Allow-Origin': '*' }\n      });\n    }\n\n    // ====== Step 2: 下载 + 流式转发 ======\n    // Cloudflare Workers 无响应大小限制，支持流式传输\n    try {\n      const videoResp = await fetch(videoUrl, {\n        headers: {\n          'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15',\n          'Referer': 'https://www.douyin.com/',\n          'Accept': '*/*',\n        },\n        redirect: 'follow',\n      });\n\n      if (!videoResp.ok) {\n        return new Response(\\`Video fetch failed: HTTP \\${videoResp.status}\\`, {\n          status: 502,\n          headers: { 'Access-Control-Allow-Origin': '*' }\n        });\n      }\n\n      const headers = new Headers();\n      headers.set('Access-Control-Allow-Origin', '*');\n      headers.set('Content-Type', videoResp.headers.get('Content-Type') || 'video/mp4');\n      headers.set('Cache-Control', 'public, max-age=3600');\n      headers.set('Accept-Ranges', 'bytes');\n      \n      const contentLength = videoResp.headers.get('Content-Length');\n      if (contentLength) headers.set('Content-Length', contentLength);\n\n      // 直接流式转发（passthrough），不缓冲整个视频\n      return new Response(videoResp.body, {\n        status: 200,\n        headers\n      });\n\n    } catch (e) {\n      return new Response('Stream error: ' + e.message, {\n        status: 500,\n        headers: { 'Access-Control-Allow-Origin': '*' }\n      });\n    }\n  }\n};`;
+
+// 转义反引号用于模板字符串显示
+const display = code.replace(/`/g, '&#96;');
+document.getElementById('workerCode').innerHTML = `<pre style="margin:0;white-space:pre-wrap;word-break:break-all">${display}</pre>` + document.getElementById('workerCode').innerHTML;
+</script>
+
+<button class="copy-btn" onclick="navigator.clipboard.writeText(document.querySelector('#workerCode pre').textContent); this.textContent='✅ 已复制！'; setTimeout(()=>this.textContent='📋 一键复制代码',1500)">📋 一键复制代码</button>
+
+<!-- ============ 第2步 ============ -->
+<h2><span class="step-number step-2">2</span> 打开 Cloudflare 创建 Worker</h2>
+
+<div class="card">
+  <p style="margin-bottom:8px">你已经在浏览器里登录了 Cloudflare。<br>现在<strong>点下面这个链接</strong>，会直接打开创建 Worker 的页面：</p>
+  <a class="url-box" href="https://dash.cloudflare.com/workers-and-pages/create/worker" target="_blank">
+    👉 https://dash.cloudflare.com/workers-and-pages/create/worker
+  </a>
+
+  <div class="nav-hint">
+    <strong>💡 如果上面链接打不开，手动操作：</strong><br>
+    左侧菜单 → 「Workers 和 Pages」→ 右上角蓝色按钮「创建应用程序」→ 选择「创建 Worker」
+  </div>
+
+  <p style="margin-top:12px">点完后你会看到下面这样的代码编辑器界面：</p>
+
+  <div class="screenshot-placeholder" style="height:250px;position:relative">
+    <div style="font-size:40px;margin-bottom:8px">🖥️</div>
+    <div style="font-weight:700;color:var(--text);margin-bottom:4px">Cloudflare Worker 编辑器</div>
+    <div>屏幕中央是一个代码编辑器，里面有几行默认代码</div>
+    <div style="position:absolute;top:16px;right:100px;border:2px solid var(--orange);border-radius:6px;width:60px;height:28px;background:rgba(245,128,37,.15)"></div>
+    <div style="position:absolute;top:55px;right:55px;font-size:10px;color:var(--orange)">← 「部署」按钮</div>
+    <div style="position:absolute;top:unset;bottom:60px;left:60px;right:60px;border:2px solid var(--blue);border-radius:6px;height:80px;background:rgba(88,166,255,.05)"></div>
+    <div style="position:absolute;bottom:38px;left:120px;font-size:10px;color:var(--blue)">↑ 代码编辑区（全选删除，粘贴新代码）</div>
+  </div>
+
+  <ul>
+    <li><strong>全选</strong>编辑器里的默认代码（Ctrl+A）</li>
+    <li><strong>粘贴</strong>（Ctrl+V）上一步复制的代码</li>
+    <li>代码替换完成后，点右上角蓝色<strong>「部署」</strong>按钮</li>
+  </ul>
+</div>
+
+<!-- ============ 第3步 ============ -->
+<h2><span class="step-number step-3">3</span> 部署后你会得到一个 URL</h2>
+
+<div class="card">
+  <p>部署成功后，页面会跳转。你会看到类似这样的地址：</p>
+  <div class="demo-url">
+    <code>https://douyin-proxy.xxxxx.workers.dev</code>
+    <small style="color:var(--text2)">（xxxxx 是你的 Cloudflare 子域名，每个人不一样）</small>
+  </div>
+  <p>把这个 URL <strong>完整复制下来</strong>（包括 https://），下一步要用。</p>
+</div>
+
+<!-- ============ 第4步 ============ -->
+<h2><span class="step-number step-4">4</span> 配置到看板</h2>
+
+<div class="card">
+  <p>最后一步，告诉看板你的代理地址：</p>
+
+  <ol style="padding-left:24px;color:var(--text2)">
+    <li>打开看板 👉 <a href="https://mmapp-two.vercel.app" target="_blank" style="color:var(--blue)">mmapp-two.vercel.app</a></li>
+    <li>左侧点 <strong>🎬 视频</strong></li>
+    <li>顶部点 <strong>⚙️</strong> 齿轮图标</li>
+    <li>在输入框里 <strong>粘贴</strong> 刚才复制的 Worker URL</li>
+    <li>点 <strong>💾 保存</strong></li>
+    <li>视频库头部出现 <span style="background:rgba(245,128,37,.2);color:#f58025;padding:2px 6px;border-radius:4px;font-size:11px">☁️ CF</span> 就说明配置成功了！</li>
+  </ol>
+
+  <div class="screenshot-placeholder" style="height:180px;display:flex;flex-direction:column;align-items:center;justify-content:center">
+    <div style="font-size:32px;margin-bottom:8px">⚙️</div>
+    <div style="font-weight:700;color:var(--text);margin-bottom:4px">CF Worker 配置弹窗</div>
+    <div style="background:rgba(88,166,255,.08);border:1px solid rgba(88,166,255,.2);border-radius:6px;padding:6px 16px;margin-top:8px;font-size:12px;color:var(--blue)">
+      https://douyin-proxy.xxxxx.workers.dev
+    </div>
+    <div style="font-size:10px;color:var(--text2);margin-top:6px">↑ 把你第3步复制的URL粘贴到这里</div>
+  </div>
+</div>
+
+<!-- ============ 之后 ============ -->
+<h2>✅ 配置完成后</h2>
+<p>再回到 🎬 视频库，导入抖音链接，点击卡片播放：</p>
+<ul>
+  <li>播放器左上角显示 <strong style="color:var(--orange)">☁️ CF代理（不限大小）</strong> </li>
+  <li>任意大小的抖音视频都能播 🎉</li>
+</ul>
+
+<!-- ============ 检查 ============ -->
+<h2>❓ 怎么检查是否配置成功？</h2>
+<p>看视频库页面的标题栏：</p>
+<table style="width:100%;border-collapse:collapse;font-size:13px;margin:10px 0">
+  <tr style="background:var(--card)">
+    <td style="padding:8px 12px;border:1px solid var(--border);color:var(--text2)">⚙️未配CF</td>
+    <td style="padding:8px 12px;border:1px solid var(--border);color:var(--red)">还没配置，抖音长视频无法播放</td>
+  </tr>
+  <tr>
+    <td style="padding:8px 12px;border:1px solid var(--border);color:var(--orange);font-weight:700">☁️ CF</td>
+    <td style="padding:8px 12px;border:1px solid var(--border);color:var(--green)">配置成功，所有抖音视频都能播</td>
+  </tr>
+</table>
+
+<div class="card" style="border-color:rgba(63,185,80,.3);background:rgba(63,185,80,.03)">
+  <p style="color:var(--green);text-align:center;font-size:14px;margin:0"><strong>📋 总结</strong><br>
+  复制代码 → 打开 CF → 粘贴部署 → 复制 URL → 在看板 ⚙️ 配置<br>
+  <span style="font-size:12px;color:var(--text2)">3分钟搞定，一次配置，永久生效</span></p>
+</div>
+
+<script>
+document.querySelector('.copy-btn').addEventListener('click', function() {
+  const pre = document.querySelector('#workerCode pre');
+  const text = pre.textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    this.textContent = '✅ 已复制到剪贴板！';
+    setTimeout(() => { this.textContent = '📋 一键复制代码'; }, 2000);
+  });
+});
+</script>
+
+</body>
+</html>

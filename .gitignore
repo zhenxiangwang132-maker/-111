@@ -1,0 +1,36 @@
+.vercel
+agent-config.json
+node_modules/
+__pycache__/
+*.pyc
+
+# Local private data / runtime state
+agent_memory.json
+agent_call_logs.json
+announcement_cache.json
+documents_metadata.json
+douyin_metadata.json
+ocr_titles.json
+qmt_bridge_codes.json
+qmt_bridge_quotes.json
+stock_profiles.json
+video_data_export.json
+video-folders.txt
+
+# Local media and generated caches
+videos/
+documents/
+transcripts/
+announcements/
+ocr_frames/
+restore_snapshots/
+douyin_edge_profile/
+.tmp_ocr_frame*
+tmp_*
+verification-*.png
+
+# Deployment and tool output
+vercel_out.txt
+deploy_log.txt
+agent-dropdown-*.png
+agent-dropdown-*.json
