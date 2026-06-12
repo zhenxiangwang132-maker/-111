@@ -5326,6 +5326,205 @@ async function fetchDouyinReplyPage(awemeId, commentId, cursor = 0, count = 20) 
   return fetchDouyinJson(url, `https://www.douyin.com/video/${awemeId}`);
 }
 
+function debugJsonRequest(method, url) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(url, { method }, res => {
+      let body = "";
+      res.on("data", chunk => body += chunk);
+      res.on("end", () => {
+        try {
+          resolve(JSON.parse(body || "{}"));
+        } catch (error) {
+          reject(new Error(`CDP response is not JSON: ${body.slice(0, 120)}`));
+        }
+      });
+    });
+    req.setTimeout(8000, () => req.destroy(new Error("CDP request timed out")));
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+async function ensureDouyinDebugBrowser() {
+  try {
+    await debugJsonRequest("GET", "http://127.0.0.1:9222/json/version");
+    return;
+  } catch {
+    const edgePath = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
+    const profileDir = path.join(ROOT, "douyin_edge_profile");
+    fs.mkdirSync(profileDir, { recursive: true });
+    const child = spawn(edgePath, [
+      "--remote-debugging-port=9222",
+      `--user-data-dir=${profileDir}`,
+      "--no-first-run",
+      "--new-window",
+      "https://www.douyin.com"
+    ], { detached: true, stdio: "ignore" });
+    child.unref();
+    for (let i = 0; i < 20; i += 1) {
+      try {
+        await debugJsonRequest("GET", "http://127.0.0.1:9222/json/version");
+        return;
+      } catch {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+    throw new Error("无法连接抖音专用浏览器，请先点“打开登录窗口/导出Cookies”。");
+  }
+}
+
+function cdpSession(webSocketDebuggerUrl) {
+  const WebSocketImpl = global.WebSocket || require("ws");
+  const ws = new WebSocketImpl(webSocketDebuggerUrl);
+  let seq = 1;
+  const pending = new Map();
+  const listeners = [];
+  ws.onmessage = event => {
+    const data = JSON.parse(event.data);
+    if (data.id && pending.has(data.id)) {
+      pending.get(data.id)(data);
+      pending.delete(data.id);
+      return;
+    }
+    listeners.forEach(fn => fn(data));
+  };
+  const opened = new Promise((resolve, reject) => {
+    ws.onopen = resolve;
+    ws.onerror = reject;
+  });
+  return {
+    async send(method, params = {}) {
+      await opened;
+      const id = seq++;
+      ws.send(JSON.stringify({ id, method, params }));
+      return new Promise(resolve => pending.set(id, resolve));
+    },
+    onEvent(fn) {
+      listeners.push(fn);
+    },
+    close() {
+      try { ws.close(); } catch {}
+    }
+  };
+}
+
+async function getDouyinDebugPage(videoUrl) {
+  await ensureDouyinDebugBrowser();
+  try {
+    const target = await debugJsonRequest("PUT", `http://127.0.0.1:9222/json/new?${encodeURIComponent(videoUrl)}`);
+    if (target && target.webSocketDebuggerUrl) return target;
+  } catch {
+    // Some Edge builds disable /json/new; fall through to an existing tab.
+  }
+  const tabs = await debugJsonRequest("GET", "http://127.0.0.1:9222/json");
+  const page = (Array.isArray(tabs) ? tabs : []).find(tab => tab.type === "page" && tab.webSocketDebuggerUrl)
+    || (Array.isArray(tabs) ? tabs : []).find(tab => tab.webSocketDebuggerUrl);
+  if (!page) throw new Error("没有找到可控制的抖音浏览器页面。");
+  return page;
+}
+
+function collectDouyinCommentsFromPayload(payload, ownerNames = [], bucket) {
+  const rows = Array.isArray(payload.comments) ? payload.comments : [];
+  rows.forEach(row => {
+    const normalized = stableNormalizeDouyinComment(row, ownerNames);
+    if (!normalized.text) return;
+    if (!bucket.comments.some(item => item.id && item.id === normalized.id)) bucket.comments.push(normalized);
+  });
+}
+
+async function stableGetDouyinCommentsViaBrowser(shareUrl, options = {}, meta = {}) {
+  const limit = Math.max(1, Math.min(200, Number(options.limit || 50)));
+  const awemeId = meta.awemeId || extractDouyinIdFromText(shareUrl);
+  const videoUrl = awemeId ? `https://www.douyin.com/video/${awemeId}` : shareUrl;
+  const ownerNames = meta.ownerNames || [];
+  const page = await getDouyinDebugPage(videoUrl);
+  const cdp = cdpSession(page.webSocketDebuggerUrl);
+  const bucket = { comments: [], interactions: [] };
+
+  cdp.onEvent(async event => {
+    if (event.method !== "Network.responseReceived") return;
+    const response = event.params && event.params.response ? event.params.response : {};
+    const url = response.url || "";
+    if (!/\/aweme\/v1\/web\/comment\/list\//.test(url)) return;
+    try {
+      const bodyResult = await cdp.send("Network.getResponseBody", { requestId: event.params.requestId });
+      const payload = JSON.parse(bodyResult.result ? bodyResult.result.body : bodyResult.body || "{}");
+      collectDouyinCommentsFromPayload(payload, ownerNames, bucket);
+    } catch {
+      // Network bodies may expire quickly; DOM fallback below still runs.
+    }
+  });
+
+  try {
+    await cdp.send("Page.enable");
+    await cdp.send("Network.enable");
+    await cdp.send("Runtime.enable");
+    await cdp.send("Page.navigate", { url: videoUrl });
+    await new Promise(resolve => setTimeout(resolve, 6000));
+    for (let i = 0; i < 8 && bucket.comments.length < limit; i += 1) {
+      await cdp.send("Runtime.evaluate", {
+        expression: `
+          (() => {
+            const scrollers = Array.from(document.querySelectorAll('[class*=comment], [data-e2e*=comment], div')).filter(el => el.scrollHeight > el.clientHeight + 80);
+            const target = scrollers.sort((a,b) => b.scrollHeight - a.scrollHeight)[0] || document.scrollingElement;
+            target.scrollTop = target.scrollTop + Math.max(400, target.clientHeight || 600);
+            window.scrollBy(0, 500);
+            return true;
+          })()
+        `,
+        awaitPromise: true
+      });
+      await new Promise(resolve => setTimeout(resolve, 1200));
+    }
+
+    if (!bucket.comments.length) {
+      const domResult = await cdp.send("Runtime.evaluate", {
+        expression: `
+          (() => Array.from(document.querySelectorAll('[data-e2e*=comment], [class*=comment]')).slice(0, 80).map((el, idx) => ({
+            id: 'dom_' + idx,
+            text: (el.innerText || '').trim(),
+            likes: Number(((el.innerText || '').match(/(\\d+)\\s*(赞|like)/i) || [0,0])[1] || 0)
+          })).filter(x => x.text && x.text.length > 3))()
+        `,
+        returnByValue: true
+      });
+      const value = domResult.result && domResult.result.result ? domResult.result.result.value : [];
+      (Array.isArray(value) ? value : []).forEach(row => {
+        bucket.comments.push({
+          id: row.id,
+          user: "@页面评论",
+          text: String(row.text || "").slice(0, 500),
+          likes: Number(row.likes || 0),
+          time: "",
+          region: "",
+          replyCount: 0,
+          isAuthor: false
+        });
+      });
+    }
+  } finally {
+    cdp.close();
+  }
+
+  const sorted = bucket.comments
+    .sort((a, b) => Number(b.likes || 0) - Number(a.likes || 0))
+    .slice(0, limit);
+  const interactions = sorted.filter(row => row.isAuthor).slice(0, 30);
+  if (!sorted.length) {
+    throw new Error("浏览器页面也没有抓到评论。请在专用抖音窗口手动打开该视频并确认评论区可见，没有验证码后再试。");
+  }
+  return {
+    awemeId,
+    title: meta.title || "",
+    author: ownerNames[0] || "",
+    comments: sorted.slice(0, 50),
+    interactions,
+    source: "抖音专用浏览器页面 / Network+DOM",
+    fetchedAt: new Date().toISOString(),
+    cookieReady: hasUsableDouyinCookies()
+  };
+}
+
 async function stableGetDouyinComments(shareUrl, options = {}) {
   const limit = Math.max(1, Math.min(200, Number(options.limit || 50)));
   const info = await stableDouyinInfo(shareUrl);
@@ -5336,13 +5535,21 @@ async function stableGetDouyinComments(shareUrl, options = {}) {
   const comments = [];
   let cursor = 0;
   let hasMore = true;
-  for (let page = 0; page < 4 && comments.length < limit && hasMore; page += 1) {
-    const data = await fetchDouyinCommentPage(awemeId, cursor, Math.min(50, limit - comments.length));
-    const raw = Array.isArray(data.comments) ? data.comments : [];
-    comments.push(...raw.map(row => stableNormalizeDouyinComment(row, ownerNames)).filter(row => row.text));
-    cursor = Number(data.cursor || data.next_cursor || 0);
-    hasMore = !!data.has_more && raw.length > 0;
-    if (hasMore) await new Promise(resolve => setTimeout(resolve, 900));
+  try {
+    for (let page = 0; page < 4 && comments.length < limit && hasMore; page += 1) {
+      const data = await fetchDouyinCommentPage(awemeId, cursor, Math.min(50, limit - comments.length));
+      const raw = Array.isArray(data.comments) ? data.comments : [];
+      comments.push(...raw.map(row => stableNormalizeDouyinComment(row, ownerNames)).filter(row => row.text));
+      cursor = Number(data.cursor || data.next_cursor || 0);
+      hasMore = !!data.has_more && raw.length > 0;
+      if (hasMore) await new Promise(resolve => setTimeout(resolve, 900));
+    }
+  } catch (error) {
+    return stableGetDouyinCommentsViaBrowser(shareUrl, options, {
+      awemeId,
+      ownerNames,
+      title: info.title || info.fulltitle || ""
+    });
   }
 
   const sorted = comments
@@ -5405,9 +5612,13 @@ function buildDouyinCaptureStatus() {
   const side = readDouyinSideData();
   const sync = readDouyinSyncState();
   const cookieJob = readDouyinCookieJob();
+  const cookieInfo = readDouyinCookieInfo();
   return {
     success: true,
-    cookiesReady: hasUsableDouyinCookies(),
+    cookiesReady: cookieInfo.exists,
+    cookiesLoginReady: cookieInfo.loginReady,
+    cookieCount: cookieInfo.count,
+    cookieLoginNames: cookieInfo.loginNames,
     cookiesFile: COOKIES_FILE,
     sideDataFile: DOUYIN_SIDE_DATA_FILE,
     savedCommentVideos: Object.keys(side.comments || {}).length,
@@ -5433,10 +5644,36 @@ function hasUsableDouyinCookies() {
   if (!fs.existsSync(COOKIES_FILE)) return false;
   try {
     const text = fs.readFileSync(COOKIES_FILE, "utf8");
-    return /(^|\s)(sessionid|sid_guard|uid_tt|passport_csrf_token)\s/i.test(text)
-      || (/douyin/i.test(text) && text.length > 500);
+    return parseDouyinCookieInfo(text).loginReady;
   } catch {
     return false;
+  }
+}
+
+function parseDouyinCookieInfo(text = "") {
+  const names = [];
+  String(text || "").split(/\r?\n/).forEach(line => {
+    if (!line || line.startsWith("#")) return;
+    const parts = line.split("\t");
+    const name = parts.length >= 7 ? parts[5] : (line.match(/(?:^|;\s*)([^=\s;]+)=/) || [])[1];
+    if (name && !names.includes(name)) names.push(name);
+  });
+  const loginNames = names.filter(name => /^(sessionid|sessionid_ss|sid_guard|sid_tt|uid_tt|uid_tt_ss|passport_auth_status|n_mh)$/i.test(name));
+  return {
+    exists: !!String(text || "").trim(),
+    count: names.length,
+    names: names.slice(0, 30),
+    loginNames,
+    loginReady: loginNames.length > 0
+  };
+}
+
+function readDouyinCookieInfo() {
+  if (!fs.existsSync(COOKIES_FILE)) return parseDouyinCookieInfo("");
+  try {
+    return parseDouyinCookieInfo(fs.readFileSync(COOKIES_FILE, "utf8"));
+  } catch {
+    return parseDouyinCookieInfo("");
   }
 }
 
@@ -6229,11 +6466,16 @@ const server = http.createServer((req, res) => {
     if (!isDouyinUrl(shareUrl)) return sendJson(res, 400, { success: false, error: "This is not a Douyin link." });
     stableGetDouyinCommentsAndPersist(shareUrl, { limit, videoId })
       .then(result => sendJson(res, 200, { success: true, ...result }))
-      .catch(error => sendJson(res, 502, {
-        success: false,
-        error: compactDouyinError(error),
-        hint: "Douyin may require a fresh logged-in cookie. Open Douyin in Edge, run export-douyin-cookies.js or 导出抖音Cookies.bat, then retry."
-      }));
+      .catch(error => {
+        const detail = String(error && error.message ? error.message : error || "").replace(/\s+/g, " ").slice(0, 600);
+        sendJson(res, 502, {
+          success: false,
+          error: compactDouyinError(error),
+          detail,
+          status: buildDouyinCaptureStatus(),
+          hint: "Douyin comments require a real logged-in browser session. If cookiesLoginReady is false, open the dedicated Douyin login window and finish login/verification, then retry."
+        });
+      });
     return;
   }
 

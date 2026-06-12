@@ -53,7 +53,7 @@ function toNetscapeCookie(cookie) {
 }
 
 function isLoggedInCookie(cookie) {
-  return /^(sessionid|sid_guard|uid_tt|passport_csrf_token|passport_auth_status|n_mh)$/i.test(cookie.name || "");
+  return /^(sessionid|sessionid_ss|sid_guard|sid_tt|uid_tt|uid_tt_ss|passport_auth_status|n_mh)$/i.test(cookie.name || "");
 }
 
 async function getDebugVersion() {

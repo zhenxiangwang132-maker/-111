@@ -13284,8 +13284,10 @@ async function pollDouyinCookieStatus(forceRender = false) {
   if (status && !status.cookiesReady && status.cookieJob && status.cookieJob.status === "running") {
     clearTimeout(state.douyinCookieTimer);
     state.douyinCookieTimer = setTimeout(() => pollDouyinCookieStatus(true), 3500);
-  } else if (status && status.cookiesReady) {
+  } else if (status && status.cookiesLoginReady) {
     showToast("抖音 cookies 已就绪，可以抓高赞评论和博主互动了");
+  } else if (status && status.cookiesReady) {
+    showToast("只检测到普通抖音 cookies，还没有有效登录态；请在专用抖音窗口完成登录/验证码。");
   }
 }
 
@@ -13293,8 +13295,10 @@ function xiaokeDouyinStatusHtml() {
   const job = state.douyinSyncJob || (state.douyinCaptureStatus && state.douyinCaptureStatus.sync) || null;
   const status = state.douyinCaptureStatus || null;
   if ((!job || !job.status || job.status === "idle") && status) {
-    const cookieText = status.cookiesReady ? "cookies 已就绪" : "未检测到 cookies.txt，自动抓评论/互动可能失败";
-    const tone = status.cookiesReady ? "var(--green)" : "var(--gold)";
+    const cookieText = status.cookiesLoginReady
+      ? "登录 cookies 已就绪"
+      : (status.cookiesReady ? "只有普通 cookies，缺少登录态/可能仍有验证码" : "未检测到 cookies.txt，自动抓评论/互动可能失败");
+    const tone = status.cookiesLoginReady ? "var(--green)" : "var(--gold)";
     const cookieJob = status.cookieJob || {};
     const jobText = cookieJob.status && cookieJob.status !== "idle" ? ` · ${escapeHtml(cookieJob.status)}：${escapeHtml(cookieJob.message || "")}` : "";
     return `<section class="panel" style="border-color:${tone};margin-bottom:12px">
@@ -13304,11 +13308,11 @@ function xiaokeDouyinStatusHtml() {
           <div class="date">${escapeHtml(cookieText)} · 已保存评论 ${Number(status.savedCommentVideos || 0)} 条视频 · 已保存互动 ${Number(status.savedInteractionVideos || 0)} 条视频${jobText}</div>
         </div>
         <div class="review-actions">
-          ${status.cookiesReady ? "" : `<button class="small-btn" onclick="startDouyinCookieLogin()">打开登录窗口/导出Cookies</button>`}
+          ${status.cookiesLoginReady ? "" : `<button class="small-btn" onclick="startDouyinCookieLogin()">打开登录窗口/导出Cookies</button>`}
           <button class="small-btn" onclick="pollDouyinCookieStatus(true)">刷新状态</button>
         </div>
       </div>
-      <div class="date">注意：这里需要项目打开的“专用抖音窗口”登录；普通浏览器标签已登录，不一定能被本地脚本读取。</div>
+      <div class="date">注意：这里需要项目打开的“专用抖音窗口”登录并完成验证码；普通浏览器标签已登录，不一定能被本地脚本读取。当前 cookie 数：${Number(status.cookieCount || 0)}，登录字段：${escapeHtml((status.cookieLoginNames || []).join(", ") || "无")}。</div>
     </section>`;
   }
   if (!job || !job.status || job.status === "idle") return "";
@@ -13381,14 +13385,14 @@ async function fetchCurrentVideoComments() {
     return;
   }
   const status = await xiaokeFetchDouyinStatus(true);
-  if (status && !status.cookiesReady) {
-    showToast("未检测到 cookies.txt，会先尝试公开接口；失败后请先导出抖音 cookies");
+  if (status && !status.cookiesLoginReady) {
+    showToast("未检测到有效登录 cookies。会尝试浏览器兜底；失败时请打开登录窗口并完成验证码/登录。");
   }
   showToast("正在抓取抖音高赞评论/博主互动，可能需要几十秒...");
   try {
     const response = await fetch("/api/douyin-comments?limit=80&videoId=" + encodeURIComponent(video.id) + "&url=" + encodeURIComponent(url));
     const data = await response.json().catch(() => ({}));
-    if (!response.ok || !data.success) throw new Error([data.error, data.hint].filter(Boolean).join(" | ") || "抓取失败");
+    if (!response.ok || !data.success) throw new Error([data.error, data.detail, data.hint].filter(Boolean).join(" | ") || "抓取失败");
     const commentsStore = finalReadVideoSideData("xiaoke_video_hot_comments_v1");
     const interactionsStore = finalReadVideoSideData("xiaoke_video_author_interactions_v1");
     commentsStore[video.id] = (data.comments || []).slice(0, 50);
