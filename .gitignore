@@ -10,6 +10,10 @@ agent_call_logs.json
 announcement_cache.json
 documents_metadata.json
 douyin_metadata.json
+douyin_side_data.json
+douyin_sync_state.json
+server.out.log
+server.err.log
 ocr_titles.json
 qmt_bridge_codes.json
 qmt_bridge_quotes.json

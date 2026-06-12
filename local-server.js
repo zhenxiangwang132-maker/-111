@@ -13,6 +13,8 @@ const LEGACY_VIDEOS_DIR = path.resolve(ROOT, "..", "videos");
 const VIDEO_FOLDERS_FILE = path.join(ROOT, "video-folders.txt");
 const COOKIES_FILE = path.join(ROOT, "cookies.txt");
 const METADATA_FILE = path.join(ROOT, "douyin_metadata.json");
+const DOUYIN_SIDE_DATA_FILE = path.join(ROOT, "douyin_side_data.json");
+const DOUYIN_SYNC_STATE_FILE = path.join(ROOT, "douyin_sync_state.json");
 const AGENT_CONFIG_FILE = path.join(ROOT, "agent-config.json");
 const AGENT_MEMORY_FILE = path.join(ROOT, "agent_memory.json");
 const AGENT_LOG_FILE = path.join(ROOT, "agent_call_logs.json");
@@ -5165,6 +5167,346 @@ async function saveDouyin(shareUrl) {
   };
 }
 
+function readDouyinSideData() {
+  try {
+    if (!fs.existsSync(DOUYIN_SIDE_DATA_FILE)) return { comments: {}, interactions: {}, updatedAt: "" };
+    const data = JSON.parse(fs.readFileSync(DOUYIN_SIDE_DATA_FILE, "utf8"));
+    return data && typeof data === "object" ? {
+      comments: data.comments && typeof data.comments === "object" ? data.comments : {},
+      interactions: data.interactions && typeof data.interactions === "object" ? data.interactions : {},
+      updatedAt: data.updatedAt || ""
+    } : { comments: {}, interactions: {}, updatedAt: "" };
+  } catch {
+    return { comments: {}, interactions: {}, updatedAt: "" };
+  }
+}
+
+function writeDouyinSideData(data) {
+  const payload = {
+    comments: data.comments || {},
+    interactions: data.interactions || {},
+    updatedAt: new Date().toISOString()
+  };
+  fs.writeFileSync(DOUYIN_SIDE_DATA_FILE, JSON.stringify(payload, null, 2), "utf8");
+  return payload;
+}
+
+function readDouyinSyncState() {
+  try {
+    if (!fs.existsSync(DOUYIN_SYNC_STATE_FILE)) return null;
+    return JSON.parse(fs.readFileSync(DOUYIN_SYNC_STATE_FILE, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function writeDouyinSyncState(state) {
+  const payload = { ...(state || {}), updatedAt: new Date().toISOString() };
+  fs.writeFileSync(DOUYIN_SYNC_STATE_FILE, JSON.stringify(payload, null, 2), "utf8");
+  return payload;
+}
+
+function compactDouyinError(error) {
+  const text = String(error && error.message ? error.message : error || "").replace(/\s+/g, " ").trim();
+  if (/login|cookie|cookies|403|401|verify|captcha|risk|风控|验证/i.test(text)) {
+    return "抖音限制访问或登录态失效：请先打开抖音确认能播放该视频，再运行“导出抖音Cookies.bat”更新 cookies.txt。";
+  }
+  if (/yt-dlp|not recognized|ENOENT/i.test(text)) {
+    return "没有找到 yt-dlp，请先安装或把 yt-dlp 加入 PATH。";
+  }
+  if (/timeout|aborted/i.test(text)) return "抖音接口超时，请稍后重试或减少抓取数量。";
+  return text || "抖音抓取失败。";
+}
+
+function getDouyinCookieValue(name) {
+  const cookie = douyinCookieHeader();
+  const found = cookie.split(/;\s*/).find(item => item.startsWith(`${name}=`));
+  return found ? found.slice(name.length + 1) : "";
+}
+
+function extractDouyinIdFromText(value = "") {
+  const text = String(value || "");
+  const direct = text.match(/(?:video\/|modal_id=|aweme_id=)(\d{10,})/);
+  if (direct) return direct[1];
+  const loose = text.match(/\b(\d{15,25})\b/);
+  return loose ? loose[1] : "";
+}
+
+async function stableDouyinInfo(shareUrl) {
+  try {
+    return await douyinInfoForComments(shareUrl);
+  } catch (error) {
+    const id = extractDouyinIdFromText(shareUrl);
+    if (!id) throw error;
+    return { id, display_id: id, webpage_url: `https://www.douyin.com/video/${id}` };
+  }
+}
+
+function stableDouyinAuthorNames(info = {}) {
+  return [
+    info.uploader,
+    info.channel,
+    info.creator,
+    info.uploader_id,
+    info.channel_id
+  ].filter(Boolean).map(item => String(item).trim()).filter(Boolean);
+}
+
+function stableNormalizeDouyinComment(comment, ownerNames = []) {
+  const user = comment.user || {};
+  const secUid = String(user.sec_uid || user.secUid || user.uid || user.unique_id || "");
+  const nickname = String(user.nickname || user.unique_id || user.short_id || "@用户");
+  const text = String(comment.text || comment.content || "").trim();
+  const owner = ownerNames.some(name => name && (nickname === name || secUid === name || nickname.includes(name)));
+  return {
+    id: String(comment.cid || comment.id || ""),
+    user: nickname,
+    userId: secUid,
+    text,
+    likes: Number(comment.digg_count || comment.like_count || 0),
+    time: comment.create_time ? new Date(Number(comment.create_time) * 1000).toISOString().slice(0, 16).replace("T", " ") : "",
+    region: comment.ip_label || comment.label_text || "",
+    replyCount: Number(comment.reply_comment_total || comment.reply_comment_count || 0),
+    isAuthor: owner
+  };
+}
+
+async function fetchDouyinJson(url, referer, timeout = 30000) {
+  const msToken = getDouyinCookieValue("msToken");
+  const finalUrl = new URL(url);
+  if (msToken && !finalUrl.searchParams.get("msToken")) finalUrl.searchParams.set("msToken", msToken);
+  const cookie = douyinCookieHeader();
+  const headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
+    "Referer": referer || "https://www.douyin.com/",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.6",
+    "Sec-Fetch-Site": "same-origin",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Dest": "empty"
+  };
+  if (cookie) headers.Cookie = cookie;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await fetch(finalUrl.toString(), { headers, signal: controller.signal, redirect: "follow" });
+    const text = await response.text();
+    if (!response.ok) throw new Error(`抖音接口返回 ${response.status}: ${text.slice(0, 120)}`);
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new Error(`抖音返回内容不是 JSON: ${text.slice(0, 120)}`);
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchDouyinCommentPage(awemeId, cursor, count) {
+  const params = new URLSearchParams({
+    aweme_id: awemeId,
+    cursor: String(cursor || 0),
+    count: String(Math.max(1, Math.min(50, Number(count) || 30))),
+    item_type: "0"
+  });
+  const url = `https://www.douyin.com/aweme/v1/web/comment/list/?${params.toString()}`;
+  return fetchDouyinJson(url, `https://www.douyin.com/video/${awemeId}`);
+}
+
+async function fetchDouyinReplyPage(awemeId, commentId, cursor = 0, count = 20) {
+  const params = new URLSearchParams({
+    item_id: awemeId,
+    comment_id: commentId,
+    cursor: String(cursor || 0),
+    count: String(Math.max(1, Math.min(50, Number(count) || 20))),
+    item_type: "0"
+  });
+  const url = `https://www.douyin.com/aweme/v1/web/comment/list/reply/?${params.toString()}`;
+  return fetchDouyinJson(url, `https://www.douyin.com/video/${awemeId}`);
+}
+
+async function stableGetDouyinComments(shareUrl, options = {}) {
+  const limit = Math.max(1, Math.min(200, Number(options.limit || 50)));
+  const info = await stableDouyinInfo(shareUrl);
+  const awemeId = douyinAwemeIdFromInfo(info, shareUrl) || extractDouyinIdFromText(shareUrl);
+  if (!awemeId) throw new Error("没有识别到抖音作品 ID，请使用抖音视频详情页或分享链接。");
+
+  const ownerNames = stableDouyinAuthorNames(info);
+  const comments = [];
+  let cursor = 0;
+  let hasMore = true;
+  for (let page = 0; page < 4 && comments.length < limit && hasMore; page += 1) {
+    const data = await fetchDouyinCommentPage(awemeId, cursor, Math.min(50, limit - comments.length));
+    const raw = Array.isArray(data.comments) ? data.comments : [];
+    comments.push(...raw.map(row => stableNormalizeDouyinComment(row, ownerNames)).filter(row => row.text));
+    cursor = Number(data.cursor || data.next_cursor || 0);
+    hasMore = !!data.has_more && raw.length > 0;
+    if (hasMore) await new Promise(resolve => setTimeout(resolve, 900));
+  }
+
+  const sorted = comments
+    .sort((a, b) => Number(b.likes || 0) - Number(a.likes || 0))
+    .slice(0, limit);
+
+  const interactions = [];
+  const replyCandidates = sorted.filter(row => row.replyCount > 0 && row.id).slice(0, 12);
+  for (const comment of replyCandidates) {
+    try {
+      const replies = await fetchDouyinReplyPage(awemeId, comment.id, 0, 20);
+      const rows = (Array.isArray(replies.comments) ? replies.comments : [])
+        .map(row => stableNormalizeDouyinComment(row, ownerNames))
+        .filter(row => row.text);
+      const authorRows = rows.filter(row => row.isAuthor || ownerNames.some(name => row.user && row.user.includes(name)));
+      authorRows.forEach(reply => {
+        interactions.push({
+          id: `${comment.id}_${reply.id}`,
+          user: comment.user,
+          text: comment.text,
+          likes: comment.likes,
+          time: reply.time || comment.time,
+          region: comment.region,
+          reply: reply.text,
+          replyUser: reply.user || "博主",
+          sourceCommentId: comment.id
+        });
+      });
+      await new Promise(resolve => setTimeout(resolve, 650));
+    } catch {
+      // Reply endpoints are often stricter than top-level comments; keep top comments even if replies fail.
+    }
+  }
+
+  return {
+    awemeId,
+    title: info.title || info.fulltitle || "",
+    author: ownerNames[0] || "",
+    comments: sorted.slice(0, 50),
+    interactions: interactions.slice(0, 30),
+    source: fs.existsSync(COOKIES_FILE) ? "抖音 Web 评论接口 / cookies.txt" : "抖音 Web 评论接口",
+    fetchedAt: new Date().toISOString(),
+    cookieReady: fs.existsSync(COOKIES_FILE)
+  };
+}
+
+async function stableGetDouyinCommentsAndPersist(shareUrl, options = {}) {
+  const result = await stableGetDouyinComments(shareUrl, options);
+  const key = String(options.videoId || result.awemeId || shareUrl);
+  if (key) {
+    const side = readDouyinSideData();
+    side.comments[key] = result.comments;
+    side.interactions[key] = result.interactions;
+    writeDouyinSideData(side);
+  }
+  return result;
+}
+
+function buildDouyinCaptureStatus() {
+  const side = readDouyinSideData();
+  const sync = readDouyinSyncState();
+  return {
+    success: true,
+    cookiesReady: fs.existsSync(COOKIES_FILE),
+    cookiesFile: COOKIES_FILE,
+    sideDataFile: DOUYIN_SIDE_DATA_FILE,
+    savedCommentVideos: Object.keys(side.comments || {}).length,
+    savedInteractionVideos: Object.keys(side.interactions || {}).length,
+    sync: sync || { status: "idle" }
+  };
+}
+
+let douyinSyncJob = readDouyinSyncState() || { status: "idle" };
+
+function normalizeDouyinEntryUrl(entry = {}) {
+  const raw = entry.webpage_url || entry.original_url || entry.url || "";
+  if (/^https?:\/\//.test(raw) && isDouyinUrl(raw)) return raw;
+  const id = extractDouyinIdFromText(raw) || extractDouyinIdFromText(entry.id || entry.display_id || "");
+  return id ? `https://www.douyin.com/video/${id}` : "";
+}
+
+async function listDouyinProfileVideos(profileUrl, limit = 20) {
+  const stdout = await runWithCookieFallback([
+    "--dump-single-json",
+    "--flat-playlist",
+    "--playlist-end", String(Math.max(1, Math.min(200, Number(limit) || 20))),
+    "--no-warnings",
+    "--skip-download",
+    profileUrl
+  ], 90000);
+  const info = JSON.parse(stdout);
+  const entries = Array.isArray(info.entries) ? info.entries : [];
+  return entries.map(entry => ({
+    url: normalizeDouyinEntryUrl(entry),
+    title: entry.title || entry.fulltitle || "",
+    id: entry.id || entry.display_id || ""
+  })).filter(item => item.url);
+}
+
+function updateDouyinSyncJob(patch) {
+  douyinSyncJob = { ...(douyinSyncJob || {}), ...(patch || {}), updatedAt: new Date().toISOString() };
+  writeDouyinSyncState(douyinSyncJob);
+  return douyinSyncJob;
+}
+
+async function runDouyinSyncJob(options = {}) {
+  const sourceUrl = String(options.url || "").trim();
+  const limit = Math.max(1, Math.min(200, Number(options.limit || 20)));
+  const download = options.download !== false;
+  const comments = !!options.comments;
+  updateDouyinSyncJob({
+    status: "running",
+    sourceUrl,
+    limit,
+    download,
+    comments,
+    startedAt: new Date().toISOString(),
+    finishedAt: "",
+    total: 0,
+    done: 0,
+    saved: 0,
+    failed: 0,
+    current: "",
+    errors: []
+  });
+  try {
+    let items = [];
+    if (isDouyinUrl(sourceUrl) && /\/video\//.test(sourceUrl)) {
+      items = [{ url: sourceUrl }];
+    } else {
+      items = await listDouyinProfileVideos(sourceUrl, limit);
+    }
+    updateDouyinSyncJob({ total: items.length });
+    for (const item of items.slice(0, limit)) {
+      updateDouyinSyncJob({ current: item.title || item.url });
+      try {
+        if (download) await saveDouyin(item.url);
+        await getDouyinMetadata(item.url);
+        if (comments) await stableGetDouyinCommentsAndPersist(item.url, { limit: 50 });
+        updateDouyinSyncJob({ done: (douyinSyncJob.done || 0) + 1, saved: (douyinSyncJob.saved || 0) + 1 });
+      } catch (error) {
+        const errors = [...(douyinSyncJob.errors || []), { url: item.url, error: compactDouyinError(error) }].slice(-20);
+        updateDouyinSyncJob({ done: (douyinSyncJob.done || 0) + 1, failed: (douyinSyncJob.failed || 0) + 1, errors });
+      }
+      await new Promise(resolve => setTimeout(resolve, 2500));
+    }
+    updateDouyinSyncJob({ status: "done", current: "", finishedAt: new Date().toISOString() });
+  } catch (error) {
+    updateDouyinSyncJob({
+      status: "failed",
+      current: "",
+      finishedAt: new Date().toISOString(),
+      errors: [...(douyinSyncJob.errors || []), { url: sourceUrl, error: compactDouyinError(error) }].slice(-20)
+    });
+  }
+}
+
+function startDouyinSyncJob(options = {}) {
+  if (douyinSyncJob && douyinSyncJob.status === "running") return douyinSyncJob;
+  const sourceUrl = String(options.url || "").trim();
+  if (!sourceUrl || !isDouyinUrl(sourceUrl)) throw new Error("请填写抖音博主主页、合集或视频链接。");
+  runDouyinSyncJob(options);
+  return douyinSyncJob;
+}
+
 function serveStatic(req, res) {
   const pathname = decodeURIComponent(req.url.split("?")[0]);
   const requestPath = pathname === "/" ? "/index.html" : pathname;
@@ -5790,18 +6132,40 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.url.startsWith("/api/douyin-capture-status")) {
+    sendJson(res, 200, buildDouyinCaptureStatus());
+    return;
+  }
+
+  if (req.url.startsWith("/api/douyin-sync-status")) {
+    sendJson(res, 200, { success: true, job: douyinSyncJob || readDouyinSyncState() || { status: "idle" } });
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/douyin-sync") {
+    readRequestBody(req, 1024 * 1024)
+      .then(body => {
+        const payload = JSON.parse(body || "{}");
+        const job = startDouyinSyncJob(payload);
+        sendJson(res, 200, { success: true, job });
+      })
+      .catch(error => sendJson(res, 400, { success: false, error: compactDouyinError(error) }));
+    return;
+  }
+
   if (req.url.startsWith("/api/douyin-comments")) {
     const parsed = new URL(req.url, `http://${req.headers.host || "localhost"}`);
     const shareUrl = parsed.searchParams.get("url");
     const limit = Number(parsed.searchParams.get("limit") || 30);
+    const videoId = parsed.searchParams.get("videoId") || "";
     if (!shareUrl) return sendJson(res, 400, { success: false, error: "Missing url parameter." });
     if (!isDouyinUrl(shareUrl)) return sendJson(res, 400, { success: false, error: "This is not a Douyin link." });
-    getDouyinComments(shareUrl, limit)
+    stableGetDouyinCommentsAndPersist(shareUrl, { limit, videoId })
       .then(result => sendJson(res, 200, { success: true, ...result }))
       .catch(error => sendJson(res, 502, {
         success: false,
-        error: error.message,
-        hint: "如果抖音限制访问，请先把登录后的 cookies 导出到 cookies.txt，再重试。"
+        error: compactDouyinError(error),
+        hint: "Douyin may require a fresh logged-in cookie. Open Douyin in Edge, run export-douyin-cookies.js or 导出抖音Cookies.bat, then retry."
       }));
     return;
   }

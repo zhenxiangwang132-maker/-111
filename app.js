@@ -13241,11 +13241,206 @@ globalThis.renderSectorStrength = renderSectorStrength;
 globalThis.addCustomSectorBoard = addCustomSectorBoard;
 globalThis.editCustomSectorBoard = editCustomSectorBoard;
 globalThis.editFrameworkRule = editFrameworkRule;
+
+function xiaokeVideoDouyinUrl(video = {}) {
+  const raw = video.originalUrl || video.shareUrl || video.sourceUrl || video.webpageUrl || "";
+  if (/douyin\.com|v\.douyin|iesdouyin/i.test(raw)) return raw;
+  const id = String(video.sourceId || video.id || "").match(/\d{10,}/);
+  return id ? `https://www.douyin.com/video/${id[0]}` : "";
+}
+
+async function xiaokeFetchDouyinStatus(quiet = false) {
+  try {
+    const response = await fetch("/api/douyin-capture-status", { cache: "no-store" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.success) throw new Error(data.error || "读取抖音抓取状态失败");
+    state.douyinCaptureStatus = data;
+    return data;
+  } catch (error) {
+    if (!quiet) showToast(error.message || "读取抖音抓取状态失败");
+    return null;
+  }
+}
+
+function xiaokeDouyinStatusHtml() {
+  const job = state.douyinSyncJob || (state.douyinCaptureStatus && state.douyinCaptureStatus.sync) || null;
+  const status = state.douyinCaptureStatus || null;
+  if ((!job || !job.status || job.status === "idle") && status) {
+    const cookieText = status.cookiesReady ? "cookies 已就绪" : "未检测到 cookies.txt，自动抓评论/互动可能失败";
+    const tone = status.cookiesReady ? "var(--green)" : "var(--gold)";
+    return `<section class="panel" style="border-color:${tone};margin-bottom:12px">
+      <div class="metadata-head">
+        <div>
+          <div class="panel-title">抖音抓取状态</div>
+          <div class="date">${escapeHtml(cookieText)} · 已保存评论 ${Number(status.savedCommentVideos || 0)} 条视频 · 已保存互动 ${Number(status.savedInteractionVideos || 0)} 条视频</div>
+        </div>
+        <button class="small-btn" onclick="xiaokeFetchDouyinStatus(true).then(()=>renderLibrary())">刷新状态</button>
+      </div>
+      <div class="date">需要登录态时：先在 Edge 打开抖音并登录，再运行 导出抖音Cookies.bat，然后回到这里刷新。</div>
+    </section>`;
+  }
+  if (!job || !job.status || job.status === "idle") return "";
+  const color = job.status === "failed" ? "var(--red)" : (job.status === "done" ? "var(--green)" : "var(--gold)");
+  const errors = (job.errors || []).slice(-2).map(row => `<div class="date">${escapeHtml(row.error || "")}</div>`).join("");
+  return `<section class="panel" style="border-color:${color};margin-bottom:12px">
+    <div class="metadata-head">
+      <div><div class="panel-title">抖音同步：${escapeHtml(job.status)}</div><div class="date">进度 ${Number(job.done || 0)} / ${Number(job.total || 0)}，已保存 ${Number(job.saved || 0)}，失败 ${Number(job.failed || 0)}${job.current ? ` · ${escapeHtml(job.current)}` : ""}</div></div>
+      <button class="small-btn" onclick="pollDouyinSyncStatus(true)">刷新进度</button>
+    </div>
+    ${errors}
+  </section>`;
+}
+
+async function pollDouyinSyncStatus(forceRender = false) {
+  try {
+    const response = await fetch("/api/douyin-sync-status", { cache: "no-store" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.success) throw new Error(data.error || "读取同步状态失败");
+    state.douyinSyncJob = data.job || { status: "idle" };
+    if (forceRender && state.view === "library") renderLibrary();
+    if (state.douyinSyncJob.status === "running") {
+      clearTimeout(state.douyinSyncTimer);
+      state.douyinSyncTimer = setTimeout(() => pollDouyinSyncStatus(true), 3500);
+    } else if (forceRender && state.douyinSyncJob.status === "done") {
+      showToast("抖音同步完成，正在刷新素材库");
+      if (typeof restoredImportLocalVideosNow === "function") await restoredImportLocalVideosNow();
+      else if (typeof scanLocalVideos === "function") await scanLocalVideos();
+      if (state.view === "library") renderLibrary();
+    }
+    return state.douyinSyncJob;
+  } catch (error) {
+    showToast(error.message || "读取同步状态失败");
+    return null;
+  }
+}
+
+async function startDouyinBloggerSync() {
+  const url = prompt("粘贴抖音博主主页、合集或单条视频链接。会后台低频下载/更新，不会卡住页面。", localStorage.getItem("xiaoke_last_douyin_sync_url") || "");
+  if (!url) return;
+  localStorage.setItem("xiaoke_last_douyin_sync_url", url.trim());
+  const limitText = prompt("本次最多同步多少条？建议先填 10，稳定后再扩大。", localStorage.getItem("xiaoke_last_douyin_sync_limit") || "10");
+  if (limitText == null) return;
+  const limit = Math.max(1, Math.min(100, Number(limitText) || 10));
+  localStorage.setItem("xiaoke_last_douyin_sync_limit", String(limit));
+  const withComments = confirm("是否同时抓取每条视频的高赞评论/博主互动？会更慢，但后续分析更完整。");
+  showToast("已提交抖音后台同步任务");
+  try {
+    const response = await fetch("/api/douyin-sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: url.trim(), limit, download: true, comments: withComments })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.success) throw new Error(data.error || "启动同步失败");
+    state.douyinSyncJob = data.job;
+    if (state.view === "library") renderLibrary();
+    pollDouyinSyncStatus(true);
+  } catch (error) {
+    showToast("启动失败：" + (error.message || "请检查链接/cookies"));
+  }
+}
+
+async function fetchCurrentVideoComments() {
+  const video = (state.videos || []).find(item => item.id === state.currentVideoId);
+  if (!video) return;
+  const url = xiaokeVideoDouyinUrl(video);
+  if (!url) {
+    showToast("这条素材没有抖音原链接或作品ID，不能自动抓评论");
+    return;
+  }
+  const status = await xiaokeFetchDouyinStatus(true);
+  if (status && !status.cookiesReady) {
+    showToast("未检测到 cookies.txt，会先尝试公开接口；失败后请先导出抖音 cookies");
+  }
+  showToast("正在抓取抖音高赞评论/博主互动，可能需要几十秒...");
+  try {
+    const response = await fetch("/api/douyin-comments?limit=80&videoId=" + encodeURIComponent(video.id) + "&url=" + encodeURIComponent(url));
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.success) throw new Error([data.error, data.hint].filter(Boolean).join(" | ") || "抓取失败");
+    const commentsStore = finalReadVideoSideData("xiaoke_video_hot_comments_v1");
+    const interactionsStore = finalReadVideoSideData("xiaoke_video_author_interactions_v1");
+    commentsStore[video.id] = (data.comments || []).slice(0, 50);
+    interactionsStore[video.id] = (data.interactions || []).slice(0, 30);
+    finalSaveVideoSideData("xiaoke_video_hot_comments_v1", commentsStore);
+    finalSaveVideoSideData("xiaoke_video_author_interactions_v1", interactionsStore);
+    showToast(`已抓取高赞评论 ${commentsStore[video.id].length} 条，博主互动 ${interactionsStore[video.id].length} 条`);
+    showDetailTab((interactionsStore[video.id] || []).length ? "interaction" : "comments");
+  } catch (error) {
+    showToast("评论抓取失败：" + (error.message || "抖音可能需要 cookies"));
+  }
+}
+
+const xiaokeDouyinBaseRenderLibrary = renderLibrary;
+renderLibrary = function xiaokeDouyinRenderLibrary() {
+  state.view = "library";
+  restoredRenderShell();
+  if (!state.douyinCaptureStatus) {
+    xiaokeFetchDouyinStatus(true).then(() => {
+      if (state.view === "library") renderLibrary();
+    });
+  }
+  const videos = filteredVideos();
+  const total = restoredAllLibraryVideos().length;
+  state.libraryLimit = Math.max(60, Number(state.libraryLimit || 60));
+  const visible = videos.slice(0, state.libraryLimit);
+  const main = document.getElementById("main");
+  if (!main) return xiaokeDouyinBaseRenderLibrary();
+  main.innerHTML = `
+    <div class="video-head">
+      <div>
+        <div class="panel-title" style="margin:0">视频素材库</div>
+        <div class="date">显示 ${visible.length} / 筛选 ${videos.length} / 共 ${total} 个视频 · 当前筛选：${escapeHtml(state.activeTag || "全部")}</div>
+      </div>
+      <div class="library-actions">
+        <select class="small-select" onchange="setSort(this.value)">
+          <option value="date" ${state.sort === "date" ? "selected" : ""}>按日期</option>
+          <option value="likes" ${state.sort === "likes" ? "selected" : ""}>按点赞</option>
+          <option value="title" ${state.sort === "title" ? "selected" : ""}>按标题</option>
+        </select>
+        <button class="small-btn" onclick="startDouyinBloggerSync()">同步博主视频</button>
+        <button class="small-btn" onclick="xiaokeFetchDouyinStatus().then(()=>renderLibrary())">抓取状态</button>
+        <button class="small-btn" onclick="openImport()">导入</button>
+        <button class="small-btn" onclick="renderDashboard()">返回看板</button>
+      </div>
+    </div>
+    ${xiaokeDouyinStatusHtml()}
+    ${librarySearchHtml()}
+    ${videos.length
+      ? `<section class="video-grid">${visible.map(videoCardHtml).join("")}</section>${videos.length > visible.length ? `<div class="analysis-actions"><button class="small-btn" onclick="loadMoreLibraryVideos()">加载更多</button></div>` : ""}`
+      : `<section class="panel" style="max-width:360px"><div class="panel-title">暂无匹配视频</div><p style="color:#aeb6c6;line-height:1.7">当前搜索或分类没有结果。先清空搜索，或切回全部视频。</p><button class="open-btn" style="width:auto;padding:0 18px" onclick="clearVideoFilters()">清空筛选</button></section>`}
+  `;
+};
+
+showDetailTab = function xiaokeDouyinShowDetailTab(tab) {
+  const box = document.getElementById("detailContent");
+  const video = (state.videos || []).find(item => item.id === state.currentVideoId) || restoredAllLibraryVideos()[0];
+  if (!box || !video) return;
+  document.querySelectorAll(".tabs .tab").forEach(btn => {
+    const text = btn.textContent || "";
+    const active = (tab === "transcript" && text.includes("转录")) || (tab === "comments" && text.includes("评论")) || (tab === "interaction" && text.includes("互动")) || (tab === "analysis" && text.includes("AI"));
+    btn.classList.toggle("active", active);
+  });
+  if (tab === "analysis") return void (box.innerHTML = analysisHtml(video));
+  if (tab === "comments") {
+    box.innerHTML = `<section class="panel"><div class="metadata-head"><div><div class="panel-title">高赞评论</div><div class="date">自动抓取公开高赞评论；失败时看提示更新 cookies。</div></div><div class="review-actions"><button class="small-btn" onclick="fetchCurrentVideoComments()">自动抓取抖音</button><button class="small-btn" onclick="importCurrentVideoComments()">手动导入</button></div></div>${finalCommentListHtml(finalVideoComments(video), "暂无高赞评论。点“自动抓取抖音”，如果提示登录态失效就先更新 cookies。")}</section>`;
+    return;
+  }
+  if (tab === "interaction") {
+    box.innerHTML = `<section class="panel"><div class="metadata-head"><div><div class="panel-title">博主互动</div><div class="date">优先识别博主回复；平台不开放的点赞互动会标记为空。</div></div><div class="review-actions"><button class="small-btn" onclick="fetchCurrentVideoComments()">自动抓取抖音</button><button class="small-btn" onclick="importCurrentVideoInteractions()">手动导入</button></div></div>${finalCommentListHtml(finalVideoInteractions(video), "暂无博主互动。可能是博主未回复，或抖音限制了回复接口。")}</section>`;
+    return;
+  }
+  const transcript = getVideoDetailTranscript(video);
+  box.innerHTML = `<section class="panel"><div class="panel-title">转录正文</div><p style="white-space:pre-wrap;line-height:1.8;color:#dce6f5">${escapeHtml(transcript || "暂无转录。先点上方“语音转文字”，或把文字粘贴到转写框里。")}</p></section>`;
+};
+
 globalThis.showDetailTab = showDetailTab;
 globalThis.generateAiForCurrent = generateAiForCurrent;
 globalThis.importCurrentVideoComments = importCurrentVideoComments;
 globalThis.importCurrentVideoInteractions = importCurrentVideoInteractions;
 globalThis.fetchCurrentVideoComments = fetchCurrentVideoComments;
+globalThis.xiaokeFetchDouyinStatus = xiaokeFetchDouyinStatus;
+globalThis.startDouyinBloggerSync = startDouyinBloggerSync;
+globalThis.pollDouyinSyncStatus = pollDouyinSyncStatus;
 globalThis.transcribeVideo = transcribeVideo;
 globalThis.startVideoBackgroundQueue = startVideoBackgroundQueue;
 globalThis.loadMoreLibraryVideos = loadMoreLibraryVideos;
