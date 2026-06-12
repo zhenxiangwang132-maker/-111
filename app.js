@@ -13262,21 +13262,53 @@ async function xiaokeFetchDouyinStatus(quiet = false) {
   }
 }
 
+async function startDouyinCookieLogin() {
+  showToast("正在打开抖音专用登录窗口...");
+  try {
+    const response = await fetch("/api/douyin-cookie-login", { method: "POST" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.success) throw new Error(data.error || "启动登录窗口失败");
+    state.douyinCaptureStatus = data.status || state.douyinCaptureStatus;
+    showToast("已打开专用抖音窗口，请在那个窗口登录；登录后点刷新状态");
+    if (state.view === "library") renderLibrary();
+    clearTimeout(state.douyinCookieTimer);
+    state.douyinCookieTimer = setTimeout(() => pollDouyinCookieStatus(true), 3500);
+  } catch (error) {
+    showToast("启动失败：" + (error.message || "请检查 Edge 是否安装"));
+  }
+}
+
+async function pollDouyinCookieStatus(forceRender = false) {
+  const status = await xiaokeFetchDouyinStatus(true);
+  if (forceRender && state.view === "library") renderLibrary();
+  if (status && !status.cookiesReady && status.cookieJob && status.cookieJob.status === "running") {
+    clearTimeout(state.douyinCookieTimer);
+    state.douyinCookieTimer = setTimeout(() => pollDouyinCookieStatus(true), 3500);
+  } else if (status && status.cookiesReady) {
+    showToast("抖音 cookies 已就绪，可以抓高赞评论和博主互动了");
+  }
+}
+
 function xiaokeDouyinStatusHtml() {
   const job = state.douyinSyncJob || (state.douyinCaptureStatus && state.douyinCaptureStatus.sync) || null;
   const status = state.douyinCaptureStatus || null;
   if ((!job || !job.status || job.status === "idle") && status) {
     const cookieText = status.cookiesReady ? "cookies 已就绪" : "未检测到 cookies.txt，自动抓评论/互动可能失败";
     const tone = status.cookiesReady ? "var(--green)" : "var(--gold)";
+    const cookieJob = status.cookieJob || {};
+    const jobText = cookieJob.status && cookieJob.status !== "idle" ? ` · ${escapeHtml(cookieJob.status)}：${escapeHtml(cookieJob.message || "")}` : "";
     return `<section class="panel" style="border-color:${tone};margin-bottom:12px">
       <div class="metadata-head">
         <div>
           <div class="panel-title">抖音抓取状态</div>
-          <div class="date">${escapeHtml(cookieText)} · 已保存评论 ${Number(status.savedCommentVideos || 0)} 条视频 · 已保存互动 ${Number(status.savedInteractionVideos || 0)} 条视频</div>
+          <div class="date">${escapeHtml(cookieText)} · 已保存评论 ${Number(status.savedCommentVideos || 0)} 条视频 · 已保存互动 ${Number(status.savedInteractionVideos || 0)} 条视频${jobText}</div>
         </div>
-        <button class="small-btn" onclick="xiaokeFetchDouyinStatus(true).then(()=>renderLibrary())">刷新状态</button>
+        <div class="review-actions">
+          ${status.cookiesReady ? "" : `<button class="small-btn" onclick="startDouyinCookieLogin()">打开登录窗口/导出Cookies</button>`}
+          <button class="small-btn" onclick="pollDouyinCookieStatus(true)">刷新状态</button>
+        </div>
       </div>
-      <div class="date">需要登录态时：先在 Edge 打开抖音并登录，再运行 导出抖音Cookies.bat，然后回到这里刷新。</div>
+      <div class="date">注意：这里需要项目打开的“专用抖音窗口”登录；普通浏览器标签已登录，不一定能被本地脚本读取。</div>
     </section>`;
   }
   if (!job || !job.status || job.status === "idle") return "";
@@ -13439,6 +13471,8 @@ globalThis.importCurrentVideoComments = importCurrentVideoComments;
 globalThis.importCurrentVideoInteractions = importCurrentVideoInteractions;
 globalThis.fetchCurrentVideoComments = fetchCurrentVideoComments;
 globalThis.xiaokeFetchDouyinStatus = xiaokeFetchDouyinStatus;
+globalThis.startDouyinCookieLogin = startDouyinCookieLogin;
+globalThis.pollDouyinCookieStatus = pollDouyinCookieStatus;
 globalThis.startDouyinBloggerSync = startDouyinBloggerSync;
 globalThis.pollDouyinSyncStatus = pollDouyinSyncStatus;
 globalThis.transcribeVideo = transcribeVideo;

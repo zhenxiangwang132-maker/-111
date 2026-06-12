@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const os = require("os");
-const { execFile } = require("child_process");
+const { execFile, spawn } = require("child_process");
 const { Readable } = require("stream");
 
 const PORT = 3000;
@@ -15,6 +15,7 @@ const COOKIES_FILE = path.join(ROOT, "cookies.txt");
 const METADATA_FILE = path.join(ROOT, "douyin_metadata.json");
 const DOUYIN_SIDE_DATA_FILE = path.join(ROOT, "douyin_side_data.json");
 const DOUYIN_SYNC_STATE_FILE = path.join(ROOT, "douyin_sync_state.json");
+const DOUYIN_COOKIE_JOB_FILE = path.join(ROOT, "douyin_cookie_job.json");
 const AGENT_CONFIG_FILE = path.join(ROOT, "agent-config.json");
 const AGENT_MEMORY_FILE = path.join(ROOT, "agent_memory.json");
 const AGENT_LOG_FILE = path.join(ROOT, "agent_call_logs.json");
@@ -5403,15 +5404,71 @@ async function stableGetDouyinCommentsAndPersist(shareUrl, options = {}) {
 function buildDouyinCaptureStatus() {
   const side = readDouyinSideData();
   const sync = readDouyinSyncState();
+  const cookieJob = readDouyinCookieJob();
   return {
     success: true,
-    cookiesReady: fs.existsSync(COOKIES_FILE),
+    cookiesReady: hasUsableDouyinCookies(),
     cookiesFile: COOKIES_FILE,
     sideDataFile: DOUYIN_SIDE_DATA_FILE,
     savedCommentVideos: Object.keys(side.comments || {}).length,
     savedInteractionVideos: Object.keys(side.interactions || {}).length,
-    sync: sync || { status: "idle" }
+    sync: sync || { status: "idle" },
+    cookieJob
   };
+}
+
+function readDouyinCookieJob() {
+  try {
+    return JSON.parse(fs.readFileSync(DOUYIN_COOKIE_JOB_FILE, "utf8"));
+  } catch {
+    return { status: "idle" };
+  }
+}
+
+function writeDouyinCookieJob(job) {
+  fs.writeFileSync(DOUYIN_COOKIE_JOB_FILE, JSON.stringify(job || { status: "idle" }, null, 2), "utf8");
+}
+
+function hasUsableDouyinCookies() {
+  if (!fs.existsSync(COOKIES_FILE)) return false;
+  try {
+    const text = fs.readFileSync(COOKIES_FILE, "utf8");
+    return /(^|\s)(sessionid|sid_guard|uid_tt|passport_csrf_token)\s/i.test(text)
+      || (/douyin/i.test(text) && text.length > 500);
+  } catch {
+    return false;
+  }
+}
+
+function startDouyinCookieJob() {
+  const current = readDouyinCookieJob();
+  if (current.status === "running" && Date.now() - Number(current.startedAt || 0) < 10 * 60 * 1000) {
+    return current;
+  }
+  const job = {
+    status: "running",
+    startedAt: Date.now(),
+    updatedAt: Date.now(),
+    message: "Opened a dedicated Douyin login window. Log in there; cookies.txt will be saved automatically.",
+    cookiesFile: COOKIES_FILE
+  };
+  writeDouyinCookieJob(job);
+  const out = fs.openSync(path.join(ROOT, "douyin-cookie.out.log"), "a");
+  const err = fs.openSync(path.join(ROOT, "douyin-cookie.err.log"), "a");
+  const child = spawn(process.execPath, ["export-douyin-cookies.js", "--auto"], {
+    cwd: ROOT,
+    detached: true,
+    stdio: ["ignore", out, err],
+    windowsHide: false
+  });
+  child.unref();
+  setTimeout(() => {
+    const next = hasUsableDouyinCookies()
+      ? { ...job, status: "done", updatedAt: Date.now(), message: "cookies.txt saved. Refresh capture status." }
+      : { ...job, pid: child.pid, updatedAt: Date.now() };
+    writeDouyinCookieJob(next);
+  }, 3000);
+  return { ...job, pid: child.pid };
 }
 
 let douyinSyncJob = readDouyinSyncState() || { status: "idle" };
@@ -6134,6 +6191,16 @@ const server = http.createServer((req, res) => {
 
   if (req.url.startsWith("/api/douyin-capture-status")) {
     sendJson(res, 200, buildDouyinCaptureStatus());
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/douyin-cookie-login") {
+    try {
+      const job = startDouyinCookieJob();
+      sendJson(res, 200, { success: true, job, status: buildDouyinCaptureStatus() });
+    } catch (error) {
+      sendJson(res, 500, { success: false, error: compactDouyinError(error) });
+    }
     return;
   }
 
