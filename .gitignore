@@ -13,6 +13,7 @@ douyin_metadata.json
 douyin_side_data.json
 douyin_sync_state.json
 douyin_cookie_job.json
+cookies.txt
 douyin-cookie.out.log
 douyin-cookie.err.log
 server.out.log
