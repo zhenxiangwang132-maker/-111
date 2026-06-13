@@ -13484,6 +13484,400 @@ globalThis.startVideoBackgroundQueue = startVideoBackgroundQueue;
 globalThis.loadMoreLibraryVideos = loadMoreLibraryVideos;
 globalThis.autoFillVisibleStockProfiles = autoFillVisibleStockProfiles;
 
+const XIAOKE_LIBRARY_BULK_JOB_KEY = "xiaoke_library_bulk_job_v2";
+const xiaokeOriginalPollDouyinSyncStatus = pollDouyinSyncStatus;
+
+function xiaokeReadBulkJob() {
+  try {
+    return JSON.parse(localStorage.getItem(XIAOKE_LIBRARY_BULK_JOB_KEY) || "{}") || {};
+  } catch {
+    return {};
+  }
+}
+
+function xiaokeWriteBulkJob(patch = {}) {
+  const next = { ...xiaokeReadBulkJob(), ...patch, updatedAt: new Date().toISOString() };
+  localStorage.setItem(XIAOKE_LIBRARY_BULK_JOB_KEY, JSON.stringify(next));
+  state.libraryBulkJob = next;
+  return next;
+}
+
+function xiaokeVideoIdKeys(video = {}) {
+  const values = [
+    video.id,
+    video.sourceId,
+    video.awemeId,
+    video.originalUrl,
+    video.shareUrl,
+    video.sourceUrl,
+    video.webpageUrl,
+    xiaokeVideoDouyinUrl(video)
+  ].filter(Boolean).map(item => String(item));
+  values.forEach(item => {
+    const match = item.match(/\d{10,}/);
+    if (match) values.push(match[0]);
+  });
+  return uniqueClean(values);
+}
+
+async function xiaokeMergeDouyinSideDataFromServer() {
+  try {
+    const response = await fetch("/api/douyin-side-data", { cache: "no-store" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.success) throw new Error(data.error || "读取抖音侧数据失败");
+    const commentStore = finalReadVideoSideData("xiaoke_video_hot_comments_v1");
+    const interactionStore = finalReadVideoSideData("xiaoke_video_author_interactions_v1");
+    let merged = 0;
+    (state.videos || []).forEach(video => {
+      const keys = xiaokeVideoIdKeys(video);
+      const comments = keys.map(key => data.comments && data.comments[key]).find(Array.isArray);
+      const interactions = keys.map(key => data.interactions && data.interactions[key]).find(Array.isArray);
+      if (comments && comments.length && !commentStore[video.id]) {
+        commentStore[video.id] = comments.slice(0, 50);
+        merged += 1;
+      }
+      if (interactions && interactions.length && !interactionStore[video.id]) {
+        interactionStore[video.id] = interactions.slice(0, 30);
+        merged += 1;
+      }
+    });
+    finalSaveVideoSideData("xiaoke_video_hot_comments_v1", commentStore);
+    finalSaveVideoSideData("xiaoke_video_author_interactions_v1", interactionStore);
+    return merged;
+  } catch (error) {
+    return 0;
+  }
+}
+
+function xiaokeVideoQualityFlags(video = {}) {
+  const title = quickVideoTitle(video);
+  const transcript = getVideoDetailTranscript(video);
+  const hasTranscript = !isEmptyTranscript(transcript) && String(transcript || "").trim().length > 30;
+  const hasAnalysis = Boolean(readVideoAnalyses()[video.id] || readStructuredAnalyses()[video.id]);
+  const hasComments = finalVideoComments(video).length > 0 || finalVideoInteractions(video).length > 0;
+  const hasSource = Boolean(xiaokeVideoDouyinUrl(video) || video.videoUrl || video.documentUrl || video.originalUrl);
+  return {
+    title,
+    hasTranscript,
+    hasAnalysis,
+    hasComments,
+    hasSource,
+    labels: [
+      hasTranscript ? "" : "待转写",
+      hasAnalysis ? "" : "待AI",
+      hasComments ? "" : "待评论",
+      hasSource ? "" : "缺来源"
+    ].filter(Boolean)
+  };
+}
+
+function editVideoRecord(id) {
+  const video = (state.videos || []).find(item => String(item.id) === String(id));
+  if (!video) return showToast("没有找到这条视频");
+  const title = prompt("视频标题", quickVideoTitle(video) || "");
+  if (title == null) return;
+  const date = prompt("日期，例如 2026-06-13", video.date || "");
+  if (date == null) return;
+  const likes = prompt("点赞数，只填数字或 1.2万 这种", video.likes || "");
+  if (likes == null) return;
+  const comments = prompt("评论数，只填数字", video.comments || "");
+  if (comments == null) return;
+  const url = prompt("抖音原链接/视频链接，可留空", video.originalUrl || video.shareUrl || video.sourceUrl || "");
+  if (url == null) return;
+  video.title = title.trim() || video.title || "";
+  video.topic = video.topic || video.title;
+  video.date = date.trim() || video.date || "";
+  video.likes = likes.trim() || video.likes || 0;
+  video.comments = comments.trim() || video.comments || 0;
+  if (url.trim()) video.originalUrl = url.trim();
+  saveUserVideos(state.videos || []);
+  showToast("视频信息已保存");
+  if (state.view === "library") renderLibrary();
+  if (state.view === "detail") renderDetail();
+}
+
+async function xiaokeGenerateVideoAIQuiet(video = {}, force = false) {
+  if (!video.id) return false;
+  if (!force && readVideoAnalyses()[video.id]) return false;
+  let provider = localStorage.getItem(AGENT_PROVIDER_KEY) || "workbuddy";
+  if (provider === "auto") provider = "workbuddy";
+  let answer = "";
+  try {
+    answer = await callAgentProvider(provider, buildVideoAnalysisPrompt(video));
+  } catch {
+    answer = await callAgentProvider("mock", buildVideoAnalysisPrompt(video));
+    answer = "当前大模型调用失败，先用本地分析占位：\n\n" + answer;
+  }
+  saveVideoAnalysis(video.id, answer);
+  return true;
+}
+
+function xiaokeStoreCommentResult(video, data = {}) {
+  const commentsStore = finalReadVideoSideData("xiaoke_video_hot_comments_v1");
+  const interactionsStore = finalReadVideoSideData("xiaoke_video_author_interactions_v1");
+  if (Array.isArray(data.comments) && data.comments.length) commentsStore[video.id] = data.comments.slice(0, 50);
+  if (Array.isArray(data.interactions) && data.interactions.length) interactionsStore[video.id] = data.interactions.slice(0, 30);
+  finalSaveVideoSideData("xiaoke_video_hot_comments_v1", commentsStore);
+  finalSaveVideoSideData("xiaoke_video_author_interactions_v1", interactionsStore);
+}
+
+async function xiaokeFetchVideoCommentsQuiet(video = {}, force = false) {
+  const url = xiaokeVideoDouyinUrl(video);
+  if (!url) return { skipped: true, reason: "没有抖音链接" };
+  if (!force && (finalVideoComments(video).length || finalVideoInteractions(video).length)) {
+    return { skipped: true, reason: "已有评论/互动" };
+  }
+  const response = await fetch("/api/douyin-comments?limit=80&videoId=" + encodeURIComponent(video.id) + "&url=" + encodeURIComponent(url));
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.success) throw new Error([data.error, data.detail, data.hint].filter(Boolean).join(" | ") || "评论抓取失败");
+  xiaokeStoreCommentResult(video, data);
+  return { comments: (data.comments || []).length, interactions: (data.interactions || []).length };
+}
+
+fetchCurrentVideoComments = async function xiaokeFinalFetchCurrentVideoComments() {
+  const video = (state.videos || []).find(item => String(item.id) === String(state.currentVideoId));
+  if (!video) return showToast("没有找到当前视频");
+  const url = xiaokeVideoDouyinUrl(video);
+  if (!url) {
+    showToast("这条视频缺少抖音原链接。点素材卡片“改”，补原链接后再抓评论。");
+    return;
+  }
+  await xiaokeFetchDouyinStatus(true);
+  showToast("正在抓取高赞评论/博主互动；失败不会影响转写和 AI。");
+  try {
+    const result = await xiaokeFetchVideoCommentsQuiet(video, true);
+    showToast(`已抓取评论 ${Number(result.comments || 0)} 条，互动 ${Number(result.interactions || 0)} 条`);
+    showDetailTab(Number(result.interactions || 0) ? "interaction" : "comments");
+  } catch (error) {
+    showToast("评论抓取失败：" + (error.message || "抖音限制了本次访问，请稍后重试"));
+    showDetailTab("comments");
+  }
+};
+
+function xiaokeBulkStatusHtml() {
+  const job = state.libraryBulkJob || xiaokeReadBulkJob();
+  if (!job || !job.status || job.status === "idle") return "";
+  const color = job.status === "failed" ? "var(--red)" : (job.status === "done" ? "var(--green)" : "var(--gold)");
+  const lastError = (job.errors || []).slice(-1)[0];
+  return `<section class="panel" style="border-color:${color};margin-bottom:12px">
+    <div class="metadata-head">
+      <div>
+        <div class="panel-title">批量补全：${escapeHtml(job.status)}</div>
+        <div class="date">进度 ${Number(job.done || 0)} / ${Number(job.total || 0)} · 评论 ${Number(job.comments || 0)} · 互动 ${Number(job.interactions || 0)} · AI ${Number(job.ai || 0)} · 跳过 ${Number(job.skipped || 0)}${job.current ? ` · ${escapeHtml(job.current)}` : ""}</div>
+      </div>
+      <div class="review-actions">
+        ${job.status === "running" ? `<button class="small-btn" onclick="cancelLibraryFullSync()">停止</button>` : ""}
+        <button class="small-btn" onclick="renderLibrary()">刷新</button>
+      </div>
+    </div>
+    ${lastError ? `<div class="date" style="color:#ff9bad">最近失败：${escapeHtml(lastError.title || "")} ${escapeHtml(lastError.error || "")}</div>` : ""}
+  </section>`;
+}
+
+function cancelLibraryFullSync() {
+  window.__xiaokeCancelLibraryFullSync = true;
+  xiaokeWriteBulkJob({ status: "cancelled", current: "" });
+  showToast("已停止批量补全队列");
+  if (state.view === "library") renderLibrary();
+}
+
+async function runLibraryFullSyncQueue(targets = [], options = {}) {
+  window.__xiaokeCancelLibraryFullSync = false;
+  xiaokeWriteBulkJob({
+    status: "running",
+    total: targets.length,
+    done: 0,
+    comments: 0,
+    interactions: 0,
+    ai: 0,
+    skipped: 0,
+    errors: [],
+    current: ""
+  });
+  if (state.view === "library") renderLibrary();
+  for (const video of targets) {
+    if (window.__xiaokeCancelLibraryFullSync) break;
+    const title = quickVideoTitle(video);
+    const job = xiaokeReadBulkJob();
+    xiaokeWriteBulkJob({ current: title });
+    if (options.comments !== false) {
+      try {
+        const result = await xiaokeFetchVideoCommentsQuiet(video, Boolean(options.forceComments));
+        const currentJob = xiaokeReadBulkJob();
+        if (result && !result.skipped) {
+          xiaokeWriteBulkJob({
+            comments: Number(currentJob.comments || 0) + Number(result.comments || 0),
+            interactions: Number(currentJob.interactions || 0) + Number(result.interactions || 0)
+          });
+        } else {
+          xiaokeWriteBulkJob({ skipped: Number(currentJob.skipped || 0) + 1 });
+        }
+      } catch (error) {
+        const next = xiaokeReadBulkJob();
+        xiaokeWriteBulkJob({
+          errors: [...(next.errors || []), { id: video.id, title, step: "comments", error: String(error.message || error).slice(0, 260) }].slice(-20)
+        });
+      }
+    }
+    if (options.ai !== false) {
+      try {
+        const made = await xiaokeGenerateVideoAIQuiet(video, Boolean(options.forceAi));
+        if (made) xiaokeWriteBulkJob({ ai: Number(xiaokeReadBulkJob().ai || 0) + 1 });
+      } catch (error) {
+        const next = xiaokeReadBulkJob();
+        xiaokeWriteBulkJob({
+          errors: [...(next.errors || []), { id: video.id, title, step: "ai", error: String(error.message || error).slice(0, 260) }].slice(-20)
+        });
+      }
+    }
+    const next = xiaokeReadBulkJob();
+    xiaokeWriteBulkJob({ done: Number(next.done || 0) + 1 });
+    if (state.view === "library" && (Number(next.done || 0) % 4 === 0)) renderLibrary();
+    await new Promise(resolve => setTimeout(resolve, Number(options.delayMs || 1200)));
+  }
+  const finalStatus = window.__xiaokeCancelLibraryFullSync ? "cancelled" : "done";
+  xiaokeWriteBulkJob({ status: finalStatus, current: "", finishedAt: new Date().toISOString() });
+  window.__xiaokeCancelLibraryFullSync = false;
+  await xiaokeMergeDouyinSideDataFromServer();
+  if (state.view === "library") renderLibrary();
+  showToast(finalStatus === "done" ? "批量补全完成" : "批量补全已停止");
+}
+
+function startLibraryFullSync(options = {}) {
+  const running = xiaokeReadBulkJob().status === "running";
+  if (running) return showToast("已有批量任务在运行，先停止或等待完成");
+  const all = filteredVideos();
+  if (!all.length) return showToast("当前筛选没有视频");
+  let max = Number(options.max || 0);
+  if (!options.auto) {
+    const text = prompt(`本次处理多少条？当前筛选 ${all.length} 条。建议先 50；输入 all 处理全部。`, "50");
+    if (text == null) return;
+    max = /^all|全部$/i.test(String(text).trim()) ? all.length : Number(text || 50);
+  }
+  max = Math.max(1, Math.min(all.length, Number(max || all.length)));
+  const targets = all.slice(0, max);
+  showToast(`开始后台补全 ${targets.length} 条：评论/互动/AI`);
+  runLibraryFullSyncQueue(targets, { comments: true, ai: true, delayMs: options.delayMs || 1200 });
+}
+
+pollDouyinSyncStatus = async function xiaokePollDouyinSyncStatus(forceRender = false) {
+  const job = await xiaokeOriginalPollDouyinSyncStatus(forceRender);
+  if (job && job.status === "done") {
+    const merged = await xiaokeMergeDouyinSideDataFromServer();
+    if (merged && forceRender) showToast(`已合并抖音评论/互动 ${merged} 组`);
+    if (state.xiaokeRunAiAfterDouyinSync) {
+      state.xiaokeRunAiAfterDouyinSync = false;
+      startLibraryFullSync({ auto: true, max: Math.min(Number(job.saved || job.total || 20), 50), delayMs: 1000 });
+    }
+  }
+  return job;
+};
+
+startDouyinBloggerSync = async function xiaokeSafeBloggerSync() {
+  const url = prompt("粘贴抖音博主主页、合集或单条视频链接。后台限量同步，避免一次拉 3000 条。", localStorage.getItem("xiaoke_last_douyin_sync_url") || "");
+  if (!url) return;
+  localStorage.setItem("xiaoke_last_douyin_sync_url", url.trim());
+  const limitText = prompt("本次最多同步多少条最新视频？建议 10-20，最多 50。", localStorage.getItem("xiaoke_last_douyin_sync_limit") || "20");
+  if (limitText == null) return;
+  const limit = Math.max(1, Math.min(50, Number(limitText) || 20));
+  localStorage.setItem("xiaoke_last_douyin_sync_limit", String(limit));
+  showToast("已提交抖音后台同步：视频 + 高赞评论 + 博主互动；完成后会自动补 AI");
+  try {
+    const response = await fetch("/api/douyin-sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: url.trim(), limit, download: true, comments: true })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.success) throw new Error(data.error || "启动同步失败");
+    state.douyinSyncJob = data.job;
+    state.xiaokeRunAiAfterDouyinSync = true;
+    if (state.view === "library") renderLibrary();
+    pollDouyinSyncStatus(true);
+  } catch (error) {
+    showToast("启动失败：" + (error.message || "请检查链接/cookies"));
+  }
+};
+
+videoCardHtml = function xiaokeManagedVideoCardHtml(video = {}) {
+  const quality = xiaokeVideoQualityFlags(video);
+  const idArg = JSON.stringify(video.id);
+  const media = video.thumbnail
+    ? `<img src="${escapeHtml(video.thumbnail)}" alt="" style="width:100%;height:100%;object-fit:cover">`
+    : video.videoUrl ? `<video src="${escapeHtml(video.videoUrl)}" muted preload="metadata"></video>` : `<div class="poster">${video.isDocument ? "书" : "链"}</div>`;
+  const badge = video.isMetadata ? "元数据" : video.local ? "本地" : video.isDocument ? "书籍" : "样例";
+  const groups = typeof videoGroupsFor === "function" ? videoGroupsFor(video.id).slice(0, 2) : [];
+  return `
+    <article class="video-card" data-video-id="${escapeHtml(video.id)}" onclick='openDetail(${idArg})'>
+      <div class="thumb">${media}<span class="play">${video.isMetadata ? "↗" : "▶"}</span></div>
+      <div class="vc-body">
+        <div class="metadata-head" style="align-items:flex-start;gap:8px">
+          <h3 style="margin:0;min-width:0">${escapeHtml(quality.title)}</h3>
+          <div class="review-actions" style="flex:0 0 auto;gap:4px">
+            <button class="mini-btn" title="编辑" onclick='event.stopPropagation();editVideoRecord(${idArg})'>改</button>
+            <button class="mini-btn danger-btn" title="删除" onclick='event.stopPropagation();deleteVideo(${idArg})'>删</button>
+          </div>
+        </div>
+        <div class="metrics"><span>赞 <strong>${escapeHtml(video.likes || 0)}</strong></span><span>评 ${escapeHtml(video.comments || 0)}</span><span>转 ${escapeHtml(video.shares || 0)}</span></div>
+        <div class="date" style="margin-top:7px">${escapeHtml(badge)} · ${escapeHtml(video.date || "-")}</div>
+        ${quality.labels.length ? `<div class="video-group-row">${quality.labels.map(label => `<span class="video-group-badge">${escapeHtml(label)}</span>`).join("")}</div>` : ""}
+        ${groups.length ? `<div class="video-group-row">${groups.map(name => `<span class="video-group-badge">${escapeHtml(name)}</span>`).join("")}</div>` : ""}
+      </div>
+    </article>
+  `;
+};
+
+renderLibrary = function xiaokeManagedLibraryRender() {
+  state.view = "library";
+  restoredRenderShell();
+  if (!state.douyinCaptureStatus) {
+    xiaokeFetchDouyinStatus(true).then(() => {
+      if (state.view === "library") renderLibrary();
+    });
+  }
+  const videos = filteredVideos();
+  const total = restoredAllLibraryVideos().length;
+  state.libraryLimit = Math.max(60, Number(state.libraryLimit || 60));
+  const visible = videos.slice(0, state.libraryLimit);
+  const main = document.getElementById("main");
+  if (!main) return;
+  main.innerHTML = `
+    <div class="video-head">
+      <div>
+        <div class="panel-title" style="margin:0">视频素材库</div>
+        <div class="date">显示 ${visible.length} / 筛选 ${videos.length} / 共 ${total} 个视频 · 当前筛选：${escapeHtml(state.activeTag || "全部")}</div>
+      </div>
+      <div class="library-actions">
+        <select class="small-select" onchange="setSort(this.value)">
+          <option value="date" ${state.sort === "date" ? "selected" : ""}>按日期</option>
+          <option value="likes" ${state.sort === "likes" ? "selected" : ""}>按点赞</option>
+          <option value="title" ${state.sort === "title" ? "selected" : ""}>按标题</option>
+        </select>
+        <button class="small-btn" onclick="startDouyinBloggerSync()">自动同步博主</button>
+        <button class="small-btn" onclick="startLibraryFullSync()">同步全部评论/互动/AI</button>
+        <button class="small-btn" onclick="Promise.all([pollDouyinCookieStatus(true),pollDouyinSyncStatus(true)]).then(()=>renderLibrary())">抓取状态</button>
+        <button class="small-btn" onclick="openImport()">导入</button>
+        <button class="small-btn" onclick="renderDashboard()">返回看板</button>
+      </div>
+    </div>
+    ${xiaokeDouyinStatusHtml()}
+    ${xiaokeBulkStatusHtml()}
+    ${librarySearchHtml()}
+    ${videos.length
+      ? `<section class="video-grid">${visible.map(videoCardHtml).join("")}</section>${videos.length > visible.length ? `<div class="analysis-actions"><button class="small-btn" onclick="loadMoreLibraryVideos()">加载更多</button></div>` : ""}`
+      : `<section class="panel" style="max-width:360px"><div class="panel-title">暂无匹配视频</div><p style="color:#aeb6c6;line-height:1.7">当前搜索或分类没有结果。先清空搜索，或切回全部视频。</p><button class="open-btn" style="width:auto;padding:0 18px" onclick="clearVideoFilters()">清空筛选</button></section>`}
+  `;
+};
+
+globalThis.editVideoRecord = editVideoRecord;
+globalThis.startLibraryFullSync = startLibraryFullSync;
+globalThis.cancelLibraryFullSync = cancelLibraryFullSync;
+globalThis.xiaokeMergeDouyinSideDataFromServer = xiaokeMergeDouyinSideDataFromServer;
+globalThis.startDouyinBloggerSync = startDouyinBloggerSync;
+globalThis.pollDouyinSyncStatus = pollDouyinSyncStatus;
+globalThis.renderLibrary = renderLibrary;
+globalThis.videoCardHtml = videoCardHtml;
+
 window.addEventListener("click", e => {
   if (e.target.id === "importModal") closeImport();
   if (e.target.id === "stockModal") closeStockModal();

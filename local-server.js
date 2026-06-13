@@ -5408,6 +5408,36 @@ function cdpSession(webSocketDebuggerUrl) {
   };
 }
 
+function readDouyinCookiesForCdp() {
+  try {
+    if (!fs.existsSync(COOKIES_FILE)) return [];
+    const rows = fs.readFileSync(COOKIES_FILE, "utf8")
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(line => line && !line.startsWith("#"));
+    return rows.map(line => {
+      const parts = line.split("\t");
+      if (parts.length < 7) return null;
+      const [domain, , cookiePath, secure, expires, name, ...valueParts] = parts;
+      const value = valueParts.join("\t");
+      if (!name || !value) return null;
+      const cleanDomain = String(domain || "").replace(/^\./, "") || "douyin.com";
+      const cookie = {
+        name,
+        value,
+        domain: cleanDomain.includes("douyin.com") ? domain : cleanDomain,
+        path: cookiePath || "/",
+        secure: String(secure).toUpperCase() === "TRUE"
+      };
+      const expiry = Number(expires || 0);
+      if (expiry > 0) cookie.expires = expiry;
+      return cookie;
+    }).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 async function getDouyinDebugPage(videoUrl) {
   await ensureDouyinDebugBrowser();
   try {
@@ -5459,6 +5489,14 @@ async function stableGetDouyinCommentsViaBrowser(shareUrl, options = {}, meta = 
     await cdp.send("Page.enable");
     await cdp.send("Network.enable");
     await cdp.send("Runtime.enable");
+    const cookies = readDouyinCookiesForCdp();
+    if (cookies.length) {
+      try {
+        await cdp.send("Network.setCookies", { cookies });
+      } catch {
+        // If CDP rejects a stale cookie shape, keep going with the browser session.
+      }
+    }
     await cdp.send("Page.navigate", { url: videoUrl });
     await new Promise(resolve => setTimeout(resolve, 6000));
     for (let i = 0; i < 8 && bucket.comments.length < limit; i += 1) {
@@ -5478,6 +5516,15 @@ async function stableGetDouyinCommentsViaBrowser(shareUrl, options = {}, meta = 
     }
 
     if (!bucket.comments.length) {
+      try {
+        const tabs = await debugJsonRequest("GET", "http://127.0.0.1:9222/json");
+        const captchaTab = (Array.isArray(tabs) ? tabs : []).find(tab => /rc-verifycenter|nocaptcha|captcha|verify/i.test(`${tab.title || ""} ${tab.url || ""}`));
+        if (captchaTab) {
+          throw new Error("检测到抖音验证码/风控验证窗口。请在弹出的专用 Edge 抖音窗口里完成验证，确认能看到评论区后再点抓取。");
+        }
+      } catch (verifyError) {
+        if (/验证码|验证窗口|captcha|nocaptcha|verify/i.test(String(verifyError && verifyError.message || verifyError))) throw verifyError;
+      }
       const domResult = await cdp.send("Runtime.evaluate", {
         expression: `
           (() => Array.from(document.querySelectorAll('[data-e2e*=comment], [class*=comment]')).slice(0, 80).map((el, idx) => ({
@@ -5718,10 +5765,11 @@ function normalizeDouyinEntryUrl(entry = {}) {
 }
 
 async function listDouyinProfileVideos(profileUrl, limit = 20) {
+  const safeLimit = Math.max(1, Math.min(50, Number(limit) || 20));
   const stdout = await runWithCookieFallback([
     "--dump-single-json",
     "--flat-playlist",
-    "--playlist-end", String(Math.max(1, Math.min(200, Number(limit) || 20))),
+    "--playlist-end", String(safeLimit),
     "--no-warnings",
     "--skip-download",
     profileUrl
@@ -5743,7 +5791,7 @@ function updateDouyinSyncJob(patch) {
 
 async function runDouyinSyncJob(options = {}) {
   const sourceUrl = String(options.url || "").trim();
-  const limit = Math.max(1, Math.min(200, Number(options.limit || 20)));
+  const limit = Math.max(1, Math.min(50, Number(options.limit || 20)));
   const download = options.download !== false;
   const comments = !!options.comments;
   updateDouyinSyncJob({
@@ -6443,6 +6491,11 @@ const server = http.createServer((req, res) => {
 
   if (req.url.startsWith("/api/douyin-sync-status")) {
     sendJson(res, 200, { success: true, job: douyinSyncJob || readDouyinSyncState() || { status: "idle" } });
+    return;
+  }
+
+  if (req.url.startsWith("/api/douyin-side-data")) {
+    sendJson(res, 200, { success: true, ...readDouyinSideData() });
     return;
   }
 
