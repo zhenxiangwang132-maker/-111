@@ -13878,6 +13878,379 @@ globalThis.pollDouyinSyncStatus = pollDouyinSyncStatus;
 globalThis.renderLibrary = renderLibrary;
 globalThis.videoCardHtml = videoCardHtml;
 
+const XIAOKE_DAILY_CHECKIN_KEY = "xiaoke_daily_checkins_v1";
+
+function xiaokeCheckinToday() {
+  const now = new Date();
+  const offset = now.getTimezoneOffset() * 60000;
+  return new Date(now.getTime() - offset).toISOString().slice(0, 10);
+}
+
+function xiaokeReadCheckins() {
+  try {
+    const value = JSON.parse(localStorage.getItem(XIAOKE_DAILY_CHECKIN_KEY) || "{}");
+    return value && typeof value === "object" ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+function xiaokeSaveCheckins(data = {}) {
+  localStorage.setItem(XIAOKE_DAILY_CHECKIN_KEY, JSON.stringify(data));
+}
+
+function xiaokeDefaultTaskText() {
+  const saved = String(localStorage.getItem(DAILY_TASK_KEY) || "").trim();
+  if (saved) return saved;
+  return [
+    "毛泽东思想20页",
+    "股市趋势分析，越多越好",
+    "八段锦10分钟",
+    "模型视频学习，优先完成板块分析",
+    "辩证唯物主义原理20页",
+    "板块排行，寻找规律，验证规律，每日复盘"
+  ].join("\n");
+}
+
+function xiaokeParseCheckinTasks(text = "") {
+  const cleaned = String(text || "")
+    .replace(/\r/g, "\n")
+    .split(/\n|；|;/)
+    .map(line => line.replace(/^\s*[-*•\d.、)）]+/, "").trim())
+    .filter(Boolean);
+  return uniqueClean(cleaned).slice(0, 20);
+}
+
+function xiaokeDefaultCheckin(date = xiaokeCheckinToday()) {
+  const taskText = xiaokeDefaultTaskText();
+  const tasks = xiaokeParseCheckinTasks(taskText).map(title => ({ id: "task_" + Math.random().toString(36).slice(2), title, done: false }));
+  return {
+    date,
+    tasks,
+    focus: localStorage.getItem(DAILY_FOCUS_KEY) || "",
+    market: "",
+    study: "",
+    body: "",
+    review: "",
+    tomorrow: "",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function xiaokeGetCheckin(date = xiaokeCheckinToday()) {
+  const store = xiaokeReadCheckins();
+  if (!store[date]) {
+    store[date] = xiaokeDefaultCheckin(date);
+    xiaokeSaveCheckins(store);
+  }
+  return store[date];
+}
+
+function xiaokePutCheckin(date, patch = {}) {
+  const store = xiaokeReadCheckins();
+  const current = store[date] || xiaokeDefaultCheckin(date);
+  store[date] = { ...current, ...patch, date, updatedAt: new Date().toISOString() };
+  xiaokeSaveCheckins(store);
+  return store[date];
+}
+
+function xiaokeCheckinProgress(item = {}) {
+  const tasks = Array.isArray(item.tasks) ? item.tasks : [];
+  const done = tasks.filter(task => task.done).length;
+  return { done, total: tasks.length, pct: tasks.length ? Math.round(done / tasks.length * 100) : 0 };
+}
+
+function xiaokeDateOffset(date, offsetDays) {
+  const d = new Date(date + "T00:00:00");
+  d.setDate(d.getDate() + offsetDays);
+  return d.toISOString().slice(0, 10);
+}
+
+function xiaokeCheckinStreak() {
+  const store = xiaokeReadCheckins();
+  let date = xiaokeCheckinToday();
+  let count = 0;
+  while (store[date] && xiaokeCheckinProgress(store[date]).done > 0) {
+    count += 1;
+    date = xiaokeDateOffset(date, -1);
+  }
+  return count;
+}
+
+function xiaokeCheckinCalendarHtml(selectedDate) {
+  const store = xiaokeReadCheckins();
+  const today = xiaokeCheckinToday();
+  const cells = [];
+  for (let i = 41; i >= 0; i -= 1) {
+    const date = xiaokeDateOffset(today, -i);
+    const item = store[date];
+    const progress = xiaokeCheckinProgress(item || {});
+    const cls = [
+      "checkin-day",
+      date === today ? "today" : "",
+      date === selectedDate ? "active" : "",
+      progress.pct >= 100 ? "done" : progress.pct > 0 ? "partial" : ""
+    ].filter(Boolean).join(" ");
+    cells.push(`<button class="${cls}" onclick='openDailyCheckin(${JSON.stringify(date)})'>
+      <b>${Number(date.slice(-2))}</b>
+      <span>${progress.total ? progress.pct + "%" : ""}</span>
+    </button>`);
+  }
+  return `<div class="checkin-calendar">
+    <div class="checkin-weekdays">${["一", "二", "三", "四", "五", "六", "日"].map(day => `<span>${day}</span>`).join("")}</div>
+    <div class="checkin-days">${cells.join("")}</div>
+  </div>`;
+}
+
+function xiaokeCheckinTaskHtml(date, task, index) {
+  return `<label class="checkin-task ${task.done ? "done" : ""}">
+    <input type="checkbox" ${task.done ? "checked" : ""} onchange='toggleCheckinTask(${JSON.stringify(date)},${index},this.checked)'>
+    <span contenteditable="true" onblur='updateCheckinTaskTitle(${JSON.stringify(date)},${index},this.innerText)'>${escapeHtml(task.title || "未命名任务")}</span>
+    <button class="small-btn danger-btn" onclick='deleteCheckinTask(${JSON.stringify(date)},${index})'>删</button>
+  </label>`;
+}
+
+function xiaokeCheckinTextArea(date, field, value, placeholder) {
+  return `<textarea oninput='updateCheckinField(${JSON.stringify(date)},${JSON.stringify(field)},this.value)' placeholder="${escapeHtml(placeholder)}">${escapeHtml(value || "")}</textarea>`;
+}
+
+function xiaokeCheckinSummary(item = {}) {
+  const p = xiaokeCheckinProgress(item);
+  const parts = [
+    `任务 ${p.done}/${p.total}`,
+    item.focus ? `关注：${item.focus}` : "",
+    item.market ? `市场：${item.market}` : "",
+    item.review ? `结论：${item.review}` : ""
+  ].filter(Boolean);
+  return parts.join("\n");
+}
+
+function openDailyCheckin(date = xiaokeCheckinToday()) {
+  state.view = "dailyCheckin";
+  state.checkinDate = date || xiaokeCheckinToday();
+  try {
+    history.replaceState(null, "", `?view=dailyCheckin&date=${encodeURIComponent(state.checkinDate)}`);
+  } catch {}
+  renderDailyCheckin();
+}
+
+function renderDailyCheckin() {
+  state.view = "dailyCheckin";
+  const date = state.checkinDate || xiaokeCheckinToday();
+  const item = xiaokeGetCheckin(date);
+  const progress = xiaokeCheckinProgress(item);
+  renderTopChips();
+  document.getElementById("main").innerHTML = `
+    <section class="review-head panel checkin-hero">
+      <div>
+        <div class="panel-title">每日打卡</div>
+        <div class="date">先打卡，再复盘。任务从右侧“每日任务”自动拆分，也可以在这里直接修改。</div>
+      </div>
+      <div class="review-actions">
+        <button class="small-btn" onclick="syncCheckinTasksFromSidebar()">同步右侧任务</button>
+        <button class="small-btn" onclick="addCheckinTask()">+任务</button>
+        <button class="small-btn" onclick="copyCheckinToDailyReview()">沉淀到每日复盘</button>
+        <button class="small-btn" onclick="renderDashboard()">返回看板</button>
+      </div>
+    </section>
+    <section class="checkin-layout">
+      <div class="panel checkin-calendar-panel">
+        <div class="checkin-stats">
+          <div><b>${progress.pct}%</b><span>今日完成</span></div>
+          <div><b>${progress.done}/${progress.total}</b><span>任务</span></div>
+          <div><b>${xiaokeCheckinStreak()}</b><span>连续天数</span></div>
+        </div>
+        ${xiaokeCheckinCalendarHtml(date)}
+      </div>
+      <div class="panel checkin-main-panel">
+        <div class="daily-card-head">
+          <input class="daily-date-input" type="date" value="${escapeHtml(date)}" onchange="openDailyCheckin(this.value)">
+          <div class="date">当天完成一项也会点亮日历；全部完成显示满格。</div>
+        </div>
+        <div class="checkin-task-list">
+          ${(item.tasks || []).map((task, index) => xiaokeCheckinTaskHtml(date, task, index)).join("") || `<div class="empty-review">暂无任务，点“同步右侧任务”或“+任务”。</div>`}
+        </div>
+      </div>
+    </section>
+    <section class="panel checkin-notes">
+      <div class="daily-card-grid">
+        <label><b>今日关注</b>${xiaokeCheckinTextArea(date, "focus", item.focus, "今天重点看哪些票、板块、风险？")}</label>
+        <label><b>盘面观察</b>${xiaokeCheckinTextArea(date, "market", item.market, "指数、主线、强弱、情绪、异常信号。")}</label>
+        <label><b>学习记录</b>${xiaokeCheckinTextArea(date, "study", item.study, "读了什么、看了哪些视频、沉淀了什么概念。")}</label>
+        <label><b>身体/纪律</b>${xiaokeCheckinTextArea(date, "body", item.body, "八段锦、运动、作息、是否冲动交易。")}</label>
+        <label><b>今日复盘结论</b>${xiaokeCheckinTextArea(date, "review", item.review, "今天最重要的结论：哪些规律被验证，哪些被推翻。")}</label>
+        <label><b>明日计划</b>${xiaokeCheckinTextArea(date, "tomorrow", item.tomorrow, "明天只盯哪些条件，触发后怎么做。")}</label>
+      </div>
+    </section>
+  `;
+}
+
+function updateCheckinField(date, field, value) {
+  xiaokePutCheckin(date, { [field]: value });
+}
+
+function toggleCheckinTask(date, index, done) {
+  const item = xiaokeGetCheckin(date);
+  const tasks = Array.isArray(item.tasks) ? [...item.tasks] : [];
+  if (!tasks[index]) return;
+  tasks[index] = { ...tasks[index], done: !!done };
+  xiaokePutCheckin(date, { tasks });
+  renderDailyCheckin();
+}
+
+function updateCheckinTaskTitle(date, index, title) {
+  const item = xiaokeGetCheckin(date);
+  const tasks = Array.isArray(item.tasks) ? [...item.tasks] : [];
+  if (!tasks[index]) return;
+  tasks[index] = { ...tasks[index], title: String(title || "").trim() || "未命名任务" };
+  xiaokePutCheckin(date, { tasks });
+}
+
+function deleteCheckinTask(date, index) {
+  const item = xiaokeGetCheckin(date);
+  const tasks = (item.tasks || []).filter((_, i) => i !== index);
+  xiaokePutCheckin(date, { tasks });
+  renderDailyCheckin();
+}
+
+function addCheckinTask() {
+  const date = state.checkinDate || xiaokeCheckinToday();
+  const title = prompt("新增任务", "复盘今天最强板块并写一句规律");
+  if (!title) return;
+  const item = xiaokeGetCheckin(date);
+  const tasks = [...(item.tasks || []), { id: "task_" + Date.now(), title: title.trim(), done: false }];
+  xiaokePutCheckin(date, { tasks });
+  renderDailyCheckin();
+}
+
+function syncCheckinTasksFromSidebar() {
+  const date = state.checkinDate || xiaokeCheckinToday();
+  const titles = xiaokeParseCheckinTasks(xiaokeDefaultTaskText());
+  const item = xiaokeGetCheckin(date);
+  const old = new Map((item.tasks || []).map(task => [task.title, task]));
+  const tasks = titles.map(title => old.get(title) || { id: "task_" + Math.random().toString(36).slice(2), title, done: false });
+  xiaokePutCheckin(date, { tasks, focus: item.focus || localStorage.getItem(DAILY_FOCUS_KEY) || "" });
+  showToast("已按右侧每日任务同步打卡清单");
+  renderDailyCheckin();
+}
+
+function copyCheckinToDailyReview() {
+  const date = state.checkinDate || xiaokeCheckinToday();
+  const item = xiaokeGetCheckin(date);
+  const rows = readDailyReviews();
+  const summary = xiaokeCheckinSummary(item);
+  const existing = rows.find(row => row.date === date && row.mode === "checkin");
+  const next = {
+    id: existing ? existing.id : "review_checkin_" + Date.now(),
+    mode: "checkin",
+    date,
+    target: item.focus || "每日打卡",
+    action: "复盘",
+    position: "",
+    price: "",
+    reason: [item.market, item.study, item.body].filter(Boolean).join("\n\n"),
+    result: summary,
+    lesson: [item.review, item.tomorrow].filter(Boolean).join("\n\n")
+  };
+  saveDailyReviews(existing ? rows.map(row => row.id === existing.id ? next : row) : [next, ...rows]);
+  showToast("已沉淀到每日复盘");
+}
+
+function xiaokeDailyCheckinStylePatch() {
+  if (document.getElementById("xiaoke-daily-checkin-style")) return;
+  const style = document.createElement("style");
+  style.id = "xiaoke-daily-checkin-style";
+  style.textContent = `
+    .checkin-layout{display:grid;grid-template-columns:380px minmax(0,1fr);gap:12px;margin-bottom:12px}
+    .checkin-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+    .checkin-stats div{background:rgba(90,157,255,.08);border:1px solid rgba(90,157,255,.14);border-radius:8px;padding:12px}
+    .checkin-stats b{display:block;color:#fff;font-size:22px}.checkin-stats span{color:#8fa0b9;font-size:12px}
+    .checkin-weekdays,.checkin-days{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+    .checkin-weekdays span{text-align:center;color:#738096;font-size:12px;font-weight:800}
+    .checkin-day{height:48px;border-radius:8px;border:1px solid rgba(255,255,255,.08);background:#111821;color:#aeb8ca;display:grid;align-content:center;gap:2px}
+    .checkin-day b{font-size:14px}.checkin-day span{font-size:10px;color:#8795aa}
+    .checkin-day.partial{border-color:rgba(255,176,64,.45);background:rgba(255,176,64,.08)}
+    .checkin-day.done{border-color:rgba(25,201,139,.55);background:rgba(25,201,139,.12);color:#dfffee}
+    .checkin-day.today{box-shadow:0 0 0 1px rgba(90,157,255,.45) inset}
+    .checkin-day.active{outline:2px solid rgba(80,153,255,.75)}
+    .checkin-task-list{display:grid;gap:8px}
+    .checkin-task{display:grid;grid-template-columns:22px minmax(0,1fr) auto;align-items:center;gap:8px;padding:10px;border-radius:8px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.07)}
+    .checkin-task input{width:16px;height:16px}.checkin-task span{outline:0;color:#eef3fb;line-height:1.5}
+    .checkin-task.done span{text-decoration:line-through;color:#7f8da3}
+    .checkin-notes{margin-top:12px}
+    @media(max-width:980px){.checkin-layout{grid-template-columns:1fr}.checkin-stats b{font-size:18px}}
+  `;
+  document.head.appendChild(style);
+}
+
+const xiaokePreviousRenderTopChips = renderTopChips;
+renderTopChips = function xiaokeDailyCheckinTopChips() {
+  const chips = document.getElementById("topChips");
+  if (!chips) return;
+  const systemChips = [
+    ["我的策略", "strategy"],
+    ["每日复盘", "dailyReview"],
+    ["每日打卡", "dailyCheckin"],
+    ["板块强弱", "sectorStrength"],
+    ["模型框架", "modelFramework"],
+    ["股票档案", "stockProfiles"],
+    ["能力中心", "pipelineCenter"],
+    ["管理分组", "videoGroupManager"]
+  ].map(([label, view]) => `<a class="${state.view === view ? "chip active review-chip" : "chip review-chip"}" style="display:inline-flex;align-items:center;text-decoration:none" href="?view=${view}">${label}</a>`).join("");
+  const tagChips = allVideoTags().map(tag => {
+    const name = tag.name || tag.originalName || "";
+    const label = finalTagLabel(tag);
+    const count = tagCount(tag);
+    const cls = name === state.activeTag ? "chip active" : tag.type === "sector" && count > 15 ? "chip gold" : "chip";
+    return `<a class="${cls}" style="display:inline-flex;align-items:center;text-decoration:none" href="?tag=${encodeURIComponent(name)}">${escapeHtml(label)}(${count})</a>`;
+  }).join("");
+  chips.innerHTML = systemChips + tagChips;
+};
+
+const xiaokePreviousRender = render;
+render = function xiaokeDailyCheckinRender() {
+  xiaokeDailyCheckinStylePatch();
+  if (state.view === "dailyCheckin") return renderDailyCheckin();
+  return xiaokePreviousRender();
+};
+
+const xiaokePreviousRestoredRouteTopChip = typeof restoredRouteTopChip === "function" ? restoredRouteTopChip : null;
+restoredRouteTopChip = function xiaokeDailyCheckinRouteTopChip(label) {
+  const text = String(label || "").replace(/\(\d+\)\s*$/, "").trim();
+  if (text === "每日打卡") return openDailyCheckin();
+  return xiaokePreviousRestoredRouteTopChip ? xiaokePreviousRestoredRouteTopChip(label) : filterByTag(text || "全部");
+};
+
+const xiaokePreviousRestoredRouteHash = typeof restoredRouteHash === "function" ? restoredRouteHash : null;
+restoredRouteHash = function xiaokeDailyCheckinRouteHash() {
+  const hash = String(location.hash || "").replace(/^#/, "");
+  if (hash === "view=dailyCheckin") {
+    openDailyCheckin();
+    return true;
+  }
+  return xiaokePreviousRestoredRouteHash ? xiaokePreviousRestoredRouteHash() : false;
+};
+
+const xiaokePreviousInit = init;
+init = async function xiaokeDailyCheckinInit() {
+  await xiaokePreviousInit();
+  const params = new URLSearchParams(location.search || "");
+  if (params.get("view") === "dailyCheckin") openDailyCheckin(params.get("date") || xiaokeCheckinToday());
+};
+
+Object.assign(globalThis, {
+  openDailyCheckin,
+  renderDailyCheckin,
+  updateCheckinField,
+  toggleCheckinTask,
+  updateCheckinTaskTitle,
+  deleteCheckinTask,
+  addCheckinTask,
+  syncCheckinTasksFromSidebar,
+  copyCheckinToDailyReview
+});
+
 window.addEventListener("click", e => {
   if (e.target.id === "importModal") closeImport();
   if (e.target.id === "stockModal") closeStockModal();
