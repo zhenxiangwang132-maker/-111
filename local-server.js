@@ -7659,6 +7659,505 @@ const server = http.createServer((req, res) => {
   serveStatic(req, res);
 });
 
+{
+  const xiaokeOriginalCalculateTechnicalIndicators = calculateTechnicalIndicators;
+
+  function xiaokeEscapeRegExp(text = "") {
+    return String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function xiaokeNormalizeNaturalQuery(query = "") {
+    return String(query || "")
+      .replace(/[，；;、\n\r]/g, "，")
+      .replace(/\s+/g, "")
+      .replace(/昨日的/g, "昨日")
+      .replace(/今天/g, "今日")
+      .trim();
+  }
+
+  function xiaokeFiniteNumber(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function xiaokeSliceLow(rows, days) {
+    const values = (rows || []).slice(-days).map(row => Number(row.low)).filter(Number.isFinite);
+    return values.length ? Math.min(...values) : null;
+  }
+
+  function xiaokeSliceHigh(rows, days) {
+    const values = (rows || []).slice(-days).map(row => Number(row.high)).filter(Number.isFinite);
+    return values.length ? Math.max(...values) : null;
+  }
+
+  function xiaokeCountLimitUp(rows, days) {
+    return (rows || []).slice(-days).reduce((count, row, index, arr) => {
+      const pct = Number(row.pct);
+      if (Number.isFinite(pct)) return count + (pct >= 9.8 ? 1 : 0);
+      const prev = index === 0 ? rows[rows.length - arr.length - 1] : arr[index - 1];
+      const prevClose = Number(prev?.close);
+      const close = Number(row.close);
+      return count + (Number.isFinite(prevClose) && prevClose > 0 && (close / prevClose - 1) * 100 >= 9.8 ? 1 : 0);
+    }, 0);
+  }
+
+  calculateTechnicalIndicators = function xiaokeCalculateTechnicalIndicatorsV2(rows = [], quote = {}) {
+    const base = xiaokeOriginalCalculateTechnicalIndicators(rows, quote);
+    const clean = (rows || []).filter(row =>
+      Number.isFinite(Number(row.close)) &&
+      Number.isFinite(Number(row.high)) &&
+      Number.isFinite(Number(row.low))
+    );
+    const latest = clean[clean.length - 1] || {};
+    const previous = clean[clean.length - 2] || {};
+    const low2 = xiaokeSliceLow(clean, 2);
+    const low30 = xiaokeSliceLow(clean, 30);
+    const low60 = xiaokeSliceLow(clean, 60);
+    const high60 = xiaokeSliceHigh(clean, 60);
+    return {
+      ...base,
+      yesterdayClose: xiaokeFiniteNumber(previous.close),
+      yesterdayTurnoverRate: xiaokeFiniteNumber(previous.turnoverRate),
+      yesterdayPct: xiaokeFiniteNumber(previous.pct),
+      low2,
+      low2x08: Number.isFinite(low2) ? low2 * 0.8 : null,
+      low30,
+      high60,
+      low60,
+      limitUpCount3: xiaokeCountLimitUp(clean, 3),
+      limitUpCount5: xiaokeCountLimitUp(clean, 5),
+      limitUpCount7: xiaokeCountLimitUp(clean, 7),
+      limitUpCount10: xiaokeCountLimitUp(clean, 10),
+      limitUpCount20: xiaokeCountLimitUp(clean, 20),
+      latestTurnoverRate: xiaokeFiniteNumber(latest.turnoverRate),
+      asOf: latest.date || base.asOf
+    };
+  };
+
+  const xiaokeNaturalFields = [
+    ["昨日收盘价", "yesterdayClose", "technical"], ["昨天收盘价", "yesterdayClose", "technical"],
+    ["昨日换手率", "yesterdayTurnoverRate", "technical"], ["昨天换手率", "yesterdayTurnoverRate", "technical"],
+    ["昨日涨幅", "yesterdayPct", "technical"], ["昨天涨幅", "yesterdayPct", "technical"],
+    ["今日量比", "volumeRatio", "base"], ["9:25量比", "volumeRatio", "base"], ["量比", "volumeRatio", "base"],
+    ["今日竞价金额", "auctionAmount", "unsupported"], ["竞价金额", "auctionAmount", "unsupported"],
+    ["成交金额", "amount", "base"], ["成交额", "amount", "base"],
+    ["股价", "price", "base"], ["现价", "price", "base"], ["价格", "price", "base"], ["收盘价", "price", "base"],
+    ["当日涨幅", "pct", "base"], ["涨跌幅", "pct", "base"], ["涨幅", "pct", "base"],
+    ["换手率", "turnoverRate", "base"], ["市值", "marketCap", "base"], ["总市值", "marketCap", "base"],
+    ["最低市值", "marketCap", "base"], ["最高市值", "marketCap", "base"],
+    ["市盈率", "pe", "base"], ["PE", "pe", "base"], ["市净率", "pb", "base"], ["PB", "pb", "base"],
+    ["ROE", "roe", "base"], ["净资产收益率", "roe", "base"], ["毛利率", "grossMargin", "base"],
+    ["净利率", "netMargin", "base"], ["营收增速", "revenueGrowth", "base"], ["营收增长", "revenueGrowth", "base"],
+    ["利润增速", "profitGrowth", "base"], ["净利润增速", "profitGrowth", "base"], ["负债率", "debtRatio", "base"],
+    ["5日涨幅", "return5", "technical"], ["5日涨跌幅", "return5", "technical"],
+    ["10日涨幅", "return10", "technical"], ["10日涨跌幅", "return10", "technical"],
+    ["20日涨幅", "return20", "technical"], ["20日涨跌幅", "return20", "technical"],
+    ["60日涨幅", "return60", "technical"], ["60日涨跌幅", "return60", "technical"],
+    ["3日涨停次数", "limitUpCount3", "technical"], ["5日涨停次数", "limitUpCount5", "technical"],
+    ["7日涨停次数", "limitUpCount7", "technical"], ["10日涨停次数", "limitUpCount10", "technical"], ["20日涨停次数", "limitUpCount20", "technical"],
+    ["RSI6", "rsi6", "technical"], ["RSI12", "rsi12", "technical"], ["RSI24", "rsi24", "technical"], ["RSI", "rsi6", "technical"],
+    ["KDJ-K", "k", "technical"], ["KDJ-D", "d", "technical"], ["KDJ-J", "j", "technical"],
+    ["DIF", "dif", "technical"], ["DEA", "dea", "technical"], ["MACD", "macd", "technical"],
+    ["MA5", "ma5", "technical"], ["5日线", "ma5", "technical"], ["5日均线", "ma5", "technical"],
+    ["MA10", "ma10", "technical"], ["10日线", "ma10", "technical"], ["10日均线", "ma10", "technical"],
+    ["MA20", "ma20", "technical"], ["20日线", "ma20", "technical"], ["20日均线", "ma20", "technical"],
+    ["MA60", "ma60", "technical"], ["60日线", "ma60", "technical"], ["60日均线", "ma60", "technical"],
+    ["BOLL上轨", "bollUpper", "technical"], ["布林上轨", "bollUpper", "technical"],
+    ["BOLL中轨", "bollMid", "technical"], ["布林中轨", "bollMid", "technical"],
+    ["BOLL下轨", "bollLower", "technical"], ["布林下轨", "bollLower", "technical"],
+    ["BOLL宽度", "bollWidth", "technical"], ["布林宽度", "bollWidth", "technical"],
+    ["20日最高价", "high20", "technical"], ["20日最低价", "low20", "technical"],
+    ["60日最高价", "high60", "technical"], ["60日最低价", "low60", "technical"],
+    ["2日区间最低价", "low2", "technical"], ["2日内区间最低价", "low2", "technical"],
+    ["30日区间最低价", "low30", "technical"], ["30日最低价", "low30", "technical"]
+  ];
+
+  const xiaokeFieldPattern = xiaokeNaturalFields
+    .map(([label]) => xiaokeEscapeRegExp(label))
+    .sort((a, b) => b.length - a.length)
+    .join("|");
+  const xiaokeFieldMap = new Map(xiaokeNaturalFields.map(([label, field, scope]) => [label.toUpperCase(), { field, scope, label }]));
+
+  function xiaokeNaturalFieldDefinition(raw = "") {
+    return xiaokeFieldMap.get(String(raw || "").toUpperCase()) || null;
+  }
+
+  function xiaokeNaturalOperator(text = "") {
+    const value = String(text || "");
+    if (/^(>=|大于等于|不低于|至少|以上)$/.test(value)) return ">=";
+    if (/^(<=|小于等于|不高于|至多|以下)$/.test(value)) return "<=";
+    if (/^(>|大于|高于|超过)$/.test(value)) return ">";
+    if (/^(<|小于|低于|不足)$/.test(value)) return "<";
+    if (/^(=|等于)$/.test(value)) return "=";
+    return "";
+  }
+
+  function xiaokeNormalizeNaturalValue(field, value, unit = "") {
+    let number = Number(value);
+    if (!Number.isFinite(number)) return number;
+    if (field === "amount" || field === "marketCap") {
+      if (unit === "万") number /= 10000;
+      if (unit === "元") number /= 100000000;
+    }
+    if (field === "auctionAmount") {
+      if (unit === "万") number /= 10000;
+      if (unit === "元") number /= 100000000;
+    }
+    return number;
+  }
+
+  function xiaokeConditionKey(condition = {}) {
+    return [
+      condition.type, condition.field, condition.scope, condition.op,
+      condition.value, condition.min, condition.max, condition.fast,
+      condition.slow, condition.direction
+    ].join("|");
+  }
+
+  function xiaokeAddCondition(conditions, condition) {
+    const key = xiaokeConditionKey(condition);
+    if (!conditions.some(item => xiaokeConditionKey(item) === key)) conditions.push(condition);
+  }
+
+  parseNaturalStockQuery = function xiaokeParseNaturalStockQuery(query = "") {
+    const text = xiaokeNormalizeNaturalQuery(query);
+    const conditions = [];
+    const consumed = [];
+    let sort = null;
+
+    if (/从大到小|降序|排名|排序/.test(text)) {
+      if (/量比/.test(text)) sort = { field: "volumeRatio", direction: "desc", label: "量比从大到小" };
+      else if (/成交额|成交金额/.test(text)) sort = { field: "amount", direction: "desc", label: "成交额从大到小" };
+      else if (/换手/.test(text)) sort = { field: "turnoverRate", direction: "desc", label: "换手率从大到小" };
+      else if (/涨幅|涨跌幅/.test(text)) sort = { field: "pct", direction: "desc", label: "涨幅从大到小" };
+      if (sort) consumed.push(sort.label, `${sort.label}排名`, `${sort.label}排序`);
+    }
+
+    const comparePattern = new RegExp(`(${xiaokeFieldPattern})(>=|<=|>|<|=|大于等于|小于等于|不低于|不高于|大于|小于|高于|低于|超过|至少|至多|等于)(-?\\d+(?:\\.\\d+)?)(%|万|亿|元|倍|只|次)?`, "gi");
+    let match;
+    while ((match = comparePattern.exec(text))) {
+      const def = xiaokeNaturalFieldDefinition(match[1]);
+      const op = xiaokeNaturalOperator(match[2]);
+      if (def && op) {
+        xiaokeAddCondition(conditions, {
+          type: def.scope === "unsupported" ? "unsupported" : "compare",
+          field: def.field,
+          scope: def.scope,
+          op,
+          value: xiaokeNormalizeNaturalValue(def.field, match[3], match[4]),
+          label: match[0]
+        });
+        consumed.push(match[0]);
+      }
+    }
+
+    const suffixPattern = new RegExp(`(${xiaokeFieldPattern})(-?\\d+(?:\\.\\d+)?)(%|万|亿|元|倍|只|次)?(以上|以下)`, "gi");
+    while ((match = suffixPattern.exec(text))) {
+      const def = xiaokeNaturalFieldDefinition(match[1]);
+      if (def) {
+        xiaokeAddCondition(conditions, {
+          type: def.scope === "unsupported" ? "unsupported" : "compare",
+          field: def.field,
+          scope: def.scope,
+          op: match[4] === "以上" ? ">=" : "<=",
+          value: xiaokeNormalizeNaturalValue(def.field, match[2], match[3]),
+          label: match[0]
+        });
+        consumed.push(match[0]);
+      }
+    }
+
+    const rangePattern = new RegExp(`(${xiaokeFieldPattern})(?:在|介于)?(-?\\d+(?:\\.\\d+)?)%?(?:到|至|~|-)(-?\\d+(?:\\.\\d+)?)%?(?:之间)?`, "gi");
+    while ((match = rangePattern.exec(text))) {
+      const def = xiaokeNaturalFieldDefinition(match[1]);
+      if (def && def.scope !== "unsupported") {
+        xiaokeAddCondition(conditions, {
+          type: "range",
+          field: def.field,
+          scope: def.scope,
+          min: Number(match[2]),
+          max: Number(match[3]),
+          label: match[0]
+        });
+        consumed.push(match[0]);
+      }
+    }
+
+    if (/2日内?区间最低价\*?0\.?8小于30日区间最低价|2日内?区间最低价\*?0\.?8<30日区间最低价/.test(text)) {
+      xiaokeAddCondition(conditions, {
+        type: "formula",
+        field: "low2x08LtLow30",
+        scope: "technical",
+        label: "2日最低价*0.8 < 30日最低价"
+      });
+      consumed.push("2日内区间最低价*0.8<30日区间最低价");
+    }
+
+    const keywordConditions = [
+      ["MACD金叉", "macdGoldenCross"], ["MACD死叉", "macdDeadCross"], ["MACD红柱", "macdPositive"], ["MACD绿柱", "macdNegative"],
+      ["KDJ金叉", "kdjGoldenCross"], ["KDJ死叉", "kdjDeadCross"],
+      ["均线多头排列", "maBull"], ["多头排列", "maBull"], ["均线空头排列", "maBear"], ["空头排列", "maBear"],
+      ["站上5日线", "aboveMa5"], ["站上10日线", "aboveMa10"], ["站上20日线", "aboveMa20"], ["站上60日线", "aboveMa60"],
+      ["跌破5日线", "belowMa5"], ["跌破10日线", "belowMa10"], ["跌破20日线", "belowMa20"], ["跌破60日线", "belowMa60"],
+      ["突破BOLL上轨", "aboveBollUpper"], ["突破布林上轨", "aboveBollUpper"], ["BOLL上轨上方", "aboveBollUpper"], ["布林上轨上方", "aboveBollUpper"],
+      ["站上BOLL中轨", "aboveBollMid"], ["站上布林中轨", "aboveBollMid"], ["BOLL中轨上方", "aboveBollMid"], ["布林中轨上方", "aboveBollMid"],
+      ["跌破BOLL下轨", "belowBollLower"], ["跌破布林下轨", "belowBollLower"], ["BOLL下轨下方", "belowBollLower"], ["布林下轨下方", "belowBollLower"],
+      ["20日新高", "high20"], ["近20日新高", "high20"], ["20日新低", "low20"], ["近20日新低", "low20"],
+      ["60日新高", "high60"], ["近60日新高", "high60"], ["60日新低", "low60"], ["近60日新低", "low60"],
+      ["放量", "volumeExpansion"], ["缩量", "volumeContraction"]
+    ];
+    keywordConditions.forEach(([keyword, signal]) => {
+      if (text.toUpperCase().includes(keyword.toUpperCase())) {
+        xiaokeAddCondition(conditions, { type: "signal", field: signal, scope: "technical", label: keyword });
+        consumed.push(keyword);
+      }
+    });
+
+    const crossPattern = /(?:MA)?(5|10|20|60)日?(?:线|均线)?(上穿|下穿)(?:MA)?(5|10|20|60)日?(?:线|均线)?/gi;
+    while ((match = crossPattern.exec(text))) {
+      xiaokeAddCondition(conditions, {
+        type: "cross",
+        fast: Number(match[1]),
+        direction: match[2] === "上穿" ? "up" : "down",
+        slow: Number(match[3]),
+        scope: "technical",
+        label: match[0]
+      });
+      consumed.push(match[0]);
+    }
+
+    if (/排除ST|不要ST|非ST|剔除ST|排除退市/.test(text)) {
+      xiaokeAddCondition(conditions, { type: "excludeSt", scope: "base", label: "排除 ST / 退市" });
+      consumed.push("排除ST");
+    }
+
+    if (/量比\/昨日量比|今日量比\/昨日量比/.test(text)) {
+      xiaokeAddCondition(conditions, {
+        type: "unsupported",
+        field: "volumeRatioTodayYesterday",
+        scope: "unsupported",
+        label: "今日9:25量比/昨日量比"
+      });
+    }
+    if (/\d{4}年\d{1,2}月\d{1,2}日.*9点25分/.test(text)) {
+      xiaokeAddCondition(conditions, {
+        type: "unsupported",
+        field: "historicalAuctionPct",
+        scope: "unsupported",
+        label: "历史9:25分时涨跌幅"
+      });
+    }
+
+    const fixYesterdayField = (keyword, fromField, toField, labelName) => {
+      if (!text.includes(keyword)) return;
+      const condition = conditions.find(item => item.type === "compare" && item.field === fromField && !String(item.label || "").includes("昨日"));
+      if (condition) {
+        condition.field = toField;
+        condition.scope = "technical";
+        condition.label = `${labelName}${condition.op}${condition.value}`;
+      }
+    };
+    fixYesterdayField("昨日换手率", "turnoverRate", "yesterdayTurnoverRate", "昨日换手率");
+    fixYesterdayField("昨日收盘价", "price", "yesterdayClose", "昨日收盘价");
+    fixYesterdayField("昨日涨幅", "pct", "yesterdayPct", "昨日涨幅");
+
+    const fragments = text.split("，").filter(Boolean);
+    const sortNoisePattern = /^(今日)?(量比|成交额|成交金额|换手率|涨幅|涨跌幅)(从大到小|降序)?(排名|排序)?$/;
+    const unparsed = fragments.filter(fragment =>
+      !consumed.some(value => fragment.includes(value) || value.includes(fragment)) &&
+      !sortNoisePattern.test(fragment) &&
+      !/^(并且|且|同时|筛选|选股|A股|股票|排名|排序|从大到小)$/.test(fragment)
+    );
+    return { query: String(query || "").trim(), logic: "AND", sort, conditions, unparsed: [...new Set(unparsed)] };
+  };
+
+  enhanceNaturalParsed = function xiaokeEnhanceNaturalParsed(parsed = {}, query = "") {
+    return parseNaturalStockQuery(query || parsed.query || "");
+  };
+
+  function xiaokeNaturalReadValue(item = {}, field = "", scope = "base") {
+    if (scope === "technical" && item.technical && Object.prototype.hasOwnProperty.call(item.technical, field)) return item.technical[field];
+    if (Object.prototype.hasOwnProperty.call(item, field)) return item[field];
+    return item.technical?.[field];
+  }
+
+  function xiaokeNaturalConditionLabel(condition = {}) {
+    if (condition.label) return condition.label;
+    if (condition.type === "cross") return `MA${condition.fast}${condition.direction === "up" ? "上穿" : "下穿"}MA${condition.slow}`;
+    return condition.field || "条件";
+  }
+
+  naturalConditionPass = function xiaokeNaturalConditionPass(item = {}, condition = {}) {
+    if (condition.type === "unsupported") return true;
+    if (condition.type === "excludeSt") return !/(?:ST|退)/i.test(String(item.name || ""));
+    if (condition.type === "formula") {
+      const technical = item.technical || {};
+      if (condition.field === "low2x08LtLow30") return compareNaturalValue(technical.low2x08, "<", technical.low30);
+      return true;
+    }
+    if (condition.type === "compare") {
+      return compareNaturalValue(xiaokeNaturalReadValue(item, condition.field, condition.scope), condition.op, condition.value);
+    }
+    if (condition.type === "range") {
+      const value = Number(xiaokeNaturalReadValue(item, condition.field, condition.scope));
+      return Number.isFinite(value) && value >= Math.min(condition.min, condition.max) && value <= Math.max(condition.min, condition.max);
+    }
+    if (condition.type === "cross") {
+      const technical = item.technical || {};
+      const fast = Number(technical[`ma${condition.fast}`]);
+      const slow = Number(technical[`ma${condition.slow}`]);
+      const prevFast = Number(technical[`prevMa${condition.fast}`]);
+      const prevSlow = Number(technical[`prevMa${condition.slow}`]);
+      if (![fast, slow, prevFast, prevSlow].every(Number.isFinite)) return false;
+      return condition.direction === "up" ? prevFast <= prevSlow && fast > slow : prevFast >= prevSlow && fast < slow;
+    }
+    if (condition.type !== "signal") return true;
+    const technical = item.technical || {};
+    const price = Number(technical.price || item.price);
+    const signals = {
+      macdGoldenCross: technical.macdGoldenCross,
+      macdDeadCross: technical.macdDeadCross,
+      macdPositive: Number(technical.macd) > 0,
+      macdNegative: Number(technical.macd) < 0,
+      kdjGoldenCross: technical.kdjGoldenCross,
+      kdjDeadCross: technical.kdjDeadCross,
+      maBull: Number(technical.ma5) > Number(technical.ma10) && Number(technical.ma10) > Number(technical.ma20) && Number(technical.ma20) > Number(technical.ma60),
+      maBear: Number(technical.ma5) < Number(technical.ma10) && Number(technical.ma10) < Number(technical.ma20) && Number(technical.ma20) < Number(technical.ma60),
+      aboveMa5: price > Number(technical.ma5),
+      aboveMa10: price > Number(technical.ma10),
+      aboveMa20: price > Number(technical.ma20),
+      aboveMa60: price > Number(technical.ma60),
+      belowMa5: price < Number(technical.ma5),
+      belowMa10: price < Number(technical.ma10),
+      belowMa20: price < Number(technical.ma20),
+      belowMa60: price < Number(technical.ma60),
+      aboveBollUpper: price > Number(technical.bollUpper),
+      aboveBollMid: price > Number(technical.bollMid),
+      belowBollLower: price < Number(technical.bollLower),
+      high20: price >= Number(technical.high20) * 0.995,
+      low20: price <= Number(technical.low20) * 1.005,
+      high60: price >= Number(technical.high60) * 0.995,
+      low60: price <= Number(technical.low60) * 1.005,
+      volumeExpansion: Number(technical.volumeRatio5) >= 1.5,
+      volumeContraction: Number(technical.volumeRatio5) <= 0.7
+    };
+    return Boolean(signals[condition.field]);
+  };
+
+  naturalScreenWarnings = function xiaokeNaturalScreenWarnings(parsed = {}, source = "") {
+    const warnings = [];
+    const conditions = Array.isArray(parsed.conditions) ? parsed.conditions : [];
+    const unsupported = conditions.filter(condition => condition.type === "unsupported").map(condition => xiaokeNaturalConditionLabel(condition));
+    if (unsupported.length) {
+      warnings.push(`暂未直接支持：${[...new Set(unsupported)].join("、")}。需要本地分时/集合竞价仓库或券商终端分时数据；当前不会拿它们做硬过滤。`);
+    }
+    const unparsed = Array.isArray(parsed.unparsed) ? parsed.unparsed.filter(Boolean) : [];
+    if (unparsed.length) {
+      warnings.push(`未完全识别：${unparsed.join("、")}。建议写成“字段 + 大于/小于 + 数值”，例如“量比大于1.5”。`);
+    }
+    if (/新浪|Sina/i.test(String(source || ""))) warnings.push("当前行情源回退到新浪，财务字段可能缺失，筛选会偏严格。");
+    if (conditions.some(condition => condition.scope === "technical" || condition.type === "formula" || condition.type === "cross")) {
+      warnings.push("技术条件会先按基础条件缩小候选，再分批计算日线指标；如需更完整的全市场技术扫描，下一步建议建立本地日线仓库。");
+    }
+    if (conditions.some(condition => condition.field === "amount" && /竞价/.test(condition.label || ""))) {
+      warnings.push("竞价金额与成交额不同；当前公开快照没有集合竞价金额，建议接入 QMT 分时后再做严格竞价选股。");
+    }
+    return warnings;
+  };
+
+  runNaturalStockScreen = async function xiaokeRunNaturalStockScreenV2(query = "", options = {}) {
+    const parsed = enhanceNaturalParsed(parseNaturalStockQuery(query), query);
+    const executableConditions = (parsed.conditions || []).filter(condition => condition.type !== "unsupported");
+    if (!executableConditions.length && !parsed.sort) {
+      throw new Error("没有识别出可执行条件，请加入数值比较或 MACD/KDJ/RSI/BOLL/均线条件。");
+    }
+
+    let universe = [];
+    let source = "";
+    try {
+      universe = await getEastmoneyAShareUniverse(Boolean(options.force));
+      source = universe[0]?.source || "东方财富A股快照";
+    } catch (error) {
+      universe = await getSinaAShareUniverse();
+      source = universe[0]?.source || "新浪A股行情";
+    }
+
+    const baseConditions = executableConditions.filter(condition => condition.scope === "base");
+    const technicalConditions = executableConditions.filter(condition =>
+      condition.scope === "technical" || condition.type === "formula" || condition.type === "cross"
+    );
+    let baseMatched = universe.filter(item => baseConditions.every(condition => naturalConditionPass(item, condition)));
+    const sortField = parsed.sort?.field || "amount";
+    const sortDirection = parsed.sort?.direction === "asc" ? 1 : -1;
+    baseMatched.sort((a, b) => {
+      const av = Number(xiaokeNaturalReadValue(a, sortField, "base"));
+      const bv = Number(xiaokeNaturalReadValue(b, sortField, "base"));
+      if (Number.isFinite(av) && Number.isFinite(bv)) return (av - bv) * sortDirection;
+      return Number(b.amount || 0) - Number(a.amount || 0);
+    });
+
+    const scanLimit = Math.max(30, Math.min(800, Number(options.scanLimit || 240)));
+    const technicalPool = technicalConditions.length ? baseMatched.slice(0, scanLimit) : baseMatched;
+    const rows = new Array(technicalPool.length);
+    let cursor = 0;
+    const concurrency = Math.max(1, Math.min(8, Number(options.concurrency || 6)));
+    const worker = async () => {
+      while (cursor < technicalPool.length) {
+        const index = cursor++;
+        const item = technicalPool[index];
+        try {
+          if (!technicalConditions.length) {
+            rows[index] = {
+              ...item,
+              matchReasons: executableConditions.filter(condition => naturalConditionPass(item, condition)).map(xiaokeNaturalConditionLabel)
+            };
+            continue;
+          }
+          const history = await getHistoricalKline(item.key, { days: 220, fqt: 1 });
+          const technical = calculateTechnicalIndicators(history.rows || [], item);
+          const enriched = { ...item, technical, technicalSource: history.source || "前复权历史日线" };
+          if (technicalConditions.every(condition => naturalConditionPass(enriched, condition))) {
+            rows[index] = {
+              ...enriched,
+              matchReasons: executableConditions.filter(condition => naturalConditionPass(enriched, condition)).map(xiaokeNaturalConditionLabel)
+            };
+          }
+        } catch (error) {
+          rows[index] = null;
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, technicalPool.length || 1) }, worker));
+    let matched = rows.filter(Boolean);
+    if (parsed.sort) {
+      matched.sort((a, b) => {
+        const av = Number(xiaokeNaturalReadValue(a, sortField, a.technical ? "technical" : "base"));
+        const bv = Number(xiaokeNaturalReadValue(b, sortField, b.technical ? "technical" : "base"));
+        if (Number.isFinite(av) && Number.isFinite(bv)) return (av - bv) * sortDirection;
+        return Number(b.amount || 0) - Number(a.amount || 0);
+      });
+    }
+    matched = matched.slice(0, Math.max(10, Math.min(200, Number(options.limit || 80))));
+    return {
+      success: true,
+      query,
+      parsed,
+      items: matched,
+      universeCount: universe.length,
+      baseMatchedCount: baseMatched.length,
+      technicalScannedCount: technicalPool.length,
+      matchedCount: matched.length,
+      source,
+      technicalSource: technicalConditions.length ? "东方财富/腾讯前复权历史日线" : "未使用历史日线",
+      warnings: naturalScreenWarnings(parsed, source),
+      asOf: new Date().toISOString(),
+      note: technicalConditions.length && baseMatched.length > scanLimit
+        ? `为避免限流，技术指标先在基础命中的前 ${scanLimit} 只中计算。`
+        : "已执行当前可用条件。"
+    };
+  };
+}
+
 server.listen(PORT, "0.0.0.0", () => {
   const videos = getLocalVideos();
   console.log("\n========================================");

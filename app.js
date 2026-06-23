@@ -14229,6 +14229,10 @@ function naturalConditionLabel(condition = {}) {
     pct5: "5日涨幅", pct10: "10日涨幅", pct20: "20日涨幅", pct60: "60日涨幅", ma5: "MA5", ma10: "MA10", ma20: "MA20", ma60: "MA60",
     rsi6: "RSI6", rsi12: "RSI12", rsi24: "RSI24", k: "K", d: "D", j: "J", dif: "DIF", dea: "DEA", macd: "MACD",
     bollUpper: "BOLL上轨", bollMid: "BOLL中轨", bollLower: "BOLL下轨", bollWidth: "BOLL宽度",
+    yesterdayClose: "昨日收盘价", yesterdayTurnoverRate: "昨日换手率", yesterdayPct: "昨日涨幅",
+    low2: "2日最低价", low2x08: "2日最低价*0.8", low30: "30日最低价", high60: "60日最高价", low60: "60日最低价",
+    limitUpCount3: "3日涨停次数", limitUpCount5: "5日涨停次数", limitUpCount7: "7日涨停次数", limitUpCount10: "10日涨停次数", limitUpCount20: "20日涨停次数",
+    auctionAmount: "竞价金额", volumeRatioTodayYesterday: "今日9:25量比/昨日量比", historicalAuctionPct: "历史9:25涨跌幅",
     macdGoldenCross: "MACD金叉", macdDeadCross: "MACD死叉", kdjGoldenCross: "KDJ金叉", kdjDeadCross: "KDJ死叉",
     macdPositive: "MACD红柱", macdNegative: "MACD绿柱", maBull: "均线多头", maBear: "均线空头",
     aboveMa5: "站上5日线", aboveMa10: "站上10日线", aboveMa20: "站上20日线", aboveMa60: "站上60日线",
@@ -14245,6 +14249,11 @@ function naturalConditionLabel(condition = {}) {
     return strategyNumber(value);
   };
   if (condition.type === "excludeSt") return "排除 ST / 退市";
+  if (condition.type === "unsupported") return `需分时数据：${fields[condition.field] || condition.label || condition.field || "条件"}`;
+  if (condition.type === "formula") {
+    if (condition.field === "low2x08LtLow30") return "2日最低价*0.8 < 30日最低价";
+    return condition.label || "公式条件";
+  }
   if (condition.type === "signal") return fields[condition.field] || condition.field || "技术信号";
   if (condition.type === "cross") return `MA${condition.fast}${condition.direction === "up" ? "上穿" : "下穿"}MA${condition.slow}`;
   if (condition.type === "range") return `${fields[condition.field] || condition.field} ${valueLabel(condition.field, condition.min)} 到 ${valueLabel(condition.field, condition.max)}`;
@@ -14273,9 +14282,10 @@ function naturalScreenResultHtml(data) {
       const pctClass = Number(item.pct) >= 0 ? "up" : "down";
       const macdText = t.macdGoldenCross ? "金叉" : t.macdDeadCross ? "死叉" : `${strategyNumber(t.dif)} / ${strategyNumber(t.dea)}`;
       const kdjText = t.kdjGoldenCross ? "金叉" : t.kdjDeadCross ? "死叉" : `${strategyNumber(t.k)} / ${strategyNumber(t.d)} / ${strategyNumber(t.j)}`;
+      const reasons = (item.matchReasons || []).slice(0, 5).map(reason => `<span class="strategy-score-pill">${escapeHtml(reason)}</span>`).join("");
       return `<tr>
         <td>${index + 1}</td>
-        <td><b>${escapeHtml(item.name)}</b><div class="date">${escapeHtml(item.code)} · ${escapeHtml(item.market || "")}</div></td>
+        <td><b>${escapeHtml(item.name)}</b><div class="date">${escapeHtml(item.code)} · ${escapeHtml(item.market || "")}</div>${reasons ? `<div class="natural-condition-list compact">${reasons}</div>` : ""}</td>
         <td>${strategyNumber(item.price)}<div class="${pctClass}">${strategyNumber(item.pct, 2, "%")}</div></td>
         <td>${strategyNumber(item.volumeRatio ?? t.volumeRatio5)}<div class="date">${strategyNumber(item.turnoverRate, 2, "%")}</div></td>
         <td>5:${strategyNumber(t.ma5)}<br>10:${strategyNumber(t.ma10)}<br>20:${strategyNumber(t.ma20)}<br>60:${strategyNumber(t.ma60)}</td>
@@ -14354,10 +14364,11 @@ renderStrategy = function xiaokeProfessionalStrategyWorkbench() {
   const naturalQuery = readNaturalStockQuery();
   const naturalResult = readNaturalScreenResult();
   const naturalExamples = [
-    "排除ST，股价大于5元，量比大于1.5，换手率大于3%，MACD金叉，KDJ金叉，RSI6小于70，站上20日线",
-    "20日新高，均线多头排列，成交额大于3亿，60日涨幅在0到60%",
-    "股价3到200元，PE小于80，ROE大于5，毛利率大于15，BOLL中轨上方",
-    "昨日换手率大于5%，今日量比大于1.7，竞价金额大于180万，排除ST"
+    "昨日换手率大于5%，昨日收盘价小于10元，今日量比大于1.7，排除ST",
+    "2日内区间最低价*0.8小于30日区间最低价，7日内涨停次数大于0次，20日新高",
+    "MACD金叉，KDJ金叉，RSI6小于70，BOLL中轨上方，5日线上穿20日线",
+    "今日量比从大到小排名，成交额大于3亿，60日涨幅在0到60%",
+    "今日竞价金额大于180万，今日9:25量比/昨日量比大于1.7，排除ST"
   ];
   document.getElementById("main").innerHTML = `
     <section class="review-head panel"><div><div class="panel-title">专业投资策略工作台</div><div class="date">自由文本记录交易哲学；结构化规则负责全 A 股筛选。先筛候选，再用公告、研报、回测和 Agent 复核。</div></div><div class="review-actions"><button class="small-btn" onclick="saveCurrentStrategyVersion()">保存策略版本</button><button class="small-btn" onclick="loadInvestmentDataQuality()">刷新质量</button><button class="small-btn" onclick="runAShareStrategy(true)">刷新数据并筛选</button><button class="small-btn" onclick="renderDashboard()">返回看板</button></div></section>
@@ -17780,10 +17791,11 @@ window.addEventListener("click", e => {
 
 function xiaokeDataScreeningExamples() {
   return [
-    "排除ST，股价大于5元，量比大于1.5，换手率大于3%，MACD金叉，KDJ金叉，RSI6小于70，站上20日线",
-    "20日新高，均线多头排列，成交额大于3亿，60日涨幅在0到60%",
-    "股价3到200元，PE小于80，ROE大于5，毛利率大于15，BOLL中轨上方",
-    "昨日换手率大于5%，今日量比大于1.7，竞价金额大于180万，排除ST"
+    "昨日换手率大于5%，昨日收盘价小于10元，今日量比大于1.7，排除ST",
+    "2日内区间最低价*0.8小于30日区间最低价，7日内涨停次数大于0次，20日新高",
+    "MACD金叉，KDJ金叉，RSI6小于70，BOLL中轨上方，5日线上穿20日线",
+    "今日量比从大到小排名，成交额大于3亿，60日涨幅在0到60%",
+    "今日竞价金额大于180万，今日9:25量比/昨日量比大于1.7，排除ST"
   ];
 }
 
