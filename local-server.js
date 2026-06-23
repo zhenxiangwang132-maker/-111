@@ -35,6 +35,8 @@ const DOCUMENTS_DIR = path.join(ROOT, "documents");
 const DOCUMENT_METADATA_FILE = path.join(ROOT, "documents_metadata.json");
 const ANNOUNCEMENTS_DIR = path.join(ROOT, "announcements");
 const ANNOUNCEMENT_CACHE_FILE = path.join(ROOT, "announcement_cache.json");
+const A_SHARE_UNIVERSE_CACHE_FILE = path.join(ROOT, "a_share_universe_cache.json");
+const SECTOR_QUOTE_CACHE_FILE = path.join(ROOT, "sector_quote_cache.json");
 const DOCUMENT_TEXT_LIMIT = 160000;
 const DOCUMENT_CLIENT_TEXT_LIMIT = 80000;
 const DOCUMENT_OCR_DEFAULT_PAGES = 60;
@@ -116,6 +118,22 @@ function readAnnouncementCache() {
 
 function writeAnnouncementCache(cache) {
   fs.writeFileSync(ANNOUNCEMENT_CACHE_FILE, JSON.stringify(cache || {}, null, 2), "utf8");
+}
+
+function readMarketCache(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    const data = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    return data && Array.isArray(data.items) ? data : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeMarketCache(filePath, items) {
+  try {
+    fs.writeFileSync(filePath, JSON.stringify({ at: new Date().toISOString(), items: items || [] }), "utf8");
+  } catch {}
 }
 
 function sanitizeFilename(filename) {
@@ -2991,6 +3009,551 @@ async function getFinancialsWithInstitutional(keys) {
   }).filter(Boolean);
 }
 
+function historicalPct(rows = [], offset = 1) {
+  if (!Array.isArray(rows) || rows.length <= offset) return null;
+  const latest = Number(rows[rows.length - 1]?.close);
+  const base = Number(rows[Math.max(0, rows.length - 1 - offset)]?.close);
+  if (!Number.isFinite(latest) || !Number.isFinite(base) || base === 0) return null;
+  return Math.round((latest / base - 1) * 10000) / 100;
+}
+
+function indicatorSma(values = [], period = 5, endOffset = 0) {
+  const end = values.length - Math.max(0, endOffset);
+  const start = Math.max(0, end - period);
+  const slice = values.slice(start, end).filter(Number.isFinite);
+  return slice.length === period ? slice.reduce((sum, value) => sum + value, 0) / period : null;
+}
+
+function indicatorEmaSeries(values = [], period = 12) {
+  if (!values.length) return [];
+  const alpha = 2 / (period + 1);
+  const output = [Number(values[0])];
+  for (let i = 1; i < values.length; i += 1) output.push(Number(values[i]) * alpha + output[i - 1] * (1 - alpha));
+  return output;
+}
+
+function indicatorRsi(rows = [], period = 6) {
+  if (rows.length <= period) return null;
+  let gains = 0;
+  let losses = 0;
+  for (let i = rows.length - period; i < rows.length; i += 1) {
+    const change = Number(rows[i].close) - Number(rows[i - 1].close);
+    if (change >= 0) gains += change;
+    else losses -= change;
+  }
+  if (losses === 0) return gains > 0 ? 100 : 50;
+  const rs = gains / losses;
+  return 100 - 100 / (1 + rs);
+}
+
+function calculateTechnicalIndicators(rows = [], quote = {}) {
+  const clean = (rows || []).filter(row => Number.isFinite(Number(row.close)) && Number.isFinite(Number(row.high)) && Number.isFinite(Number(row.low)));
+  if (clean.length < 35) throw new Error("历史样本不足，至少需要35个交易日");
+  const closes = clean.map(row => Number(row.close));
+  const volumes = clean.map(row => Number(row.volume) || 0);
+  const latest = clean[clean.length - 1];
+  const previous = clean[clean.length - 2];
+  const ema12 = indicatorEmaSeries(closes, 12);
+  const ema26 = indicatorEmaSeries(closes, 26);
+  const difSeries = ema12.map((value, index) => value - ema26[index]);
+  const deaSeries = indicatorEmaSeries(difSeries, 9);
+  const dif = difSeries[difSeries.length - 1];
+  const dea = deaSeries[deaSeries.length - 1];
+  const prevDif = difSeries[difSeries.length - 2];
+  const prevDea = deaSeries[deaSeries.length - 2];
+  let k = 50;
+  let d = 50;
+  let prevK = k;
+  let prevD = d;
+  clean.forEach((row, index) => {
+    const window = clean.slice(Math.max(0, index - 8), index + 1);
+    const high = Math.max(...window.map(item => Number(item.high)));
+    const low = Math.min(...window.map(item => Number(item.low)));
+    const rsv = high === low ? 50 : (Number(row.close) - low) / (high - low) * 100;
+    prevK = k; prevD = d;
+    k = k * 2 / 3 + rsv / 3;
+    d = d * 2 / 3 + k / 3;
+  });
+  const ma5 = indicatorSma(closes, 5);
+  const ma10 = indicatorSma(closes, 10);
+  const ma20 = indicatorSma(closes, 20);
+  const ma60 = indicatorSma(closes, 60);
+  const prevMa5 = indicatorSma(closes, 5, 1);
+  const prevMa10 = indicatorSma(closes, 10, 1);
+  const prevMa20 = indicatorSma(closes, 20, 1);
+  const prevMa60 = indicatorSma(closes, 60, 1);
+  const bollWindow = closes.slice(-20);
+  const bollMid = bollWindow.reduce((sum, value) => sum + value, 0) / bollWindow.length;
+  const variance = bollWindow.reduce((sum, value) => sum + (value - bollMid) ** 2, 0) / bollWindow.length;
+  const bollStd = Math.sqrt(variance);
+  const avgVolume5 = indicatorSma(volumes.slice(0, -1), 5);
+  const avgVolume10 = indicatorSma(volumes.slice(0, -1), 10);
+  const price = Number(quote.price) || Number(latest.close);
+  return {
+    price,
+    ma5, ma10, ma20, ma60,
+    prevMa5, prevMa10, prevMa20, prevMa60,
+    return5: historicalPct(clean, 5), return10: historicalPct(clean, 10), return20: historicalPct(clean, 20), return60: historicalPct(clean, 60),
+    dif, dea, macd: (dif - dea) * 2, prevDif, prevDea, prevMacd: (prevDif - prevDea) * 2,
+    macdGoldenCross: prevDif <= prevDea && dif > dea,
+    macdDeadCross: prevDif >= prevDea && dif < dea,
+    k, d, j: 3 * k - 2 * d, prevK, prevD,
+    kdjGoldenCross: prevK <= prevD && k > d,
+    kdjDeadCross: prevK >= prevD && k < d,
+    rsi6: indicatorRsi(clean, 6), rsi12: indicatorRsi(clean, 12), rsi24: indicatorRsi(clean, 24),
+    bollMid, bollUpper: bollMid + 2 * bollStd, bollLower: bollMid - 2 * bollStd,
+    bollWidth: bollMid ? bollStd * 4 / bollMid * 100 : null,
+    volumeRatio5: avgVolume5 ? Number(latest.volume) / avgVolume5 : null,
+    volumeRatio10: avgVolume10 ? Number(latest.volume) / avgVolume10 : null,
+    high20: Math.max(...clean.slice(-20).map(row => Number(row.high))),
+    low20: Math.min(...clean.slice(-20).map(row => Number(row.low))),
+    latestVolume: Number(latest.volume) || 0,
+    previousClose: Number(previous.close),
+    asOf: latest.date
+  };
+}
+
+function naturalFieldDefinition(raw = "") {
+  const name = String(raw || "").toUpperCase().replace(/\s+/g, "");
+  const map = {
+    "股价": ["price", "base"], "现价": ["price", "base"], "收盘价": ["price", "base"], "涨幅": ["pct", "base"], "当日涨幅": ["pct", "base"],
+    "换手率": ["turnoverRate", "base"], "量比": ["volumeRatio", "base"], "成交额": ["amount", "base"], "市值": ["marketCap", "base"],
+    "PE": ["pe", "base"], "市盈率": ["pe", "base"], "PB": ["pb", "base"], "市净率": ["pb", "base"], "ROE": ["roe", "base"],
+    "5日涨幅": ["return5", "technical"], "5日涨跌幅": ["return5", "technical"], "10日涨幅": ["return10", "technical"], "10日涨跌幅": ["return10", "technical"],
+    "20日涨幅": ["return20", "technical"], "20日涨跌幅": ["return20", "technical"], "60日涨幅": ["return60", "technical"], "60日涨跌幅": ["return60", "technical"],
+    "RSI": ["rsi6", "technical"], "RSI6": ["rsi6", "technical"], "RSI12": ["rsi12", "technical"], "RSI24": ["rsi24", "technical"],
+    "K": ["k", "technical"], "D": ["d", "technical"], "J": ["j", "technical"], "DIF": ["dif", "technical"], "DEA": ["dea", "technical"], "MACD": ["macd", "technical"],
+    "MA5": ["ma5", "technical"], "5日线": ["ma5", "technical"], "MA10": ["ma10", "technical"], "10日线": ["ma10", "technical"],
+    "MA20": ["ma20", "technical"], "20日线": ["ma20", "technical"], "MA60": ["ma60", "technical"], "60日线": ["ma60", "technical"],
+    "BOLL中轨": ["bollMid", "technical"], "布林中轨": ["bollMid", "technical"], "BOLL上轨": ["bollUpper", "technical"], "布林上轨": ["bollUpper", "technical"],
+    "BOLL下轨": ["bollLower", "technical"], "布林下轨": ["bollLower", "technical"]
+  };
+  return map[name] || null;
+}
+
+function naturalOperator(text = "") {
+  if (/^(?:>=|≥|不低于|大于等于|至少)$/.test(text)) return ">=";
+  if (/^(?:<=|≤|不高于|小于等于|至多)$/.test(text)) return "<=";
+  if (/^(?:>|大于|高于|超过)$/.test(text)) return ">";
+  if (/^(?:<|小于|低于|不足)$/.test(text)) return "<";
+  if (/^(?:=|等于)$/.test(text)) return "=";
+  return "";
+}
+
+function parseNaturalStockQuery(query = "") {
+  const text = String(query || "").replace(/[，；;。\n]+/g, "、").replace(/\s+/g, "");
+  const conditions = [];
+  const consumed = [];
+  const add = condition => {
+    const key = JSON.stringify(condition);
+    if (!conditions.some(item => JSON.stringify(item) === key)) conditions.push(condition);
+  };
+  const directFields = [
+    ["股价", "price", "base"], ["现价", "price", "base"], ["收盘价", "price", "base"], ["价格", "price", "base"],
+    ["涨跌幅", "pct", "base"], ["涨幅", "pct", "base"], ["当日涨幅", "pct", "base"],
+    ["换手率", "turnoverRate", "base"], ["量比", "volumeRatio", "base"], ["成交额", "amount", "base"],
+    ["市值", "marketCap", "base"], ["总市值", "marketCap", "base"], ["PE", "pe", "base"], ["市盈率", "pe", "base"],
+    ["PB", "pb", "base"], ["市净率", "pb", "base"], ["ROE", "roe", "base"], ["毛利率", "grossMargin", "base"],
+    ["净利率", "netMargin", "base"], ["营收增速", "revenueGrowth", "base"], ["营业收入增速", "revenueGrowth", "base"],
+    ["利润增速", "profitGrowth", "base"], ["净利润增速", "profitGrowth", "base"], ["负债率", "debtRatio", "base"],
+    ["5日涨幅", "return5", "technical"], ["5日涨跌幅", "return5", "technical"],
+    ["10日涨幅", "return10", "technical"], ["10日涨跌幅", "return10", "technical"],
+    ["20日涨幅", "return20", "technical"], ["20日涨跌幅", "return20", "technical"],
+    ["60日涨幅", "return60", "technical"], ["60日涨跌幅", "return60", "technical"],
+    ["RSI", "rsi6", "technical"], ["RSI6", "rsi6", "technical"], ["RSI12", "rsi12", "technical"], ["RSI24", "rsi24", "technical"],
+    ["K", "k", "technical"], ["D", "d", "technical"], ["J", "j", "technical"], ["DIF", "dif", "technical"], ["DEA", "dea", "technical"], ["MACD", "macd", "technical"],
+    ["MA5", "ma5", "technical"], ["5日线", "ma5", "technical"], ["MA10", "ma10", "technical"], ["10日线", "ma10", "technical"],
+    ["MA20", "ma20", "technical"], ["20日线", "ma20", "technical"], ["MA60", "ma60", "technical"], ["60日线", "ma60", "technical"],
+    ["BOLL中轨", "bollMid", "technical"], ["布林中轨", "bollMid", "technical"], ["BOLL上轨", "bollUpper", "technical"],
+    ["布林上轨", "bollUpper", "technical"], ["BOLL下轨", "bollLower", "technical"], ["布林下轨", "bollLower", "technical"]
+  ];
+  const directFieldMap = new Map(directFields.map(([label, field, scope]) => [label.toUpperCase(), { field, scope }]));
+  const directFieldPattern = directFields.map(([label]) => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).sort((a, b) => b.length - a.length).join("|");
+  const directOperatorMap = { ">": ">", ">=": ">=", "<": "<", "<=": "<=", "=": "=", "大于": ">", "高于": ">", "超过": ">", "小于": "<", "低于": "<", "不高于": "<=", "不低于": ">=", "大于等于": ">=", "小于等于": "<=", "至少": ">=", "至多": "<=", "等于": "=" };
+  const directComparePattern = new RegExp(`(${directFieldPattern})(>=|<=|>|<|=|大于等于|小于等于|不低于|不高于|大于|小于|高于|低于|超过|至少|至多|等于)(-?\\d+(?:\\.\\d+)?)(%|亿|万|元|倍)?`, "gi");
+  let directMatch;
+  while ((directMatch = directComparePattern.exec(text))) {
+    const def = directFieldMap.get(String(directMatch[1] || "").toUpperCase());
+    const op = directOperatorMap[directMatch[2]];
+    if (def && op) {
+      add({ type: "compare", field: def.field, scope: def.scope, op, value: Number(directMatch[3]), label: directMatch[0] });
+      consumed.push(directMatch[0]);
+    }
+  }
+  const comparePattern = /(BOLL中轨|BOLL上轨|BOLL下轨|布林中轨|布林上轨|布林下轨|RSI(?:6|12|24)?|MACD|DIF|DEA|MA(?:5|10|20|60)|(?:5|10|20|60)日线|(?:5|10|20|60)日涨跌?幅|股价|现价|收盘价|当日涨幅|涨幅|换手率|量比|成交额|市值|PE|PB|ROE|市盈率|市净率|K|D|J)(>=|<=|≥|≤|>|<|=|不低于|不高于|大于等于|小于等于|大于|小于|高于|低于|超过|至少|至多|等于)(-?\d+(?:\.\d+)?)(%|亿|元|倍)?/gi;
+  let match;
+  while ((match = comparePattern.exec(text))) {
+    const def = naturalFieldDefinition(match[1]);
+    const op = naturalOperator(match[2]);
+    if (def && op) {
+      add({ type: "compare", field: def[0], scope: def[1], op, value: Number(match[3]), label: match[0] });
+      consumed.push(match[0]);
+    }
+  }
+  const rangePattern = /(RSI(?:6|12|24)?|(?:5|10|20|60)日涨跌?幅|股价|现价|换手率|量比|市值|PE|PB|ROE)(?:在|介于)?(-?\d+(?:\.\d+)?)%?(?:到|至|~|-)(-?\d+(?:\.\d+)?)%?(?:之间)?/gi;
+  while ((match = rangePattern.exec(text))) {
+    const def = naturalFieldDefinition(match[1]);
+    if (def) {
+      add({ type: "range", field: def[0], scope: def[1], min: Number(match[2]), max: Number(match[3]), label: match[0] });
+      consumed.push(match[0]);
+    }
+  }
+  const keywordConditions = [
+    ["MACD金叉", "macdGoldenCross"], ["MACD死叉", "macdDeadCross"], ["MACD红柱", "macdPositive"], ["MACD绿柱", "macdNegative"],
+    ["KDJ金叉", "kdjGoldenCross"], ["KDJ死叉", "kdjDeadCross"], ["均线多头排列", "maBull"], ["多头排列", "maBull"], ["均线空头排列", "maBear"], ["空头排列", "maBear"],
+    ["站上5日线", "aboveMa5"], ["站上10日线", "aboveMa10"], ["站上20日线", "aboveMa20"], ["站上60日线", "aboveMa60"],
+    ["跌破5日线", "belowMa5"], ["跌破10日线", "belowMa10"], ["跌破20日线", "belowMa20"], ["跌破60日线", "belowMa60"],
+    ["突破BOLL上轨", "aboveBollUpper"], ["突破布林上轨", "aboveBollUpper"], ["站上BOLL中轨", "aboveBollMid"], ["站上布林中轨", "aboveBollMid"], ["跌破BOLL下轨", "belowBollLower"], ["跌破布林下轨", "belowBollLower"],
+    ["近20日新高", "high20"], ["20日新高", "high20"], ["近20日新低", "low20"], ["20日新低", "low20"], ["放量", "volumeExpansion"], ["缩量", "volumeContraction"]
+  ];
+  keywordConditions.forEach(([keyword, signal]) => {
+    if (text.toUpperCase().includes(keyword.toUpperCase())) {
+      add({ type: "signal", field: signal, scope: "technical", label: keyword });
+      consumed.push(keyword);
+    }
+  });
+  const crossPattern = /(MA|)(5|10|20|60)日?线?(上穿|下穿)(MA|)(5|10|20|60)日?线?/gi;
+  while ((match = crossPattern.exec(text))) {
+    add({ type: "cross", fast: Number(match[2]), direction: match[3] === "上穿" ? "up" : "down", slow: Number(match[5]), scope: "technical", label: match[0] });
+    consumed.push(match[0]);
+  }
+  if (/排除ST|不要ST|非ST/i.test(text)) {
+    add({ type: "excludeSt", scope: "base", label: "排除ST/退市" });
+    consumed.push("排除ST", "不要ST", "非ST");
+  }
+  const fragments = text.split("、").filter(Boolean);
+  const unparsed = fragments.filter(fragment => !consumed.some(value => fragment.includes(value) || value.includes(fragment)) && !/^(并且|且|同时|筛选|选出|股票|A股)+$/i.test(fragment));
+  return { query: String(query || "").trim(), logic: "AND", conditions, unparsed };
+}
+
+function compareNaturalValue(actual, op, expected) {
+  const value = Number(actual);
+  if (!Number.isFinite(value)) return false;
+  if (op === ">") return value > expected;
+  if (op === ">=") return value >= expected;
+  if (op === "<") return value < expected;
+  if (op === "<=") return value <= expected;
+  return value === expected;
+}
+
+function naturalConditionPass(item = {}, condition = {}) {
+  const technical = item.technical || {};
+  const source = condition.scope === "technical" ? technical : item;
+  if (condition.type === "compare") return compareNaturalValue(source[condition.field], condition.op, condition.value);
+  if (condition.type === "range") {
+    const value = Number(source[condition.field]);
+    return Number.isFinite(value) && value >= Math.min(condition.min, condition.max) && value <= Math.max(condition.min, condition.max);
+  }
+  if (condition.type === "excludeSt") return !/(?:ST|退)/i.test(String(item.name || ""));
+  if (condition.type === "cross") {
+    const fast = technical[`ma${condition.fast}`];
+    const slow = technical[`ma${condition.slow}`];
+    const prevFast = technical[`prevMa${condition.fast}`];
+    const prevSlow = technical[`prevMa${condition.slow}`];
+    return condition.direction === "up" ? prevFast <= prevSlow && fast > slow : prevFast >= prevSlow && fast < slow;
+  }
+  if (condition.type !== "signal") return true;
+  const signals = {
+    macdGoldenCross: technical.macdGoldenCross, macdDeadCross: technical.macdDeadCross, macdPositive: technical.macd > 0, macdNegative: technical.macd < 0,
+    kdjGoldenCross: technical.kdjGoldenCross, kdjDeadCross: technical.kdjDeadCross,
+    maBull: technical.ma5 > technical.ma10 && technical.ma10 > technical.ma20 && technical.ma20 > technical.ma60,
+    maBear: technical.ma5 < technical.ma10 && technical.ma10 < technical.ma20 && technical.ma20 < technical.ma60,
+    aboveMa5: technical.price > technical.ma5, aboveMa10: technical.price > technical.ma10, aboveMa20: technical.price > technical.ma20, aboveMa60: technical.price > technical.ma60,
+    belowMa5: technical.price < technical.ma5, belowMa10: technical.price < technical.ma10, belowMa20: technical.price < technical.ma20, belowMa60: technical.price < technical.ma60,
+    aboveBollUpper: technical.price > technical.bollUpper, aboveBollMid: technical.price > technical.bollMid, belowBollLower: technical.price < technical.bollLower,
+    high20: technical.price >= technical.high20 * 0.995, low20: technical.price <= technical.low20 * 1.005,
+    volumeExpansion: technical.volumeRatio5 >= 1.5, volumeContraction: technical.volumeRatio5 <= 0.7
+  };
+  return Boolean(signals[condition.field]);
+}
+
+function naturalScreenWarnings(parsed = {}, source = "") {
+  const warnings = [];
+  const conditions = Array.isArray(parsed.conditions) ? parsed.conditions : [];
+  const unparsed = Array.isArray(parsed.unparsed) ? parsed.unparsed.filter(Boolean) : [];
+  if (unparsed.length) {
+    warnings.push(`暂未精确支持：${unparsed.join("、")}。竞价金额、昨日换手、涨停次数、复杂区间公式，需要本地日线/分时仓库后才能做到同花顺级别。`);
+  }
+  const fieldLabels = {
+    volumeRatio: "实时量比",
+    amount: "成交额",
+    marketCap: "市值",
+    roe: "ROE",
+    grossMargin: "毛利率",
+    netMargin: "净利率",
+    revenueGrowth: "营收增速",
+    profitGrowth: "利润增速",
+    debtRatio: "负债率",
+    pct60: "60日涨幅"
+  };
+  if (/新浪|Sina/i.test(String(source || ""))) {
+    const missingLabels = conditions
+      .filter(condition => condition.scope === "base" && Object.prototype.hasOwnProperty.call(fieldLabels, condition.field))
+      .map(condition => fieldLabels[condition.field] || condition.field);
+    if (missingLabels.length) {
+      warnings.push(`当前行情源回退到新浪，${[...new Set(missingLabels)].join("、")}等字段可能缺失，筛选会偏严格。建议稍后重试东方财富源，或先删除这些字段。`);
+    }
+  }
+  if (conditions.some(condition => condition.scope === "technical")) {
+    warnings.push("MACD/KDJ/RSI/BOLL/均线等技术条件会先按基础条件缩小候选，再分批计算日线，避免一次请求全市场导致页面卡死。");
+  }
+  return warnings;
+}
+
+function enhanceNaturalParsed(parsed = {}, query = "") {
+  const text = String(query || "").replace(/[，,；;\n]+/g, "、").replace(/\s+/g, "");
+  // The newer parser below is unit-aware. Starting from an empty list avoids
+  // legacy matches like "180万" being interpreted as 180亿 before normalization.
+  const conditions = [];
+  const consumed = [];
+  const add = condition => {
+    const key = `${condition.type}|${condition.field || ""}|${condition.scope || ""}|${condition.op || ""}|${condition.value ?? ""}|${condition.min ?? ""}|${condition.max ?? ""}|${condition.fast ?? ""}|${condition.slow ?? ""}|${condition.direction || ""}`;
+    if (!conditions.some(item => `${item.type}|${item.field || ""}|${item.scope || ""}|${item.op || ""}|${item.value ?? ""}|${item.min ?? ""}|${item.max ?? ""}|${item.fast ?? ""}|${item.slow ?? ""}|${item.direction || ""}` === key)) {
+      conditions.push(condition);
+    }
+  };
+  const fields = [
+    ["股价", "price", "base"], ["现价", "price", "base"], ["收盘价", "price", "base"], ["价格", "price", "base"],
+    ["涨跌幅", "pct", "base"], ["涨幅", "pct", "base"], ["当日涨幅", "pct", "base"],
+    ["换手率", "turnoverRate", "base"], ["量比", "volumeRatio", "base"], ["成交额", "amount", "base"],
+    ["市值", "marketCap", "base"], ["总市值", "marketCap", "base"], ["PE", "pe", "base"], ["市盈率", "pe", "base"],
+    ["PB", "pb", "base"], ["市净率", "pb", "base"], ["ROE", "roe", "base"], ["毛利率", "grossMargin", "base"],
+    ["净利率", "netMargin", "base"], ["营收增速", "revenueGrowth", "base"], ["营业收入增速", "revenueGrowth", "base"],
+    ["利润增速", "profitGrowth", "base"], ["净利润增速", "profitGrowth", "base"], ["负债率", "debtRatio", "base"],
+    ["5日涨幅", "return5", "technical"], ["5日涨跌幅", "return5", "technical"],
+    ["10日涨幅", "return10", "technical"], ["10日涨跌幅", "return10", "technical"],
+    ["20日涨幅", "return20", "technical"], ["20日涨跌幅", "return20", "technical"],
+    ["60日涨幅", "return60", "technical"], ["60日涨跌幅", "return60", "technical"],
+    ["RSI", "rsi6", "technical"], ["RSI6", "rsi6", "technical"], ["RSI12", "rsi12", "technical"], ["RSI24", "rsi24", "technical"],
+    ["K", "k", "technical"], ["D", "d", "technical"], ["J", "j", "technical"], ["DIF", "dif", "technical"], ["DEA", "dea", "technical"], ["MACD", "macd", "technical"],
+    ["MA5", "ma5", "technical"], ["5日线", "ma5", "technical"], ["MA10", "ma10", "technical"], ["10日线", "ma10", "technical"],
+    ["MA20", "ma20", "technical"], ["20日线", "ma20", "technical"], ["MA60", "ma60", "technical"], ["60日线", "ma60", "technical"],
+    ["BOLL中轨", "bollMid", "technical"], ["布林中轨", "bollMid", "technical"], ["BOLL上轨", "bollUpper", "technical"],
+    ["布林上轨", "bollUpper", "technical"], ["BOLL下轨", "bollLower", "technical"], ["布林下轨", "bollLower", "technical"]
+  ];
+  const map = new Map(fields.map(([label, field, scope]) => [label.toUpperCase(), { field, scope }]));
+  const fieldPattern = fields.map(([label]) => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).sort((a, b) => b.length - a.length).join("|");
+  const opMap = { ">": ">", ">=": ">=", "<": "<", "<=": "<=", "=": "=", "大于": ">", "高于": ">", "超过": ">", "小于": "<", "低于": "<", "不高于": "<=", "不低于": ">=", "大于等于": ">=", "小于等于": "<=", "至少": ">=", "至多": "<=", "等于": "=" };
+  const normalizeNaturalNumber = (field, value, unit = "") => {
+    let number = Number(value);
+    if (!Number.isFinite(number)) return number;
+    if ((field === "amount" || field === "marketCap") && unit === "万") number /= 10000;
+    if ((field === "amount" || field === "marketCap") && unit === "元") number /= 100000000;
+    return number;
+  };
+  const comparePattern = new RegExp(`(${fieldPattern})(>=|<=|>|<|=|大于等于|小于等于|不低于|不高于|大于|小于|高于|低于|超过|至少|至多|等于)(-?\\d+(?:\\.\\d+)?)(%|亿|万|元|倍)?`, "gi");
+  let match;
+  while ((match = comparePattern.exec(text))) {
+    const def = map.get(String(match[1] || "").toUpperCase());
+    const op = opMap[match[2]];
+    if (def && op) {
+      add({ type: "compare", field: def.field, scope: def.scope, op, value: normalizeNaturalNumber(def.field, match[3], match[4]), label: match[0] });
+      consumed.push(match[0]);
+    }
+  }
+  const rangePattern = new RegExp(`(${fieldPattern})(?:在|介于)?(-?\\d+(?:\\.\\d+)?)%?(?:到|至|~|-)(-?\\d+(?:\\.\\d+)?)%?(?:之间)?`, "gi");
+  while ((match = rangePattern.exec(text))) {
+    const def = map.get(String(match[1] || "").toUpperCase());
+    if (def) {
+      add({ type: "range", field: def.field, scope: def.scope, min: Number(match[2]), max: Number(match[3]), label: match[0] });
+      consumed.push(match[0]);
+    }
+  }
+  const keywordConditions = [
+    ["MACD金叉", "macdGoldenCross"], ["MACD死叉", "macdDeadCross"], ["MACD红柱", "macdPositive"], ["MACD绿柱", "macdNegative"],
+    ["KDJ金叉", "kdjGoldenCross"], ["KDJ死叉", "kdjDeadCross"], ["均线多头排列", "maBull"], ["多头排列", "maBull"], ["均线空头排列", "maBear"], ["空头排列", "maBear"],
+    ["站上5日线", "aboveMa5"], ["站上10日线", "aboveMa10"], ["站上20日线", "aboveMa20"], ["站上60日线", "aboveMa60"],
+    ["跌破5日线", "belowMa5"], ["跌破10日线", "belowMa10"], ["跌破20日线", "belowMa20"], ["跌破60日线", "belowMa60"],
+    ["突破BOLL上轨", "aboveBollUpper"], ["突破布林上轨", "aboveBollUpper"], ["BOLL上轨上方", "aboveBollUpper"], ["布林上轨上方", "aboveBollUpper"],
+    ["站上BOLL中轨", "aboveBollMid"], ["站上布林中轨", "aboveBollMid"], ["BOLL中轨上方", "aboveBollMid"], ["布林中轨上方", "aboveBollMid"],
+    ["跌破BOLL下轨", "belowBollLower"], ["跌破布林下轨", "belowBollLower"], ["BOLL下轨下方", "belowBollLower"], ["布林下轨下方", "belowBollLower"],
+    ["20日新高", "high20"], ["近20日新高", "high20"], ["20日新低", "low20"], ["近20日新低", "low20"], ["放量", "volumeExpansion"], ["缩量", "volumeContraction"]
+  ];
+  keywordConditions.forEach(([keyword, signal]) => {
+    if (text.toUpperCase().includes(keyword.toUpperCase())) {
+      add({ type: "signal", field: signal, scope: "technical", label: keyword });
+      consumed.push(keyword);
+    }
+  });
+  const crossPattern = /(MA|)(5|10|20|60)日?线?(上穿|下穿)(MA|)(5|10|20|60)日?线?/gi;
+  while ((match = crossPattern.exec(text))) {
+    add({ type: "cross", fast: Number(match[2]), direction: match[3] === "上穿" ? "up" : "down", slow: Number(match[5]), scope: "technical", label: match[0] });
+    consumed.push(match[0]);
+  }
+  if (/排除ST|不要ST|非ST/i.test(text)) {
+    add({ type: "excludeSt", scope: "base", label: "排除 ST / 退市" });
+    consumed.push("排除ST", "不要ST", "非ST");
+  }
+  const fragments = text.split("、").filter(Boolean);
+  const unparsed = fragments.filter(fragment => !consumed.some(value => fragment.includes(value) || value.includes(fragment)) && !/^(并且|且|同时|筛选|选股|股票|A股)+$/i.test(fragment));
+  return { ...parsed, query: String(query || "").trim(), logic: "AND", conditions, unparsed: [...new Set(unparsed)] };
+}
+
+async function runNaturalStockScreen(query = "", options = {}) {
+  const parsed = enhanceNaturalParsed(parseNaturalStockQuery(query), query);
+  if (!parsed.conditions.length) throw new Error("没有识别出可执行条件，请加入数值比较或MACD/KDJ/RSI/BOLL/均线条件。	");
+  let universe = [];
+  let source = "";
+  try {
+    universe = await getEastmoneyAShareUniverse(Boolean(options.force));
+    source = universe[0]?.source || "东方财富A股快照";
+  } catch (error) {
+    universe = await getSinaAShareUniverse();
+    source = universe[0]?.source || "新浪A股行情";
+  }
+  const baseConditions = parsed.conditions.filter(condition => condition.scope === "base");
+  const technicalConditions = parsed.conditions.filter(condition => condition.scope === "technical");
+  let baseMatched = universe.filter(item => baseConditions.every(condition => naturalConditionPass(item, condition)));
+  baseMatched.sort((a, b) => Number(b.amount || 0) - Number(a.amount || 0));
+  const scanLimit = Math.max(30, Math.min(500, Number(options.scanLimit || 240)));
+  const technicalPool = technicalConditions.length ? baseMatched.slice(0, scanLimit) : baseMatched;
+  const rows = new Array(technicalPool.length);
+  let cursor = 0;
+  const concurrency = Math.max(1, Math.min(8, Number(options.concurrency || 6)));
+  const worker = async () => {
+    while (cursor < technicalPool.length) {
+      const index = cursor++;
+      const item = technicalPool[index];
+      if (!technicalConditions.length) { rows[index] = item; continue; }
+      try {
+        const history = await getHistoricalKline(item.key, { days: 180, fqt: 1 });
+        const technical = calculateTechnicalIndicators(history.rows || [], item);
+        const enriched = { ...item, technical, technicalSource: history.source || "前复权历史日线" };
+        if (technicalConditions.every(condition => naturalConditionPass(enriched, condition))) rows[index] = enriched;
+      } catch (error) {
+        rows[index] = null;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, technicalPool.length || 1) }, worker));
+  const matched = rows.filter(Boolean).slice(0, Math.max(10, Math.min(200, Number(options.limit || 80))));
+  const warnings = naturalScreenWarnings(parsed, source);
+  return {
+    success: true, query, parsed, items: matched, universeCount: universe.length, baseMatchedCount: baseMatched.length,
+    technicalScannedCount: technicalPool.length, matchedCount: matched.length, source,
+    technicalSource: technicalConditions.length ? "东方财富/腾讯前复权历史日线" : "未使用历史日线",
+    warnings,
+    asOf: new Date().toISOString(),
+    note: technicalConditions.length && baseMatched.length > scanLimit ? `为避免限流，技术指标在成交额靠前的${scanLimit}只初筛股票中计算。` : "所有初筛候选均已执行技术指标计算。"
+  };
+}
+
+function auditFieldMeta(value, source, asOf, options = {}) {
+  const present = value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value));
+  return {
+    source: source || "未取得来源",
+    asOf: asOf || "",
+    cached: Boolean(options.cached),
+    status: present ? "available" : "missing",
+    missingReason: present ? "" : (options.missingReason || "上游数据源未返回该字段")
+  };
+}
+
+function candidateTradingFlags(item = {}) {
+  const name = String(item.name || "");
+  const pct = Math.abs(Number(item.pct));
+  const limitPct = /ST/i.test(name) ? 5 : /^(?:sz30|sh688)/i.test(item.key || "") ? 20 : 10;
+  return {
+    adjustment: "前复权",
+    corporateActionHandling: "历史收益使用前复权价格；现金分红和送转仍需公告复核",
+    limitStatus: Number.isFinite(pct) && pct >= limitPct - 0.05 ? "疑似涨跌停" : "正常波动",
+    delistingRisk: /(?:ST|退)/i.test(name) ? "名称含ST/退市风险标记" : "未见名称风险标记",
+    pointInTimeUniverse: "当前股票池，不包含已退市历史成分；回测仍存在幸存者偏差"
+  };
+}
+
+async function auditAShareCandidates(items = [], options = {}) {
+  const candidates = (Array.isArray(items) ? items : []).slice(0, 60);
+  const concurrency = Math.max(1, Math.min(6, Number(options.concurrency || 4)));
+  const results = new Array(candidates.length);
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < candidates.length) {
+      const index = cursor++;
+      const original = candidates[index] || {};
+      const key = normalizeStockBriefKey(original.key || original.code || "");
+      if (!key) {
+        results[index] = { ...original, auditStatus: "failed", auditError: "无法识别股票代码" };
+        continue;
+      }
+      try {
+        const [financialRows, history] = await Promise.all([
+          getFinancialsWithInstitutional([key]),
+          getHistoricalKline(key, { days: 300 })
+        ]);
+        const financial = financialRows[0] || {};
+        const rows = history.rows || [];
+        const merged = {
+          ...original,
+          key,
+          roe: financial.roe ?? original.roe ?? null,
+          grossMargin: financial.grossMargin ?? original.grossMargin ?? null,
+          netMargin: financial.netMargin ?? original.netMargin ?? null,
+          revenueGrowth: financial.revenueGrowth ?? original.revenueGrowth ?? null,
+          profitGrowth: financial.profitGrowth ?? original.profitGrowth ?? null,
+          debtRatio: financial.debtRatio ?? original.debtRatio ?? null,
+          revenue: financial.revenue ?? original.revenue ?? null,
+          netProfit: financial.netProfit ?? original.netProfit ?? null,
+          reportDate: financial.reportDate || original.reportDate || "",
+          pct20: historicalPct(rows, 20),
+          pct60: historicalPct(rows, 60),
+          pct120: historicalPct(rows, 120),
+          historyStart: rows[0]?.date || "",
+          historyEnd: rows[rows.length - 1]?.date || "",
+          historyCount: rows.length,
+          latestVolume: Number(rows[rows.length - 1]?.volume),
+          financialSource: financial.financialSource || financial.source || "",
+          historySource: history.source || "历史日线",
+          auditStatus: "verified",
+          auditedAt: new Date().toISOString()
+        };
+        const quoteSource = original.source || original.quoteSource || "全市场行情快照";
+        const quoteAsOf = original.updatedAt || original.asOf || merged.auditedAt;
+        const financialSource = merged.financialSource || "东方财富财务";
+        const historySource = merged.historySource || "历史日线";
+        merged.fieldMeta = {
+          price: auditFieldMeta(merged.price, quoteSource, quoteAsOf),
+          pct: auditFieldMeta(merged.pct, quoteSource, quoteAsOf),
+          amount: auditFieldMeta(merged.amount, quoteSource, quoteAsOf),
+          turnoverRate: auditFieldMeta(merged.turnoverRate, quoteSource, quoteAsOf),
+          pe: auditFieldMeta(merged.pe, quoteSource, quoteAsOf),
+          pb: auditFieldMeta(merged.pb, quoteSource, quoteAsOf),
+          marketCap: auditFieldMeta(merged.marketCap, quoteSource, quoteAsOf),
+          roe: auditFieldMeta(merged.roe, financialSource, merged.reportDate),
+          grossMargin: auditFieldMeta(merged.grossMargin, financialSource, merged.reportDate),
+          netMargin: auditFieldMeta(merged.netMargin, financialSource, merged.reportDate),
+          revenueGrowth: auditFieldMeta(merged.revenueGrowth, financialSource, merged.reportDate),
+          profitGrowth: auditFieldMeta(merged.profitGrowth, financialSource, merged.reportDate),
+          debtRatio: auditFieldMeta(merged.debtRatio, financialSource, merged.reportDate),
+          pct20: auditFieldMeta(merged.pct20, historySource, merged.historyEnd),
+          pct60: auditFieldMeta(merged.pct60, historySource, merged.historyEnd),
+          pct120: auditFieldMeta(merged.pct120, historySource, merged.historyEnd)
+        };
+        merged.tradingControl = candidateTradingFlags(merged);
+        const auditFields = ["roe", "grossMargin", "revenueGrowth", "profitGrowth", "debtRatio", "pct20", "pct60", "pct120"];
+        const present = auditFields.filter(field => merged[field] !== null && merged[field] !== undefined && merged[field] !== "" && Number.isFinite(Number(merged[field]))).length;
+        merged.auditCoverage = Math.round(present / auditFields.length * 100);
+        results[index] = merged;
+      } catch (error) {
+        results[index] = { ...original, key, auditStatus: "failed", auditError: error.message || "深度复核失败", auditedAt: new Date().toISOString() };
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, candidates.length || 1) }, worker));
+  const latestMarketDate = results.reduce((latest, item) => item?.historyEnd && item.historyEnd > latest ? item.historyEnd : latest, "");
+  results.forEach(item => {
+    if (!item || item.auditStatus !== "verified") return;
+    item.tradingControl = {
+      ...(item.tradingControl || {}),
+      latestMarketDate,
+      suspensionStatus: item.latestVolume === 0
+        ? "最新交易日零成交，疑似停牌"
+        : (latestMarketDate && item.historyEnd < latestMarketDate ? `日线停留在${item.historyEnd}，疑似停牌或数据缺失` : "交易日线正常")
+    };
+  });
+  return results;
+}
+
 function stripHtmlTags(text = "") {
   return String(text || "").replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
 }
@@ -3392,6 +3955,67 @@ async function buildDataSourceHealth() {
   };
 }
 
+function buildInvestmentDataQuality() {
+  const marketCache = readMarketCache(A_SHARE_UNIVERSE_CACHE_FILE);
+  const sectorCache = readMarketCache(SECTOR_QUOTE_CACHE_FILE);
+  const marketItems = marketCache?.items || [];
+  const sectorItems = sectorCache?.items || [];
+  const hasValue = value => value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value));
+  const coverage = (items, fields) => {
+    if (!items.length || !fields.length) return 0;
+    const available = items.reduce((total, item) => total + fields.filter(field => hasValue(item[field])).length, 0);
+    return Math.round(available / (items.length * fields.length) * 100);
+  };
+  const transcriptCount = fs.existsSync(TRANSCRIPTS_DIR)
+    ? fs.readdirSync(TRANSCRIPTS_DIR).filter(name => /\.txt$/i.test(name)).length
+    : 0;
+  const documentCount = readDocumentMetadata().length;
+  const quoteFields = ["price", "pct", "amount", "turnoverRate", "pe", "pb", "marketCap"];
+  const financialFields = ["roe", "grossMargin", "revenueGrowth", "profitGrowth", "debtRatio", "netMargin"];
+  const trendFields = ["pct60", "pctYtd"];
+  const quoteCoverage = coverage(marketItems, quoteFields);
+  const financialCoverage = coverage(marketItems, financialFields);
+  const trendCoverage = coverage(marketItems, trendFields);
+  const score = Math.round(quoteCoverage * 0.45 + financialCoverage * 0.3 + trendCoverage * 0.15 + (sectorItems.length ? 10 : 0));
+  return {
+    success: true,
+    checkedAt: new Date().toISOString(),
+    score,
+    grade: score >= 85 ? "A" : score >= 70 ? "B" : score >= 55 ? "C" : "D",
+    market: {
+      count: marketItems.length,
+      updatedAt: marketCache?.at || null,
+      source: marketItems[0]?.source || "尚无成功缓存",
+      quoteCoverage,
+      financialCoverage,
+      trendCoverage
+    },
+    sectors: {
+      count: sectorItems.length,
+      updatedAt: sectorCache?.at || null,
+      source: sectorItems[0]?.source || "尚无成功缓存"
+    },
+    knowledge: {
+      transcripts: transcriptCount,
+      documents: documentCount,
+      douyinMetadata: readMetadata().length
+    },
+    qmt: readQmtBridgeStatus(),
+    methodology: {
+      adjustment: "候选深度复核使用前复权日线",
+      suspension: "以最新共同交易日和零成交量识别疑似停牌",
+      limit: "按主板10%、创业板/科创板20%、ST 5%近似识别涨跌停",
+      delisting: "名称风险标记可识别；完整退市历史仍需正式历史证券主表",
+      universe: "当前筛选使用现存A股股票池，不是历史时点成分股"
+    },
+    warnings: [
+      financialCoverage < 70 ? "全市场财务字段覆盖不足，财务条件只能标记待复核。" : "",
+      trendCoverage < 70 ? "60日/年内趋势字段覆盖不足，需补历史行情。" : "",
+      !sectorItems.length ? "尚无板块行情快照。" : ""
+    ].filter(Boolean)
+  };
+}
+
 function normalizeDouyinMetadata(info, shareUrl, parseError = "") {
   const id = info && (info.id || info.display_id) ? String(info.id || info.display_id) : (shareUrl.match(/\/video\/(\d+)/) || [])[1] || String(Date.now());
   const timestamp = info && info.timestamp ? new Date(info.timestamp * 1000).toISOString() : new Date().toISOString();
@@ -3458,16 +4082,16 @@ async function getEastmoneySectorQuotes(names = []) {
   const wanted = [...new Set((names || []).map(name => String(name || "").trim()).filter(Boolean))];
   const params = new URLSearchParams({
     pn: "1",
-    pz: "500",
+    pz: "100",
     po: "1",
     np: "1",
     fltt: "2",
     invt: "2",
     fid: "f3",
     fs: "m:90+t:2,m:90+t:3",
-    fields: "f12,f14,f2,f3,f20"
+    fields: "f12,f14,f2,f3,f6,f8,f20,f24,f25,f104,f105,f128,f136"
   });
-  const response = await fetch(`https://push2.eastmoney.com/api/qt/clist/get?${params.toString()}`, {
+  const response = await fetch(`https://82.push2.eastmoney.com/api/qt/clist/get?${params.toString()}`, {
     headers: {
       "User-Agent": "Mozilla/5.0",
       Referer: "https://quote.eastmoney.com/"
@@ -3481,10 +4105,19 @@ async function getEastmoneySectorQuotes(names = []) {
     name: String(row.f14 || ""),
     price: row.f2,
     pct: Number(row.f3),
+    amount: Number(row.f6),
+    turnoverRate: Number(row.f8),
     marketCap: row.f20,
+    pct60: Number(row.f24),
+    pctYtd: Number(row.f25),
+    upCount: Number(row.f104),
+    downCount: Number(row.f105),
+    leader: String(row.f128 || ""),
+    leaderPct: Number(row.f136),
     source: "东方财富板块"
   })).filter(row => row.name);
-  if (!wanted.length) return normalized.slice(0, 80);
+  writeMarketCache(SECTOR_QUOTE_CACHE_FILE, normalized);
+  if (!wanted.length) return normalized.slice(0, 200);
   return wanted.map(name => {
     const compact = name.replace(/\s+/g, "");
     const matched = normalized.find(row => row.name === name)
@@ -3492,6 +4125,191 @@ async function getEastmoneySectorQuotes(names = []) {
       || normalized.find(row => compact.includes(row.name.replace(/概念|板块|指数|ETF/gi, "")));
     return matched ? { ...matched, query: name } : { name, query: name, source: "未匹配东方财富板块" };
   });
+}
+
+async function getSinaSectorQuotes(names = []) {
+  const response = await fetch("https://vip.stock.finance.sina.com.cn/q/view/newSinaHy.php", {
+    headers: { Referer: "https://finance.sina.com.cn/", "User-Agent": "Mozilla/5.0" }
+  });
+  if (!response.ok) throw new Error(`新浪行业板块接口失败 ${response.status}`);
+  const text = decodeTencentQuote(Buffer.from(await response.arrayBuffer()));
+  const jsonText = text.slice(text.indexOf("{")).replace(/;\s*$/, "");
+  const payload = JSON.parse(jsonText || "{}");
+  const normalized = Object.values(payload).map(value => {
+    const parts = String(value || "").split(",");
+    return {
+      code: parts[0] || "", name: parts[1] || "", price: Number(parts[3]), pct: Number(parts[5]),
+      amount: Number(parts[7]), turnoverRate: null, marketCap: null, pct60: null, pctYtd: null,
+      upCount: null, downCount: null, leaderCode: parts[8] || "", leaderPct: Number(parts[9]),
+      leader: parts[12] || "", source: "新浪财经行业板块实时行情"
+    };
+  }).filter(row => row.name && Number.isFinite(row.pct));
+  if (!normalized.length) throw new Error("新浪行业板块返回空数据");
+  writeMarketCache(SECTOR_QUOTE_CACHE_FILE, normalized);
+  const wanted = [...new Set((names || []).map(name => String(name || "").trim()).filter(Boolean))];
+  if (!wanted.length) return normalized;
+  return wanted.map(name => {
+    const matched = normalized.find(row => row.name === name)
+      || normalized.find(row => row.name.includes(name) || name.includes(row.name));
+    return matched ? { ...matched, query: name } : { name, query: name, source: "新浪行业板块未匹配" };
+  });
+}
+
+let aShareUniverseCache = { at: 0, items: [] };
+
+function aShareMarketName(code = "") {
+  if (/^688/.test(code)) return "科创板";
+  if (/^30/.test(code)) return "创业板";
+  if (/^[48]/.test(code)) return "北交所";
+  return "主板";
+}
+
+function aShareQuoteKey(code = "") {
+  if (/^6/.test(code)) return "sh" + code;
+  if (/^[48]/.test(code)) return "bj" + code;
+  return "sz" + code;
+}
+
+async function getEastmoneyAShareUniverse(force = false) {
+  if (!force && aShareUniverseCache.items.length && Date.now() - aShareUniverseCache.at < 5 * 60 * 1000) return aShareUniverseCache.items;
+  const fetchPage = async pn => {
+    const params = new URLSearchParams({
+      pn: String(pn), pz: "100", po: "1", np: "1", fltt: "2", invt: "2", fid: "f6",
+      fs: "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23",
+      fields: "f12,f14,f2,f3,f6,f8,f9,f10,f20,f21,f23,f24,f25,f37,f40,f41,f45,f46,f49,f57"
+    });
+    const response = await fetch(`https://82.push2.eastmoney.com/api/qt/clist/get?${params.toString()}`, {
+      headers: { Referer: "https://quote.eastmoney.com/", "User-Agent": "Mozilla/5.0" }
+    });
+    if (!response.ok) throw new Error(`东方财富 A 股列表接口失败 ${response.status}`);
+    return response.json().catch(() => ({}));
+  };
+  const first = await fetchPage(1);
+  const total = Number(first?.data?.total || 0);
+  const rows = Array.isArray(first?.data?.diff) ? [...first.data.diff] : [];
+  const pageCount = Math.max(1, Math.ceil(total / 100));
+  for (let start = 2; start <= pageCount; start += 8) {
+    const pages = [];
+    for (let page = start; page < Math.min(start + 8, pageCount + 1); page += 1) pages.push(page);
+    const payloads = await Promise.all(pages.map(fetchPage));
+    payloads.forEach(data => { if (Array.isArray(data?.data?.diff)) rows.push(...data.data.diff); });
+  }
+  const items = rows.map(row => {
+    const code = String(row.f12 || "");
+    const revenue = Number(row.f40);
+    const netProfit = Number(row.f45);
+    return {
+      key: aShareQuoteKey(code), code, name: String(row.f14 || ""), market: aShareMarketName(code),
+      price: Number(row.f2), pct: Number(row.f3), amount: Number(row.f6) / 100000000,
+      turnoverRate: Number(row.f8), pe: Number(row.f9), volumeRatio: Number(row.f10),
+      marketCap: Number(row.f20) / 100000000, circulatingMarketCap: Number(row.f21) / 100000000,
+      pb: Number(row.f23), pct60: Number(row.f24), pctYtd: Number(row.f25), roe: Number(row.f37),
+      revenue: Number.isFinite(revenue) ? revenue / 100000000 : null,
+      revenueGrowth: Number(row.f41), netProfit: Number.isFinite(netProfit) ? netProfit / 100000000 : null,
+      profitGrowth: Number(row.f46), grossMargin: Number(row.f49), debtRatio: Number(row.f57),
+      netMargin: Number.isFinite(revenue) && revenue !== 0 && Number.isFinite(netProfit) ? netProfit / revenue * 100 : null,
+      source: "东方财富 A 股行情/财务快照"
+    };
+  }).filter(item => /^\d{6}$/.test(item.code) && item.name && Number.isFinite(item.price) && item.price > 0);
+  aShareUniverseCache = { at: Date.now(), items };
+  writeMarketCache(A_SHARE_UNIVERSE_CACHE_FILE, items);
+  return items;
+}
+
+async function getSinaAShareUniverse() {
+  const endpoint = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData";
+  const headers = { Referer: "https://finance.sina.com.cn/", "User-Agent": "Mozilla/5.0" };
+  const countResponse = await fetch("https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeStockCount?node=hs_a", { headers });
+  if (!countResponse.ok) throw new Error(`新浪 A 股数量接口失败 ${countResponse.status}`);
+  const count = Number(String(await countResponse.text()).replace(/\D/g, "")) || 5600;
+  const pageCount = Math.ceil(count / 100);
+  const fetchPage = async page => {
+    const params = new URLSearchParams({ page: String(page), num: "100", sort: "amount", asc: "0", node: "hs_a", symbol: "", _s_r_a: "page" });
+    const response = await fetch(`${endpoint}?${params.toString()}`, { headers });
+    if (!response.ok) throw new Error(`新浪 A 股行情接口失败 ${response.status}`);
+    const data = await response.json().catch(() => []);
+    return Array.isArray(data) ? data : [];
+  };
+  const rows = [];
+  for (let start = 1; start <= pageCount; start += 10) {
+    const pages = Array.from({ length: Math.min(10, pageCount - start + 1) }, (_, index) => start + index);
+    const payloads = await Promise.all(pages.map(fetchPage));
+    payloads.forEach(items => rows.push(...items));
+  }
+  const items = rows.map(row => {
+    const code = String(row.code || "");
+    return {
+      key: String(row.symbol || aShareQuoteKey(code)), code, name: String(row.name || ""), market: aShareMarketName(code),
+      price: Number(row.trade), pct: Number(row.changepercent), amount: Number(row.amount) / 100000000,
+      turnoverRate: Number(row.turnoverratio), pe: Number(row.per), pb: Number(row.pb),
+      marketCap: Number(row.mktcap) / 10000, circulatingMarketCap: Number(row.nmc) / 10000,
+      pct60: null, pctYtd: null, roe: null, revenue: null, revenueGrowth: null, netProfit: null,
+      profitGrowth: null, grossMargin: null, debtRatio: null, netMargin: null,
+      source: "新浪财经 A 股实时行情（财务指标待复核）"
+    };
+  }).filter(item => /^\d{6}$/.test(item.code) && item.name && Number.isFinite(item.price) && item.price > 0);
+  if (!items.length) throw new Error("新浪 A 股行情返回空数据");
+  aShareUniverseCache = { at: Date.now(), items };
+  writeMarketCache(A_SHARE_UNIVERSE_CACHE_FILE, items);
+  return items;
+}
+
+function screenRuleNumber(rules, key) {
+  if (rules[key] === "" || rules[key] === null || rules[key] === undefined) return null;
+  const value = Number(rules[key]);
+  return Number.isFinite(value) ? value : null;
+}
+
+function aShareStrategyScore(item = {}) {
+  const clamp = (value, min, max) => Math.max(min, Math.min(max, Number(value) || 0));
+  const quality = clamp(item.roe, 0, 20) / 20 * 20 + clamp(item.grossMargin, 0, 50) / 50 * 10 + clamp(item.netMargin, 0, 20) / 20 * 10;
+  const growth = (clamp(item.revenueGrowth, -20, 50) + 20) / 70 * 12 + (clamp(item.profitGrowth, -30, 80) + 30) / 110 * 18;
+  const momentum = (clamp(item.pct60, -30, 60) + 30) / 90 * 15 + (clamp(item.pct, -5, 8) + 5) / 13 * 5;
+  const liquidity = clamp(Math.log10(Math.max(1, item.amount)), 0, 2) / 2 * 5;
+  const valuation = item.pe > 0 && item.pe <= 60 ? 5 : item.pe > 60 && item.pe <= 100 ? 2 : 0;
+  return Math.round(Math.max(0, Math.min(100, quality + growth + momentum + liquidity + valuation)));
+}
+
+function screenAShareUniverse(items = [], rules = {}) {
+  const market = String(rules.market || "all");
+  const tests = [
+    ["price", "priceMin", "min"], ["price", "priceMax", "max"], ["pct", "pctMin", "min"], ["pct", "pctMax", "max"],
+    ["turnoverRate", "turnoverMin", "min"], ["turnoverRate", "turnoverMax", "max"], ["pe", "peMin", "min"], ["pe", "peMax", "max"],
+    ["pb", "pbMax", "max"], ["marketCap", "marketCapMin", "min"], ["marketCap", "marketCapMax", "max"],
+    ["amount", "amountMin", "min"], ["pct60", "pct60Min", "min"], ["pct60", "pct60Max", "max"],
+    ["roe", "roeMin", "min"], ["grossMargin", "grossMarginMin", "min"], ["revenueGrowth", "revenueGrowthMin", "min"],
+    ["profitGrowth", "profitGrowthMin", "min"], ["debtRatio", "debtRatioMax", "max"]
+  ];
+  const matched = items.filter(item => {
+    if (rules.excludeSt !== false && /(?:ST|退)/i.test(item.name)) return false;
+    if (market !== "all" && item.market !== market) return false;
+    return tests.every(([field, ruleKey, direction]) => {
+      const threshold = screenRuleNumber(rules, ruleKey);
+      if (threshold === null) return true;
+      const rawValue = item[field];
+      if (rawValue === null || rawValue === undefined || rawValue === "") return true;
+      const value = Number(rawValue);
+      if (!Number.isFinite(value)) return true;
+      return direction === "min" ? value >= threshold : value <= threshold;
+    });
+  }).map(item => {
+    const reasons = [];
+    if (Number(item.roe) >= 10) reasons.push(`ROE ${item.roe.toFixed(2)}%`);
+    if (Number(item.revenueGrowth) > 0 && Number(item.profitGrowth) > 0) reasons.push("营收利润双增长");
+    if (Number(item.pct60) > 0) reasons.push(`60日 ${item.pct60.toFixed(2)}%`);
+    if (Number(item.pe) > 0 && Number(item.pe) <= 40) reasons.push(`PE ${item.pe.toFixed(2)}`);
+    const missingChecks = tests.filter(([field, ruleKey]) => {
+      if (screenRuleNumber(rules, ruleKey) === null) return false;
+      const value = item[field];
+      return value === null || value === undefined || value === "" || !Number.isFinite(Number(value));
+    }).map(([, ruleKey]) => ruleKey);
+    if (missingChecks.length) reasons.push(`待复核 ${missingChecks.length} 项财务/趋势条件`);
+    return { ...item, strategyScore: aShareStrategyScore(item), reasons, missingChecks };
+  });
+  const sortBy = String(rules.sortBy || "strategyScore");
+  const lowerFirst = ["pe", "pb", "debtRatio"].includes(sortBy);
+  matched.sort((a, b) => lowerFirst ? (Number(a[sortBy]) || 0) - (Number(b[sortBy]) || 0) : (Number(b[sortBy]) || 0) - (Number(a[sortBy]) || 0));
+  return matched.slice(0, Math.max(10, Math.min(200, Number(rules.limit || 50))));
 }
 
 function readRequestBody(req, limit = 1024 * 1024) {
@@ -5806,6 +6624,7 @@ async function runDouyinSyncJob(options = {}) {
     done: 0,
     saved: 0,
     failed: 0,
+    commentsFailed: 0,
     current: "",
     errors: []
   });
@@ -5820,10 +6639,52 @@ async function runDouyinSyncJob(options = {}) {
     for (const item of items.slice(0, limit)) {
       updateDouyinSyncJob({ current: item.title || item.url });
       try {
-        if (download) await saveDouyin(item.url);
-        await getDouyinMetadata(item.url);
-        if (comments) await stableGetDouyinCommentsAndPersist(item.url, { limit: 50 });
-        updateDouyinSyncJob({ done: (douyinSyncJob.done || 0) + 1, saved: (douyinSyncJob.saved || 0) + 1 });
+        let itemWorked = false;
+        if (download) {
+          try {
+            await saveDouyin(item.url);
+            itemWorked = true;
+          } catch (downloadError) {
+            const errors = [...(douyinSyncJob.errors || []), {
+              url: item.url,
+              step: "download",
+              error: compactDouyinError(downloadError)
+            }].slice(-20);
+            updateDouyinSyncJob({ errors });
+          }
+        }
+        try {
+          await getDouyinMetadata(item.url);
+          itemWorked = true;
+        } catch (metadataError) {
+          const errors = [...(douyinSyncJob.errors || []), {
+            url: item.url,
+            step: "metadata",
+            error: compactDouyinError(metadataError)
+          }].slice(-20);
+          updateDouyinSyncJob({ errors });
+        }
+        if (comments) {
+          try {
+            await stableGetDouyinCommentsAndPersist(item.url, { limit: 50 });
+            itemWorked = true;
+          } catch (commentError) {
+            const errors = [...(douyinSyncJob.errors || []), {
+              url: item.url,
+              step: "comments",
+              error: compactDouyinError(commentError)
+            }].slice(-20);
+            updateDouyinSyncJob({
+              commentsFailed: Number(douyinSyncJob.commentsFailed || 0) + 1,
+              errors
+            });
+          }
+        }
+        updateDouyinSyncJob({
+          done: (douyinSyncJob.done || 0) + 1,
+          saved: (douyinSyncJob.saved || 0) + (itemWorked ? 1 : 0),
+          failed: (douyinSyncJob.failed || 0) + (itemWorked ? 0 : 1)
+        });
       } catch (error) {
         const errors = [...(douyinSyncJob.errors || []), { url: item.url, error: compactDouyinError(error) }].slice(-20);
         updateDouyinSyncJob({ done: (douyinSyncJob.done || 0) + 1, failed: (douyinSyncJob.failed || 0) + 1, errors });
@@ -6098,6 +6959,104 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.url.startsWith("/api/sector-quotes")) {
+    const url = new URL(req.url, "http://localhost");
+    const names = (url.searchParams.get("names") || "").split(",");
+    getEastmoneySectorQuotes(names)
+      .then(items => sendJson(res, 200, { success: true, items, source: "东方财富板块", cached: false }))
+      .catch(error => {
+        getSinaSectorQuotes(names)
+          .then(items => sendJson(res, 200, { success: true, items, source: "新浪财经行业板块", cached: false, warning: error.message }))
+          .catch(fallbackError => {
+            const cached = readMarketCache(SECTOR_QUOTE_CACHE_FILE);
+            const wanted = names.map(name => String(name || "").trim()).filter(Boolean);
+            const rows = cached?.items || [];
+            const items = wanted.length
+              ? wanted.map(name => rows.find(row => row.name === name || row.name.includes(name) || name.includes(row.name)) || { name, query: name, source: "缓存未匹配" })
+              : rows.slice(0, 200);
+            sendJson(res, items.length ? 200 : 502, { success: Boolean(items.length), error: `${error.message}；${fallbackError.message}`, items, source: items.length ? "板块最近成功缓存" : "板块行情", cached: Boolean(items.length), asOf: cached?.at || null });
+          });
+      });
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/a-share-screen") {
+    (async () => {
+      const body = await readRequestBody(req);
+      const payload = JSON.parse(body || "{}");
+      const rules = payload.rules || {};
+      let universe = [];
+      let cached = false;
+      let upstreamError = "";
+      try {
+        universe = await getEastmoneyAShareUniverse(Boolean(payload.force));
+      } catch (error) {
+        upstreamError = error.message;
+        try {
+          universe = await getSinaAShareUniverse();
+        } catch (fallbackError) {
+          const saved = readMarketCache(A_SHARE_UNIVERSE_CACHE_FILE);
+          universe = saved?.items || [];
+          cached = universe.length > 0;
+          upstreamError = `${upstreamError}；${fallbackError.message}`;
+        }
+      }
+      if (!universe.length) throw new Error(upstreamError || "A 股全市场数据暂不可用");
+      const items = screenAShareUniverse(universe, rules);
+      sendJson(res, 200, {
+        success: true,
+        universeCount: universe.length,
+        matchedCount: items.length,
+        items,
+        rules,
+        asOf: new Date().toISOString(),
+        source: cached ? "A 股最近成功缓存" : (universe[0]?.source || "东方财富 A 股行情/财务快照"),
+        cached,
+        warning: upstreamError,
+        note: "策略分仅用于候选排序，不代表上涨概率或投资评级。"
+      });
+    })().catch(error => sendJson(res, 502, { success: false, error: error.message, items: [] }));
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/a-share-candidate-audit") {
+    (async () => {
+      const body = await readRequestBody(req, 2 * 1024 * 1024);
+      const payload = JSON.parse(body || "{}");
+      const auditedItems = await auditAShareCandidates(payload.items || [], payload.options || {});
+      const verified = auditedItems.filter(item => item.auditStatus === "verified").length;
+      const failed = auditedItems.length - verified;
+      const coverage = auditedItems.length
+        ? Math.round(auditedItems.reduce((sum, item) => sum + Number(item.auditCoverage || 0), 0) / auditedItems.length)
+        : 0;
+      const items = screenAShareUniverse(auditedItems, { ...(payload.rules || {}), limit: Math.max(10, auditedItems.length) });
+      sendJson(res, 200, {
+        success: true,
+        items,
+        auditedCount: auditedItems.length,
+        verified,
+        failed,
+        coverage,
+        asOf: new Date().toISOString(),
+        source: "东方财富财务 / 东方财富或腾讯历史日线",
+        note: "深度复核只补全候选股，不对全市场逐股请求，避免限流和页面卡顿。"
+      });
+    })().catch(error => sendJson(res, 502, { success: false, error: error.message, items: [] }));
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/a-share-natural-screen") {
+    (async () => {
+      const body = await readRequestBody(req, 2 * 1024 * 1024);
+      const payload = JSON.parse(body || "{}");
+      const query = String(payload.query || "").trim();
+      if (!query) throw new Error("请输入自然语言选股条件。");
+      const result = await runNaturalStockScreen(query, payload.options || {});
+      sendJson(res, 200, result);
+    })().catch(error => sendJson(res, 502, { success: false, error: error.message, items: [] }));
+    return;
+  }
+
   if (req.url === "/api/market-indexes") {
     getMarketIndexes()
       .then(items => sendJson(res, 200, { success: true, items }))
@@ -6123,6 +7082,29 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.method === "POST" && req.url === "/api/a-share-screen") {
+    readRequestBody(req)
+      .then(body => {
+        const payload = JSON.parse(body || "{}");
+        return getEastmoneyAShareUniverse(Boolean(payload.force)).then(universe => ({ universe, rules: payload.rules || {} }));
+      })
+      .then(({ universe, rules }) => {
+        const items = screenAShareUniverse(universe, rules);
+        sendJson(res, 200, {
+          success: true,
+          universeCount: universe.length,
+          matchedCount: items.length,
+          items,
+          rules,
+          asOf: new Date().toISOString(),
+          source: "东方财富 A 股行情/财务快照",
+          note: "策略分仅用于候选排序，不代表上涨概率或投资评级。"
+        });
+      })
+      .catch(error => sendJson(res, 502, { success: false, error: error.message, items: [] }));
+    return;
+  }
+
   if (req.url.startsWith("/api/institutional-probe")) {
     const url = new URL(req.url, "http://localhost");
     const connect = ["1", "true", "yes"].includes(String(url.searchParams.get("connect") || "").toLowerCase());
@@ -6136,6 +7118,11 @@ const server = http.createServer((req, res) => {
     buildDataSourceHealth()
       .then(result => sendJson(res, 200, result))
       .catch(error => sendJson(res, 502, { success: false, error: error.message }));
+    return;
+  }
+
+  if (req.url.startsWith("/api/investment-data-quality")) {
+    sendJson(res, 200, buildInvestmentDataQuality());
     return;
   }
 

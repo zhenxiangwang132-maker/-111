@@ -22,6 +22,8 @@ ocr_titles.json
 qmt_bridge_codes.json
 qmt_bridge_quotes.json
 stock_profiles.json
+a_share_universe_cache.json
+sector_quote_cache.json
 video_data_export.json
 video-folders.txt
 
