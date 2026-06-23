@@ -17778,6 +17778,245 @@ window.addEventListener("click", e => {
   }
 });
 
+function xiaokeDataScreeningExamples() {
+  return [
+    "排除ST，股价大于5元，量比大于1.5，换手率大于3%，MACD金叉，KDJ金叉，RSI6小于70，站上20日线",
+    "20日新高，均线多头排列，成交额大于3亿，60日涨幅在0到60%",
+    "股价3到200元，PE小于80，ROE大于5，毛利率大于15，BOLL中轨上方",
+    "昨日换手率大于5%，今日量比大于1.7，竞价金额大于180万，排除ST"
+  ];
+}
+
+function xiaokeStrategyRulesPanelHtml(rules) {
+  return `
+    <div class="metadata-head">
+      <div>
+        <div class="panel-title">A 股筛选规则</div>
+        <div class="date">空白字段表示不限制；文字筛选适合快速表达，结构化规则适合复用。</div>
+      </div>
+      <select class="small-select" onchange="if(this.value)applyStrategyPreset(this.value)">
+        <option value="">应用预设</option>
+        <option value="quality">质量成长</option>
+        <option value="momentum">趋势动量</option>
+        <option value="value">低估值质量</option>
+        <option value="default">均衡策略</option>
+      </select>
+    </div>
+    <div class="strategy-rule-toolbar">
+      <label><span>市场</span><select onchange="updateStrategyRule('market',this.value,'text')"><option value="all" ${rules.market==='all'?'selected':''}>全部A股</option><option value="主板" ${rules.market==='主板'?'selected':''}>主板</option><option value="创业板" ${rules.market==='创业板'?'selected':''}>创业板</option><option value="科创板" ${rules.market==='科创板'?'selected':''}>科创板</option><option value="北交所" ${rules.market==='北交所'?'selected':''}>北交所</option></select></label>
+      <label class="strategy-check"><input type="checkbox" ${rules.excludeSt!==false?'checked':''} onchange="updateStrategyRule('excludeSt',this.checked,'boolean')">排除 ST / 退市</label>
+      <label><span>排序</span><select onchange="updateStrategyRule('sortBy',this.value,'text')"><option value="strategyScore" ${rules.sortBy==='strategyScore'?'selected':''}>综合策略分</option><option value="pct" ${rules.sortBy==='pct'?'selected':''}>当日涨幅</option><option value="pct60" ${rules.sortBy==='pct60'?'selected':''}>60日强度</option><option value="roe" ${rules.sortBy==='roe'?'selected':''}>ROE</option><option value="profitGrowth" ${rules.sortBy==='profitGrowth'?'selected':''}>利润增速</option><option value="amount" ${rules.sortBy==='amount'?'selected':''}>成交额</option><option value="pe" ${rules.sortBy==='pe'?'selected':''}>PE从低到高</option></select></label>
+    </div>
+    <div class="strategy-rule-grid">
+      ${strategyRuleInput('priceMin','最低股价',rules.priceMin,'元')}
+      ${strategyRuleInput('priceMax','最高股价',rules.priceMax,'元')}
+      ${strategyRuleInput('pctMin','当日最低涨幅',rules.pctMin,'%')}
+      ${strategyRuleInput('pctMax','当日最高涨幅',rules.pctMax,'%')}
+      ${strategyRuleInput('turnoverMin','最低换手率',rules.turnoverMin,'%')}
+      ${strategyRuleInput('turnoverMax','最高换手率',rules.turnoverMax,'%')}
+      ${strategyRuleInput('amountMin','最低成交额',rules.amountMin,'亿')}
+      ${strategyRuleInput('marketCapMin','最低市值',rules.marketCapMin,'亿')}
+      ${strategyRuleInput('marketCapMax','最高市值',rules.marketCapMax,'亿')}
+      ${strategyRuleInput('peMin','最低PE',rules.peMin,'倍')}
+      ${strategyRuleInput('peMax','最高PE',rules.peMax,'倍')}
+      ${strategyRuleInput('pbMax','最高PB',rules.pbMax,'倍')}
+      ${strategyRuleInput('roeMin','最低ROE',rules.roeMin,'%')}
+      ${strategyRuleInput('grossMarginMin','最低毛利率',rules.grossMarginMin,'%')}
+      ${strategyRuleInput('revenueGrowthMin','最低营收增速',rules.revenueGrowthMin,'%')}
+      ${strategyRuleInput('profitGrowthMin','最低利润增速',rules.profitGrowthMin,'%')}
+      ${strategyRuleInput('debtRatioMax','最高负债率',rules.debtRatioMax,'%')}
+      ${strategyRuleInput('pct60Min','60日最低涨幅',rules.pct60Min,'%')}
+      ${strategyRuleInput('pct60Max','60日最高涨幅',rules.pct60Max,'%')}
+      ${strategyRuleInput('limit','最多结果',rules.limit,'只')}
+    </div>
+    <button class="open-btn strategy-run-btn" onclick="runAShareStrategy()">运行 A 股筛选</button>
+  `;
+}
+
+function openDataScreening() {
+  state.view = "dataScreening";
+  state.search = "";
+  const input = document.getElementById("searchInput");
+  if (input) input.value = "";
+  if (typeof restoredNavigate === "function") return restoredNavigate("dataScreening", renderDataScreening);
+  renderDataScreening();
+}
+
+function renderDataScreening() {
+  state.view = "dataScreening";
+  restoredRenderShell();
+  const rules = readStrategyRules();
+  const result = readStrategyScreenResult();
+  const naturalQuery = readNaturalStockQuery();
+  const naturalResult = readNaturalScreenResult();
+  const examples = xiaokeDataScreeningExamples();
+  const main = document.getElementById("main");
+  if (!main) return;
+  main.innerHTML = `
+    <section class="review-head panel">
+      <div>
+        <div class="panel-title">数据筛选</div>
+        <div class="date">这里专门做同花顺式条件选股、数据质量检查和候选列表；股票档案看证据，量化工作台做回测验证。</div>
+      </div>
+      <div class="review-actions">
+        <button class="small-btn" onclick="loadInvestmentDataQuality()">刷新质量</button>
+        <button class="small-btn" onclick="runNaturalStockScreenFrontend(true)">刷新并筛选</button>
+        <button class="small-btn" onclick="openStockProfiles()">打开股票档案</button>
+        <button class="small-btn" onclick="openQuantWorkbenchWindow()">打开量化工作台</button>
+        <button class="small-btn" onclick="renderDashboard()">返回看板</button>
+      </div>
+    </section>
+    <section class="panel" style="margin-bottom:12px">
+      <div class="metadata-head">
+        <div>
+          <div class="panel-title">数据质量中心</div>
+          <div class="date">先判断数据是否足够支撑筛选，再看候选排名。</div>
+        </div>
+      </div>
+      <div id="investmentDataQuality"></div>
+    </section>
+    <section class="panel natural-screen-panel" style="margin-bottom:12px">
+      <div class="metadata-head">
+        <div>
+          <div class="panel-title">同花顺式自然语言选股</div>
+          <div class="date">输入 MACD、KDJ、RSI、BOLL、量比、5/10/20/60日线、换手率、竞价金额等条件。</div>
+        </div>
+        <div class="table-actions">
+          <label class="date">技术扫描上限 <select id="naturalScreenLimit" class="small-select"><option value="120">120</option><option value="240" selected>240</option><option value="500">500</option></select> 只</label>
+          <button class="small-btn primary" onclick="runNaturalStockScreenFrontend()">智能解析并选股</button>
+        </div>
+      </div>
+      <textarea id="naturalStockQuery" class="strategy-textarea natural-query-textarea" oninput="saveNaturalStockQuery(this.value)" placeholder="例如：昨日换手率大于5%，今日量比大于1.7，竞价金额大于180万，排除ST">${escapeHtml(naturalQuery)}</textarea>
+      <div class="strategy-rule-toolbar">${examples.map(text => `<button class="small-btn" onclick='applyNaturalScreenExample(${JSON.stringify(text)})'>${escapeHtml(text)}</button>`).join("")}</div>
+      <div id="naturalScreenResult">${naturalScreenResultHtml(naturalResult)}</div>
+    </section>
+    <section class="panel" style="margin-bottom:12px">${xiaokeStrategyRulesPanelHtml(rules)}</section>
+    <section class="panel" style="margin-top:12px">
+      <div class="metadata-head">
+        <div>
+          <div class="panel-title">筛选结果</div>
+          <div class="date">候选股可以继续进入股票档案补证据，或者送到量化工作台做验证。</div>
+        </div>
+        <button class="small-btn" onclick="exportNaturalScreenCsv()">导出自然语言结果</button>
+      </div>
+      <div id="strategyScreenResult">${strategyScreenResultHtml(result)}</div>
+    </section>
+  `;
+  setTimeout(() => loadInvestmentDataQuality(), 0);
+}
+
+renderStrategy = function xiaokeManualStrategyPage() {
+  state.view = "strategy";
+  restoredRenderShell();
+  const data = readStrategy();
+  const main = document.getElementById("main");
+  if (!main) return;
+  main.innerHTML = `
+    <section class="review-head panel">
+      <div>
+        <div class="panel-title">我的策略</div>
+        <div class="date">长期可编辑的交易策略手册：记录你的主线判断、仓位规则、风险边界和禁做事项。</div>
+      </div>
+      <div class="review-actions">
+        <button class="small-btn" onclick="saveCurrentStrategyVersion()">保存策略版本</button>
+        <button class="small-btn" onclick="localStorage.removeItem(STRATEGY_KEY);renderStrategy()">恢复默认</button>
+        <button class="small-btn" onclick="openDataScreening()">打开数据筛选</button>
+        <button class="small-btn" onclick="renderDashboard()">返回看板</button>
+      </div>
+    </section>
+    <section class="strategy-grid">
+      <div class="panel strategy-main">
+        <div class="panel-title">策略正文</div>
+        <textarea class="strategy-textarea main" oninput="saveStrategyField('main', this.value)">${escapeHtml(data.main || "")}</textarea>
+      </div>
+      <div class="strategy-side">
+        ${strategyBox("entry", "入场条件", data.entry)}
+        ${strategyBox("risk", "风险规则", data.risk)}
+        ${strategyBox("position", "仓位规则", data.position)}
+        ${strategyBox("forbid", "禁做清单", data.forbid)}
+      </div>
+    </section>
+    <section class="panel" style="margin-top:12px">
+      <div class="metadata-head">
+        <div>
+          <div class="panel-title">策略版本与审计</div>
+          <div class="date">保存策略正文、规则和当时的筛选结果，方便以后复盘当时为什么这么判断。</div>
+        </div>
+        <button class="small-btn" onclick="saveCurrentStrategyVersion()">+保存当前版本</button>
+      </div>
+      ${strategyVersionsHtml()}
+    </section>
+  `;
+};
+
+const xiaokeDataScreeningPreviousRenderTopChips = renderTopChips;
+renderTopChips = function xiaokeDataScreeningTopChips() {
+  const chips = document.getElementById("topChips");
+  if (!chips) return;
+  const systemChips = [
+    ["我的策略", "strategy"],
+    ["数据筛选", "dataScreening"],
+    ["每日复盘", "dailyReview"],
+    ["每日打卡", "dailyCheckin"],
+    ["板块强弱", "sectorStrength"],
+    ["模型框架", "modelFramework"],
+    ["股票档案", "stockProfiles"],
+    ["能力中心", "pipelineCenter"],
+    ["管理分组", "videoGroupManager"]
+  ].map(([label, view]) => `<a class="${state.view === view ? "chip active review-chip" : "chip review-chip"}" style="display:inline-flex;align-items:center;text-decoration:none" href="?view=${view}">${label}</a>`).join("");
+  const seenTags = new Set();
+  const uniqueTags = allVideoTags().filter(tag => {
+    const key = String(tag.name || tag.originalName || "").trim().toLowerCase();
+    if (!key || seenTags.has(key)) return false;
+    seenTags.add(key);
+    return true;
+  });
+  const tagChips = uniqueTags.map(tag => {
+    const name = tag.name || tag.originalName || "";
+    const label = finalTagLabel(tag);
+    const count = tagCount(tag);
+    const cls = name === state.activeTag ? "chip active" : tag.type === "sector" && count > 15 ? "chip gold" : "chip";
+    return `<a class="${cls}" title="${escapeHtml(label)}（${count}条）" style="display:inline-flex;align-items:center;text-decoration:none" href="?tag=${encodeURIComponent(name)}">${escapeHtml(label)}(${count})</a>`;
+  }).join("");
+  chips.innerHTML = systemChips + tagChips;
+};
+
+const xiaokeDataScreeningPreviousRender = render;
+render = function xiaokeDataScreeningRender() {
+  if (typeof xiaokeDailyCheckinStylePatch === "function") xiaokeDailyCheckinStylePatch();
+  if (state.view === "dataScreening") return renderDataScreening();
+  return xiaokeDataScreeningPreviousRender();
+};
+
+const xiaokeDataScreeningPreviousRestoredRouteTopChip = typeof restoredRouteTopChip === "function" ? restoredRouteTopChip : null;
+restoredRouteTopChip = function xiaokeDataScreeningRouteTopChip(label) {
+  const text = String(label || "").replace(/\(\d+\)\s*$/, "").trim();
+  if (text === "数据筛选") return openDataScreening();
+  return xiaokeDataScreeningPreviousRestoredRouteTopChip ? xiaokeDataScreeningPreviousRestoredRouteTopChip(label) : filterByTag(text || "全部");
+};
+
+const xiaokeDataScreeningPreviousRestoredRouteHash = typeof restoredRouteHash === "function" ? restoredRouteHash : null;
+restoredRouteHash = function xiaokeDataScreeningRouteHash() {
+  const hash = String(location.hash || "").replace(/^#/, "");
+  if (hash === "view=dataScreening") {
+    openDataScreening();
+    return true;
+  }
+  return xiaokeDataScreeningPreviousRestoredRouteHash ? xiaokeDataScreeningPreviousRestoredRouteHash() : false;
+};
+
+const xiaokeDataScreeningPreviousInit = init;
+init = async function xiaokeDataScreeningInit() {
+  await xiaokeDataScreeningPreviousInit();
+  const params = new URLSearchParams(location.search || "");
+  if (params.get("view") === "dataScreening") openDataScreening();
+};
+
+Object.assign(globalThis, {
+  openDataScreening,
+  renderDataScreening
+});
+
 init();
 
 
