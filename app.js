@@ -8225,6 +8225,20 @@ async function syncQmtBridgeCodes() {
   }
 }
 
+async function syncQmtUniverseCodes() {
+  try {
+    const response = await fetch("/api/qmt-bridge/sync-universe-codes", { method: "POST" });
+    const data = await response.json();
+    if (!response.ok || !data.success) throw new Error(data.error || "全市场 QMT 列表同步失败");
+    const source = data.source ? `，来源 ${data.source}` : "";
+    showToast(`已同步 ${data.synced || data.codeCount || 0} 个全市场 QMT 代码${source}`);
+    if (typeof loadInvestmentDataQuality === "function") loadInvestmentDataQuality();
+    if (typeof showDataSourceHealth === "function") showDataSourceHealth();
+  } catch (error) {
+    showToast(error.message || "全市场 QMT 列表同步失败");
+  }
+}
+
 async function installQmtBridgeStrategy() {
   try {
     const response = await fetch("/api/qmt-bridge/install-strategy", { method: "POST" });
@@ -10839,7 +10853,7 @@ function exposeXiaokeGlobals() {
     "showStockAnnouncements", "rememberLatestAnnouncement",
     "searchAndSaveStockProfile", "showDataSourceHealth",
     "probeInstitutionalTerminals", "openQuantWorkbenchWindow",
-    "syncQmtBridgeCodes", "installQmtBridgeStrategy", "refreshQmtBridgeStatus",
+    "syncQmtBridgeCodes", "syncQmtUniverseCodes", "installQmtBridgeStrategy", "refreshQmtBridgeStatus",
     "openPipelineCenter", "openVideoGroupManager", "openSectorStrength",
     "renderSectorStrength", "parseSectorMapImport", "importSectorMapPreview",
     "updateWatchGroupField", "updateSectorStrengthNote",
@@ -13961,11 +13975,17 @@ const XIAOKE_STRATEGY_VERSIONS_KEY = "xiaoke_strategy_versions_v1";
 
 function defaultStrategyRules() {
   return {
-    market: "all", excludeSt: true, priceMin: 3, priceMax: 200, pctMin: -3, pctMax: 8,
+    market: "all", excludeSt: true, priceMin: 3, priceMax: 300, pctMin: -3, pctMax: 8,
     turnoverMin: 1, turnoverMax: 15, peMin: 0, peMax: 80, pbMax: 10,
     marketCapMin: 50, marketCapMax: "", amountMin: 1, pct60Min: -20, pct60Max: 60,
     roeMin: 5, grossMarginMin: 15, revenueGrowthMin: 0, profitGrowthMin: 0, debtRatioMax: 70,
-    sortBy: "strategyScore", limit: 50
+    sortBy: "strategyScore", limit: 50, technicalScanLimit: "all",
+    macdGoldenCross: false, kdjGoldenCross: false, ma5CrossMa20: false,
+    priceAboveMa20: false, priceAboveMa60: false, bollAboveMid: false, bollBreakUpper: false,
+    rsi6Min: "", rsi6Max: "", rsi12Min: "", rsi12Max: "",
+    volumeRatio5Min: "", volumeRatio5Max: "", volumeRatio10Min: "", volumeRatio10Max: "",
+    return5Min: "", return10Min: "", return20Min: "", return60Min: "",
+    bollWidthMin: "", bollWidthMax: ""
   };
 }
 
@@ -13988,8 +14008,12 @@ function strategyRuleInput(key, label, value, unit = "") {
   return `<label class="strategy-rule-field"><span>${escapeHtml(label)}</span><div><input type="number" step="any" value="${escapeHtml(value)}" oninput="updateStrategyRule('${key}',this.value)">${unit ? `<em>${escapeHtml(unit)}</em>` : ""}</div></label>`;
 }
 
+function strategyRuleCheckbox(key, label, rules) {
+  return `<label class="strategy-rule-check"><input type="checkbox" ${rules[key] ? "checked" : ""} onchange="updateStrategyRule('${key}',this.checked,'boolean')"><span>${escapeHtml(label)}</span></label>`;
+}
+
 function strategyPreset(name) {
-  const common = { market: "all", excludeSt: true, limit: 50, sortBy: "strategyScore" };
+  const common = { ...defaultStrategyRules(), market: "all", excludeSt: true, limit: 50, sortBy: "strategyScore" };
   if (name === "quality") return { ...common, priceMin: 3, priceMax: 300, pctMin: -5, pctMax: 8, turnoverMin: .5, turnoverMax: 15, peMin: 0, peMax: 60, pbMax: 8, marketCapMin: 80, marketCapMax: "", amountMin: 1, pct60Min: -15, pct60Max: 60, roeMin: 10, grossMarginMin: 20, revenueGrowthMin: 0, profitGrowthMin: 5, debtRatioMax: 65 };
   if (name === "momentum") return { ...common, priceMin: 3, priceMax: 300, pctMin: 0, pctMax: 9.5, turnoverMin: 2, turnoverMax: 20, peMin: 0, peMax: 120, pbMax: 15, marketCapMin: 50, marketCapMax: "", amountMin: 3, pct60Min: 10, pct60Max: 80, roeMin: 3, grossMarginMin: 10, revenueGrowthMin: -5, profitGrowthMin: -10, debtRatioMax: 75 };
   if (name === "value") return { ...common, priceMin: 2, priceMax: 200, pctMin: -5, pctMax: 5, turnoverMin: .2, turnoverMax: 10, peMin: 0, peMax: 25, pbMax: 3, marketCapMin: 100, marketCapMax: "", amountMin: .5, pct60Min: -25, pct60Max: 35, roeMin: 8, grossMarginMin: 15, revenueGrowthMin: -5, profitGrowthMin: 0, debtRatioMax: 65 };
@@ -14079,6 +14103,8 @@ function investmentDataQualityHtml(data = {}) {
   const market = data.market || {};
   const sectors = data.sectors || {};
   const methodology = data.methodology || {};
+  const qmt = data.qmt || data.qmtBridge || {};
+  const qmtWarehouse = qmt.warehouse || data.qmtWarehouse || {};
   const resultCoverage = strategyResultCoverage();
   return `<div class="quality-score-row"><div class="quality-grade"><span>数据质量</span><b>${escapeHtml(data.grade || "-")}</b><em>${Number(data.score || 0)}分</em></div>
     <div><span>A股覆盖</span><b>${Number(market.count || 0)}只</b><small>${escapeHtml(market.source || "-")}</small></div>
@@ -14086,7 +14112,7 @@ function investmentDataQualityHtml(data = {}) {
     <div><span>财务完整率</span><b>${Number(market.financialCoverage || 0)}%</b><small>缺失字段必须复核</small></div>
     <div><span>趋势完整率</span><b>${Number(market.trendCoverage || 0)}%</b><small>60日/年内</small></div>
     <div><span>板块覆盖</span><b>${Number(sectors.count || 0)}个</b><small>${escapeHtml(sectors.source || "-")}</small></div></div>
-    <div class="quality-meta"><span>行情更新：${escapeHtml(market.updatedAt ? new Date(market.updatedAt).toLocaleString() : "无")}</span><span>板块更新：${escapeHtml(sectors.updatedAt ? new Date(sectors.updatedAt).toLocaleString() : "无")}</span><span>QMT：${data.qmt?.online ? "在线" : "离线/未更新"}</span></div>
+    <div class="quality-meta"><span>行情更新：${escapeHtml(market.updatedAt ? new Date(market.updatedAt).toLocaleString() : "无")}</span><span>板块更新：${escapeHtml(sectors.updatedAt ? new Date(sectors.updatedAt).toLocaleString() : "无")}</span><span>QMT：${qmt.online ? "在线" : "离线/未更新"}</span><span>QMT日线：${Number(qmtWarehouse.dailyFileCount || 0)}只</span></div>
     <div class="quality-methodology"><b>交易口径</b><span>${escapeHtml(methodology.adjustment || "复权方式待确认")}</span><span>${escapeHtml(methodology.suspension || "停牌处理待确认")}</span><span>${escapeHtml(methodology.limit || "涨跌停处理待确认")}</span><span>${escapeHtml(methodology.delisting || "退市处理待确认")}</span><span>${escapeHtml(methodology.universe || "历史股票池待确认")}</span></div>
     ${(data.warnings || []).length ? `<div class="quality-warning-list">${data.warnings.map(item => `<p>${escapeHtml(item)}</p>`).join("")}</div>` : ""}`;
 }
@@ -14312,7 +14338,7 @@ async function runNaturalStockScreenFrontend(force = false) {
   const query = String(document.getElementById("naturalStockQuery")?.value || "").trim();
   if (!query) return showToast("请输入选股条件");
   saveNaturalStockQuery(query);
-  const scanLimit = Number(document.getElementById("naturalScreenLimit")?.value || 240);
+  const scanLimit = document.getElementById("naturalScreenLimit")?.value || "all";
   const box = document.getElementById("naturalScreenResult");
   if (box) box.innerHTML = `<div class="strategy-running"><b>正在解析并筛选...</b><span>先全市场过滤基础条件，再分批计算 MACD / KDJ / RSI / BOLL / 均线，避免页面卡死。</span></div>`;
   try {
@@ -14373,7 +14399,7 @@ renderStrategy = function xiaokeProfessionalStrategyWorkbench() {
   document.getElementById("main").innerHTML = `
     <section class="review-head panel"><div><div class="panel-title">专业投资策略工作台</div><div class="date">自由文本记录交易哲学；结构化规则负责全 A 股筛选。先筛候选，再用公告、研报、回测和 Agent 复核。</div></div><div class="review-actions"><button class="small-btn" onclick="saveCurrentStrategyVersion()">保存策略版本</button><button class="small-btn" onclick="loadInvestmentDataQuality()">刷新质量</button><button class="small-btn" onclick="runAShareStrategy(true)">刷新数据并筛选</button><button class="small-btn" onclick="renderDashboard()">返回看板</button></div></section>
     <section class="panel" style="margin-bottom:12px"><div class="metadata-head"><div><div class="panel-title">数据质量中心</div><div class="date">先判断数据能不能支持结论，再讨论候选排名。</div></div></div><div id="investmentDataQuality"></div></section>
-    <section class="panel natural-screen-panel" style="margin-bottom:12px"><div class="metadata-head"><div><div class="panel-title">同花顺式自然语言选股</div><div class="date">直接输入“量比、MACD、KDJ、RSI、BOLL、5/10/20/60日线”等条件，系统先解析再筛选。</div></div><div class="table-actions"><label class="date">技术扫描上限 <select id="naturalScreenLimit" class="small-select"><option value="120">120</option><option value="240" selected>240</option><option value="500">500</option></select> 只</label><button class="small-btn primary" onclick="runNaturalStockScreenFrontend()">智能解析并选股</button></div></div>
+    <section class="panel natural-screen-panel" style="margin-bottom:12px"><div class="metadata-head"><div><div class="panel-title">同花顺式自然语言选股</div><div class="date">直接输入“量比、MACD、KDJ、RSI、BOLL、5/10/20/60日线”等条件，系统先解析再筛选。</div></div><div class="table-actions"><label class="date">技术扫描上限 <select id="naturalScreenLimit" class="small-select"><option value="all" selected>全市场</option><option value="500">500</option><option value="1000">1000</option><option value="3000">3000</option><option value="6000">6000</option></select> 只</label><button class="small-btn primary" onclick="runNaturalStockScreenFrontend()">智能解析并选股</button></div></div>
       <textarea id="naturalStockQuery" class="strategy-textarea natural-query-textarea" oninput="saveNaturalStockQuery(this.value)" placeholder="例如：股价大于5元，量比大于1.5，MACD金叉，KDJ金叉，RSI6小于70，站上20日线">${escapeHtml(naturalQuery)}</textarea>
       <div class="strategy-rule-toolbar">${naturalExamples.map(text => `<button class="small-btn" onclick='applyNaturalScreenExample(${JSON.stringify(text)})'>${escapeHtml(text)}</button>`).join("")}</div>
       <div id="naturalScreenResult">${naturalScreenResultHtml(naturalResult)}</div>
@@ -17818,6 +17844,7 @@ function xiaokeStrategyRulesPanelHtml(rules) {
       <label><span>市场</span><select onchange="updateStrategyRule('market',this.value,'text')"><option value="all" ${rules.market==='all'?'selected':''}>全部A股</option><option value="主板" ${rules.market==='主板'?'selected':''}>主板</option><option value="创业板" ${rules.market==='创业板'?'selected':''}>创业板</option><option value="科创板" ${rules.market==='科创板'?'selected':''}>科创板</option><option value="北交所" ${rules.market==='北交所'?'selected':''}>北交所</option></select></label>
       <label class="strategy-check"><input type="checkbox" ${rules.excludeSt!==false?'checked':''} onchange="updateStrategyRule('excludeSt',this.checked,'boolean')">排除 ST / 退市</label>
       <label><span>排序</span><select onchange="updateStrategyRule('sortBy',this.value,'text')"><option value="strategyScore" ${rules.sortBy==='strategyScore'?'selected':''}>综合策略分</option><option value="pct" ${rules.sortBy==='pct'?'selected':''}>当日涨幅</option><option value="pct60" ${rules.sortBy==='pct60'?'selected':''}>60日强度</option><option value="roe" ${rules.sortBy==='roe'?'selected':''}>ROE</option><option value="profitGrowth" ${rules.sortBy==='profitGrowth'?'selected':''}>利润增速</option><option value="amount" ${rules.sortBy==='amount'?'selected':''}>成交额</option><option value="pe" ${rules.sortBy==='pe'?'selected':''}>PE从低到高</option></select></label>
+      <label><span>技术扫描</span><select onchange="updateStrategyRule('technicalScanLimit',this.value,'text')"><option value="all" ${String(rules.technicalScanLimit || 'all')==='all'?'selected':''}>全市场</option><option value="500" ${String(rules.technicalScanLimit)==='500'?'selected':''}>500</option><option value="1000" ${String(rules.technicalScanLimit)==='1000'?'selected':''}>1000</option><option value="3000" ${String(rules.technicalScanLimit)==='3000'?'selected':''}>3000</option><option value="6000" ${String(rules.technicalScanLimit)==='6000'?'selected':''}>6000</option></select></label>
     </div>
     <div class="strategy-rule-grid">
       ${strategyRuleInput('priceMin','最低股价',rules.priceMin,'元')}
@@ -17840,6 +17867,34 @@ function xiaokeStrategyRulesPanelHtml(rules) {
       ${strategyRuleInput('pct60Min','60日最低涨幅',rules.pct60Min,'%')}
       ${strategyRuleInput('pct60Max','60日最高涨幅',rules.pct60Max,'%')}
       ${strategyRuleInput('limit','最多结果',rules.limit,'只')}
+    </div>
+    <div class="strategy-tech-block">
+      <div class="date">技术指标（QMT 本地日线优先，缺失时回退公开历史日线）</div>
+      <div class="strategy-rule-checks">
+        ${strategyRuleCheckbox('macdGoldenCross','MACD金叉',rules)}
+        ${strategyRuleCheckbox('kdjGoldenCross','KDJ金叉',rules)}
+        ${strategyRuleCheckbox('ma5CrossMa20','5日线上穿20日线',rules)}
+        ${strategyRuleCheckbox('priceAboveMa20','站上20日线',rules)}
+        ${strategyRuleCheckbox('priceAboveMa60','站上60日线',rules)}
+        ${strategyRuleCheckbox('bollAboveMid','BOLL中轨上方',rules)}
+        ${strategyRuleCheckbox('bollBreakUpper','突破BOLL上轨',rules)}
+      </div>
+      <div class="strategy-rule-grid compact">
+        ${strategyRuleInput('rsi6Min','RSI6最低',rules.rsi6Min,'')}
+        ${strategyRuleInput('rsi6Max','RSI6最高',rules.rsi6Max,'')}
+        ${strategyRuleInput('rsi12Min','RSI12最低',rules.rsi12Min,'')}
+        ${strategyRuleInput('rsi12Max','RSI12最高',rules.rsi12Max,'')}
+        ${strategyRuleInput('volumeRatio5Min','5日量比最低',rules.volumeRatio5Min,'倍')}
+        ${strategyRuleInput('volumeRatio5Max','5日量比最高',rules.volumeRatio5Max,'倍')}
+        ${strategyRuleInput('volumeRatio10Min','10日量比最低',rules.volumeRatio10Min,'倍')}
+        ${strategyRuleInput('volumeRatio10Max','10日量比最高',rules.volumeRatio10Max,'倍')}
+        ${strategyRuleInput('return5Min','5日涨幅最低',rules.return5Min,'%')}
+        ${strategyRuleInput('return10Min','10日涨幅最低',rules.return10Min,'%')}
+        ${strategyRuleInput('return20Min','20日涨幅最低',rules.return20Min,'%')}
+        ${strategyRuleInput('return60Min','60日涨幅最低',rules.return60Min,'%')}
+        ${strategyRuleInput('bollWidthMin','BOLL宽度最低',rules.bollWidthMin,'%')}
+        ${strategyRuleInput('bollWidthMax','BOLL宽度最高',rules.bollWidthMax,'%')}
+      </div>
     </div>
     <button class="open-btn strategy-run-btn" onclick="runAShareStrategy()">运行 A 股筛选</button>
   `;
@@ -17872,6 +17927,7 @@ function renderDataScreening() {
       </div>
       <div class="review-actions">
         <button class="small-btn" onclick="loadInvestmentDataQuality()">刷新质量</button>
+        <button class="small-btn" onclick="syncQmtUniverseCodes()">同步全市场QMT</button>
         <button class="small-btn" onclick="runNaturalStockScreenFrontend(true)">刷新并筛选</button>
         <button class="small-btn" onclick="openStockProfiles()">打开股票档案</button>
         <button class="small-btn" onclick="openQuantWorkbenchWindow()">打开量化工作台</button>
@@ -17894,7 +17950,7 @@ function renderDataScreening() {
           <div class="date">输入 MACD、KDJ、RSI、BOLL、量比、5/10/20/60日线、换手率、竞价金额等条件。</div>
         </div>
         <div class="table-actions">
-          <label class="date">技术扫描上限 <select id="naturalScreenLimit" class="small-select"><option value="120">120</option><option value="240" selected>240</option><option value="500">500</option></select> 只</label>
+          <label class="date">技术扫描上限 <select id="naturalScreenLimit" class="small-select"><option value="all" selected>全市场</option><option value="500">500</option><option value="1000">1000</option><option value="3000">3000</option><option value="6000">6000</option></select> 只</label>
           <button class="small-btn primary" onclick="runNaturalStockScreenFrontend()">智能解析并选股</button>
         </div>
       </div>
@@ -17913,6 +17969,16 @@ function renderDataScreening() {
       </div>
       <div id="strategyScreenResult">${strategyScreenResultHtml(result)}</div>
     </section>
+    <section class="panel" style="margin-top:12px">
+      <div class="metadata-head">
+        <div>
+          <div class="panel-title">策略版本与审计</div>
+          <div class="date">保存筛选条件、策略正文和当时结果，复盘时能看到当时用了哪套规则。</div>
+        </div>
+        <button class="small-btn" onclick="saveCurrentStrategyVersion()">+保存当前版本</button>
+      </div>
+      ${strategyVersionsHtml()}
+    </section>
   `;
   setTimeout(() => loadInvestmentDataQuality(), 0);
 }
@@ -17930,7 +17996,6 @@ renderStrategy = function xiaokeManualStrategyPage() {
         <div class="date">长期可编辑的交易策略手册：记录你的主线判断、仓位规则、风险边界和禁做事项。</div>
       </div>
       <div class="review-actions">
-        <button class="small-btn" onclick="saveCurrentStrategyVersion()">保存策略版本</button>
         <button class="small-btn" onclick="localStorage.removeItem(STRATEGY_KEY);renderStrategy()">恢复默认</button>
         <button class="small-btn" onclick="openDataScreening()">打开数据筛选</button>
         <button class="small-btn" onclick="renderDashboard()">返回看板</button>
@@ -17947,16 +18012,6 @@ renderStrategy = function xiaokeManualStrategyPage() {
         ${strategyBox("position", "仓位规则", data.position)}
         ${strategyBox("forbid", "禁做清单", data.forbid)}
       </div>
-    </section>
-    <section class="panel" style="margin-top:12px">
-      <div class="metadata-head">
-        <div>
-          <div class="panel-title">策略版本与审计</div>
-          <div class="date">保存策略正文、规则和当时的筛选结果，方便以后复盘当时为什么这么判断。</div>
-        </div>
-        <button class="small-btn" onclick="saveCurrentStrategyVersion()">+保存当前版本</button>
-      </div>
-      ${strategyVersionsHtml()}
     </section>
   `;
 };

@@ -1,4 +1,4 @@
-const http = require("http");
+﻿const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
@@ -31,6 +31,9 @@ const QMT_BRIDGE_CODES_FILE = path.join(ROOT, "qmt_bridge_codes.json");
 const QMT_BRIDGE_QUOTES_FILE = path.join(ROOT, "qmt_bridge_quotes.json");
 const QMT_BRIDGE_STRATEGY_FILE = path.join(ROOT, "tools", "qmt_bridge_strategy.py");
 const QMT_BRIDGE_QMT_STRATEGY_FILE = path.join(os.homedir(), "国信iQuant策略交易平台", "python", "xiaoke_qmt_bridge.py");
+const QMT_DATA_DIR = path.join(ROOT, "qmt_data");
+const QMT_DAILY_DIR = path.join(QMT_DATA_DIR, "daily");
+const QMT_DAILY_INDEX_FILE = path.join(QMT_DATA_DIR, "daily_index.json");
 const DOCUMENTS_DIR = path.join(ROOT, "documents");
 const DOCUMENT_METADATA_FILE = path.join(ROOT, "documents_metadata.json");
 const ANNOUNCEMENTS_DIR = path.join(ROOT, "announcements");
@@ -60,6 +63,7 @@ if (!fs.existsSync(TRANSCRIPTS_DIR)) fs.mkdirSync(TRANSCRIPTS_DIR, { recursive: 
 if (!fs.existsSync(OCR_FRAMES_DIR)) fs.mkdirSync(OCR_FRAMES_DIR, { recursive: true });
 if (!fs.existsSync(DOCUMENTS_DIR)) fs.mkdirSync(DOCUMENTS_DIR, { recursive: true });
 if (!fs.existsSync(ANNOUNCEMENTS_DIR)) fs.mkdirSync(ANNOUNCEMENTS_DIR, { recursive: true });
+if (!fs.existsSync(QMT_DAILY_DIR)) fs.mkdirSync(QMT_DAILY_DIR, { recursive: true });
 
 function pythonToolInvocation() {
   const configured = String(process.env.PYTHON_BIN || "").trim();
@@ -879,6 +883,70 @@ function writeQmtBridgeCodes(items = []) {
   return payload;
 }
 
+function qmtDailyFileForCode(code) {
+  return path.join(QMT_DAILY_DIR, `${String(code || "").replace(/[^\w.-]/g, "_")}.json`);
+}
+
+function normalizeQmtDailyRow(row = {}) {
+  const date = String(row.date || row.time || row.datetime || "").replace(/-/g, "").slice(0, 8);
+  const open = Number(row.open);
+  const high = Number(row.high);
+  const low = Number(row.low);
+  const close = Number(row.close);
+  const volume = Number(row.volume ?? row.vol ?? 0);
+  const amount = Number(row.amount ?? 0);
+  if (!date || ![open, high, low, close].every(Number.isFinite)) return null;
+  return {
+    date,
+    open,
+    high,
+    low,
+    close,
+    volume: Number.isFinite(volume) ? volume : 0,
+    amount: Number.isFinite(amount) ? amount : 0
+  };
+}
+
+function readQmtDailyBars(key, days = 360) {
+  const code = qmtCodeFromQuoteKey(key);
+  if (!code) return { rows: [], source: "QMT local daily warehouse", code: "" };
+  const file = qmtDailyFileForCode(code);
+  if (!fs.existsSync(file)) return { rows: [], source: "QMT local daily warehouse", code };
+  try {
+    const payload = JSON.parse(fs.readFileSync(file, "utf8"));
+    const rows = (payload.rows || [])
+      .map(normalizeQmtDailyRow)
+      .filter(Boolean)
+      .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    return {
+      rows: rows.slice(-Math.max(1, Number(days) || 360)),
+      source: "QMT local daily warehouse",
+      code,
+      updatedAt: payload.updatedAt || ""
+    };
+  } catch {
+    return { rows: [], source: "QMT local daily warehouse", code };
+  }
+}
+
+function readQmtDataWarehouseStatus() {
+  const files = fs.existsSync(QMT_DAILY_DIR)
+    ? fs.readdirSync(QMT_DAILY_DIR).filter(name => name.toLowerCase().endsWith(".json"))
+    : [];
+  let index = {};
+  try {
+    if (fs.existsSync(QMT_DAILY_INDEX_FILE)) index = JSON.parse(fs.readFileSync(QMT_DAILY_INDEX_FILE, "utf8"));
+  } catch {}
+  return {
+    success: true,
+    dir: QMT_DAILY_DIR,
+    dailyFileCount: files.length,
+    updatedAt: index.updatedAt || "",
+    sampleCodes: files.slice(0, 8).map(name => name.replace(/\.json$/i, "")),
+    index
+  };
+}
+
 function readQmtBridgeStatus() {
   const codes = readQmtBridgeCodes();
   const strategyInstalled = fs.existsSync(QMT_BRIDGE_QMT_STRATEGY_FILE);
@@ -914,6 +982,7 @@ function readQmtBridgeStatus() {
     updatedAt,
     ageSeconds,
     stale: !hasQuotes || ageSeconds == null || ageSeconds > 30,
+    warehouse: readQmtDataWarehouseStatus(),
     error
   };
 }
@@ -1217,6 +1286,10 @@ async function getTencentKline(key, options = {}) {
 }
 
 async function getHistoricalKline(key, options = {}) {
+  if (options.preferQmt !== false) {
+    const qmtRows = readQmtDailyBars(key, Number(options.days || 360));
+    if (qmtRows.rows.length) return qmtRows;
+  }
   try {
     const rows = await getEastmoneyKline(key, options);
     if (rows.length) return { rows, source: "东方财富历史日线" };
@@ -3093,6 +3166,8 @@ function calculateTechnicalIndicators(rows = [], quote = {}) {
     price,
     ma5, ma10, ma20, ma60,
     prevMa5, prevMa10, prevMa20, prevMa60,
+    ma5CrossMa20: prevMa5 <= prevMa20 && ma5 > ma20,
+    ma5UnderMa20: prevMa5 >= prevMa20 && ma5 < ma20,
     return5: historicalPct(clean, 5), return10: historicalPct(clean, 10), return20: historicalPct(clean, 20), return60: historicalPct(clean, 60),
     dif, dea, macd: (dif - dea) * 2, prevDif, prevDea, prevMacd: (prevDif - prevDea) * 2,
     macdGoldenCross: prevDif <= prevDea && dif > dea,
@@ -3405,7 +3480,10 @@ async function runNaturalStockScreen(query = "", options = {}) {
   const technicalConditions = parsed.conditions.filter(condition => condition.scope === "technical");
   let baseMatched = universe.filter(item => baseConditions.every(condition => naturalConditionPass(item, condition)));
   baseMatched.sort((a, b) => Number(b.amount || 0) - Number(a.amount || 0));
-  const scanLimit = Math.max(30, Math.min(500, Number(options.scanLimit || 240)));
+  const rawScanLimit = String(options.scanLimit ?? "all").toLowerCase();
+  const scanLimit = rawScanLimit === "all" || rawScanLimit === "0"
+    ? Math.min(baseMatched.length, 6000)
+    : Math.max(30, Math.min(6000, Number(rawScanLimit) || 6000));
   const technicalPool = technicalConditions.length ? baseMatched.slice(0, scanLimit) : baseMatched;
   const rows = new Array(technicalPool.length);
   let cursor = 0;
@@ -3416,7 +3494,7 @@ async function runNaturalStockScreen(query = "", options = {}) {
       const item = technicalPool[index];
       if (!technicalConditions.length) { rows[index] = item; continue; }
       try {
-        const history = await getHistoricalKline(item.key, { days: 180, fqt: 1 });
+        const history = await getHistoricalKline(item.key, { days: 260, fqt: 1, preferQmt: true });
         const technical = calculateTechnicalIndicators(history.rows || [], item);
         const enriched = { ...item, technical, technicalSource: history.source || "前复权历史日线" };
         if (technicalConditions.every(condition => naturalConditionPass(enriched, condition))) rows[index] = enriched;
@@ -3426,7 +3504,7 @@ async function runNaturalStockScreen(query = "", options = {}) {
     }
   };
   await Promise.all(Array.from({ length: Math.min(concurrency, technicalPool.length || 1) }, worker));
-  const matched = rows.filter(Boolean).slice(0, Math.max(10, Math.min(200, Number(options.limit || 80))));
+  const matched = rows.filter(Boolean).slice(0, Math.max(10, Math.min(6000, Number(options.limit || 80))));
   const warnings = naturalScreenWarnings(parsed, source);
   return {
     success: true, query, parsed, items: matched, universeCount: universe.length, baseMatchedCount: baseMatched.length,
@@ -4270,6 +4348,15 @@ function aShareStrategyScore(item = {}) {
   return Math.round(Math.max(0, Math.min(100, quality + growth + momentum + liquidity + valuation)));
 }
 
+function classifyAShareBoard(item = {}) {
+  const code = String(item.code || item.key || "").replace(/\D/g, "").slice(-6);
+  if (/^(300|301)/.test(code)) return "创业板";
+  if (/^(688|689)/.test(code)) return "科创板";
+  if (/^(8|4|920)/.test(code)) return "北交所";
+  if (/^(60|00|001|002|003)/.test(code)) return "主板";
+  return item.market || "其他";
+}
+
 function screenAShareUniverse(items = [], rules = {}) {
   const market = String(rules.market || "all");
   const tests = [
@@ -4282,7 +4369,8 @@ function screenAShareUniverse(items = [], rules = {}) {
   ];
   const matched = items.filter(item => {
     if (rules.excludeSt !== false && /(?:ST|退)/i.test(item.name)) return false;
-    if (market !== "all" && item.market !== market) return false;
+    const board = classifyAShareBoard(item);
+    if (market !== "all" && board !== market && item.market !== market) return false;
     return tests.every(([field, ruleKey, direction]) => {
       const threshold = screenRuleNumber(rules, ruleKey);
       if (threshold === null) return true;
@@ -4294,24 +4382,91 @@ function screenAShareUniverse(items = [], rules = {}) {
     });
   }).map(item => {
     const reasons = [];
-    if (Number(item.roe) >= 10) reasons.push(`ROE ${item.roe.toFixed(2)}%`);
+    if (Number(item.roe) >= 10) reasons.push(`ROE ${Number(item.roe).toFixed(2)}%`);
     if (Number(item.revenueGrowth) > 0 && Number(item.profitGrowth) > 0) reasons.push("营收利润双增长");
-    if (Number(item.pct60) > 0) reasons.push(`60日 ${item.pct60.toFixed(2)}%`);
-    if (Number(item.pe) > 0 && Number(item.pe) <= 40) reasons.push(`PE ${item.pe.toFixed(2)}`);
+    if (Number(item.pct60) > 0) reasons.push(`60日 ${Number(item.pct60).toFixed(2)}%`);
+    if (Number(item.pe) > 0 && Number(item.pe) <= 40) reasons.push(`PE ${Number(item.pe).toFixed(2)}`);
     const missingChecks = tests.filter(([field, ruleKey]) => {
       if (screenRuleNumber(rules, ruleKey) === null) return false;
       const value = item[field];
       return value === null || value === undefined || value === "" || !Number.isFinite(Number(value));
     }).map(([, ruleKey]) => ruleKey);
     if (missingChecks.length) reasons.push(`待复核 ${missingChecks.length} 项财务/趋势条件`);
-    return { ...item, strategyScore: aShareStrategyScore(item), reasons, missingChecks };
+    return { ...item, board: classifyAShareBoard(item), strategyScore: aShareStrategyScore(item), reasons, missingChecks };
   });
   const sortBy = String(rules.sortBy || "strategyScore");
   const lowerFirst = ["pe", "pb", "debtRatio"].includes(sortBy);
   matched.sort((a, b) => lowerFirst ? (Number(a[sortBy]) || 0) - (Number(b[sortBy]) || 0) : (Number(b[sortBy]) || 0) - (Number(a[sortBy]) || 0));
-  return matched.slice(0, Math.max(10, Math.min(200, Number(rules.limit || 50))));
+  return matched.slice(0, Math.max(10, Math.min(6000, Number(rules.limit || 50))));
 }
 
+const TECHNICAL_RULE_TESTS = [
+  ["rsi6", "rsi6Min", "min"], ["rsi6", "rsi6Max", "max"],
+  ["rsi12", "rsi12Min", "min"], ["rsi12", "rsi12Max", "max"],
+  ["volumeRatio5", "volumeRatio5Min", "min"], ["volumeRatio5", "volumeRatio5Max", "max"],
+  ["volumeRatio10", "volumeRatio10Min", "min"], ["volumeRatio10", "volumeRatio10Max", "max"],
+  ["return5", "return5Min", "min"], ["return10", "return10Min", "min"],
+  ["return20", "return20Min", "min"], ["return60", "return60Min", "min"],
+  ["bollWidth", "bollWidthMin", "min"], ["bollWidth", "bollWidthMax", "max"]
+];
+
+function hasTechnicalScreenRules(rules = {}) {
+  const boolKeys = ["macdGoldenCross", "kdjGoldenCross", "ma5CrossMa20", "priceAboveMa20", "priceAboveMa60", "bollAboveMid", "bollBreakUpper"];
+  return boolKeys.some(key => Boolean(rules[key])) || TECHNICAL_RULE_TESTS.some(([, ruleKey]) => screenRuleNumber(rules, ruleKey) !== null);
+}
+
+function technicalRulesPass(technical = {}, rules = {}) {
+  const checks = [
+    ["macdGoldenCross", technical.macdGoldenCross],
+    ["kdjGoldenCross", technical.kdjGoldenCross],
+    ["ma5CrossMa20", technical.ma5CrossMa20],
+    ["priceAboveMa20", Number(technical.price) > Number(technical.ma20)],
+    ["priceAboveMa60", Number(technical.price) > Number(technical.ma60)],
+    ["bollAboveMid", Number(technical.price) > Number(technical.bollMid)],
+    ["bollBreakUpper", Number(technical.price) > Number(technical.bollUpper)]
+  ];
+  if (checks.some(([ruleKey, passed]) => Boolean(rules[ruleKey]) && !passed)) return false;
+  return TECHNICAL_RULE_TESTS.every(([field, ruleKey, direction]) => {
+    const threshold = screenRuleNumber(rules, ruleKey);
+    if (threshold === null) return true;
+    const value = Number(technical[field]);
+    if (!Number.isFinite(value)) return false;
+    return direction === "min" ? value >= threshold : value <= threshold;
+  });
+}
+
+async function screenAShareUniverseWithTechnical(items = [], rules = {}) {
+  const baseMatched = screenAShareUniverse(items, { ...rules, limit: 6000 });
+  if (!hasTechnicalScreenRules(rules)) {
+    return baseMatched.slice(0, Math.max(10, Math.min(6000, Number(rules.limit || 50))));
+  }
+  const rawScanLimit = String(rules.technicalScanLimit ?? "all").toLowerCase();
+  const scanLimit = rawScanLimit === "all" || rawScanLimit === "0"
+    ? Math.min(baseMatched.length, 6000)
+    : Math.max(30, Math.min(6000, Number(rawScanLimit) || 6000));
+  const pool = baseMatched.slice(0, scanLimit);
+  const rows = new Array(pool.length);
+  let cursor = 0;
+  const concurrency = Math.max(1, Math.min(8, Number(rules.concurrency || 6)));
+  const worker = async () => {
+    while (cursor < pool.length) {
+      const index = cursor++;
+      const item = pool[index];
+      try {
+        const history = await getHistoricalKline(item.key, { days: 260, fqt: 1, preferQmt: true });
+        const technical = calculateTechnicalIndicators(history.rows || [], item);
+        if (technicalRulesPass(technical, rules)) {
+          rows[index] = { ...item, technical, technicalSource: history.source || "QMT本地日线/历史日线" };
+        }
+      } catch {
+        rows[index] = null;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, pool.length || 1) }, worker));
+  const matched = rows.filter(Boolean);
+  return matched.slice(0, Math.max(10, Math.min(6000, Number(rules.limit || 50))));
+}
 function readRequestBody(req, limit = 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let body = "";
@@ -7002,7 +7157,7 @@ const server = http.createServer((req, res) => {
         }
       }
       if (!universe.length) throw new Error(upstreamError || "A 股全市场数据暂不可用");
-      const items = screenAShareUniverse(universe, rules);
+      const items = await screenAShareUniverseWithTechnical(universe, rules);
       sendJson(res, 200, {
         success: true,
         universeCount: universe.length,
@@ -7082,29 +7237,6 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  if (req.method === "POST" && req.url === "/api/a-share-screen") {
-    readRequestBody(req)
-      .then(body => {
-        const payload = JSON.parse(body || "{}");
-        return getEastmoneyAShareUniverse(Boolean(payload.force)).then(universe => ({ universe, rules: payload.rules || {} }));
-      })
-      .then(({ universe, rules }) => {
-        const items = screenAShareUniverse(universe, rules);
-        sendJson(res, 200, {
-          success: true,
-          universeCount: universe.length,
-          matchedCount: items.length,
-          items,
-          rules,
-          asOf: new Date().toISOString(),
-          source: "东方财富 A 股行情/财务快照",
-          note: "策略分仅用于候选排序，不代表上涨概率或投资评级。"
-        });
-      })
-      .catch(error => sendJson(res, 502, { success: false, error: error.message, items: [] }));
-    return;
-  }
-
   if (req.url.startsWith("/api/institutional-probe")) {
     const url = new URL(req.url, "http://localhost");
     const connect = ["1", "true", "yes"].includes(String(url.searchParams.get("connect") || "").toLowerCase());
@@ -7136,6 +7268,19 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.method === "GET" && req.url.startsWith("/api/qmt-data/status")) {
+    sendJson(res, 200, readQmtDataWarehouseStatus());
+    return;
+  }
+
+  if (req.method === "GET" && req.url.startsWith("/api/qmt-data/daily")) {
+    const url = new URL(req.url, "http://localhost");
+    const key = url.searchParams.get("key") || url.searchParams.get("code") || "";
+    const days = Number(url.searchParams.get("days") || 260);
+    const data = readQmtDailyBars(key, days);
+    sendJson(res, data.rows.length ? 200 : 404, { success: Boolean(data.rows.length), ...data });
+    return;
+  }
   if (req.method === "GET" && req.url.startsWith("/api/qmt-bridge/status")) {
     sendJson(res, 200, readQmtBridgeStatus());
     return;
@@ -7149,6 +7294,40 @@ const server = http.createServer((req, res) => {
         sendJson(res, 200, { success: true, ...readQmtBridgeStatus(), synced: result.codes.length });
       })
       .catch(error => sendJson(res, 400, { success: false, error: error.message }));
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/qmt-bridge/sync-universe-codes") {
+    (async () => {
+      let universe = [];
+      let source = "";
+      let warning = "";
+      try {
+        universe = await getEastmoneyAShareUniverse(false);
+        source = "东方财富 A 股全市场";
+      } catch (error) {
+        warning = error.message || String(error);
+        try {
+          universe = await getSinaAShareUniverse();
+          source = "新浪 A 股全市场";
+        } catch (fallbackError) {
+          const cached = readMarketCache(A_SHARE_UNIVERSE_CACHE_FILE, 30 * 86400000);
+          universe = cached.items || [];
+          source = cached.items?.length ? "本地 A 股缓存" : "";
+          warning = [warning, fallbackError.message || String(fallbackError)].filter(Boolean).join("；");
+        }
+      }
+      if (!universe.length) throw new Error(warning || "无法获取 A 股全市场代码。");
+      const result = writeQmtBridgeCodes(universe);
+      sendJson(res, 200, {
+        success: true,
+        source,
+        warning,
+        universeCount: universe.length,
+        synced: result.codes.length,
+        ...readQmtBridgeStatus()
+      });
+    })().catch(error => sendJson(res, 502, { success: false, error: error.message }));
     return;
   }
 
