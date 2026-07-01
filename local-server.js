@@ -1193,6 +1193,49 @@ function readQmtDailyBars(key, days = 360) {
   }
 }
 
+function qmtDateLabel(dateText = "") {
+  const raw = String(dateText || "").replace(/[^\d]/g, "").slice(0, 8);
+  if (raw.length !== 8) return "";
+  return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+}
+
+function readQmtWarehouseFreshness(files = []) {
+  const priorityCodes = [
+    "300308.SZ", "300502.SZ", "688120.SH", "300666.SZ", "688012.SH", "002371.SZ",
+    "603986.SH", "688008.SH", "688981.SH", "603993.SH", "601958.SH", "000001.SH"
+  ];
+  const probeCodes = priorityCodes.filter(code => fs.existsSync(qmtDailyFileForCode(code)));
+  if (!probeCodes.length && Array.isArray(files)) {
+    files.slice(0, 24).forEach(name => probeCodes.push(String(name || "").replace(/\.json$/i, "")));
+  }
+  const dates = [];
+  probeCodes.slice(0, 24).forEach(code => {
+    try {
+      const file = qmtDailyFileForCode(code);
+      if (!fs.existsSync(file)) return;
+      const payload = JSON.parse(fs.readFileSync(file, "utf8"));
+      const last = Array.isArray(payload.rows) ? payload.rows[payload.rows.length - 1] : null;
+      const label = qmtDateLabel(last?.date);
+      if (label) dates.push({ code, date: label, updatedAt: payload.updatedAt || "" });
+    } catch {}
+  });
+  dates.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  const latest = dates[0] || null;
+  const latestTime = latest?.date ? new Date(`${latest.date}T15:30:00+08:00`).getTime() : 0;
+  const ageDays = latestTime ? Math.max(0, Math.floor((Date.now() - latestTime) / 86400000)) : null;
+  const cls = latestTime ? (ageDays <= 2 ? "good" : ageDays <= 5 ? "warn" : "bad") : "bad";
+  const label = latestTime ? (cls === "good" ? "新鲜" : cls === "warn" ? "偏旧" : "过期") : "无日线";
+  return {
+    latestTradeDate: latest?.date || "",
+    latestUpdatedAt: latest?.updatedAt || "",
+    probeCount: dates.length,
+    ageDays,
+    cls,
+    label,
+    samples: dates.slice(0, 6)
+  };
+}
+
 function readQmtDataWarehouseStatus() {
   const files = fs.existsSync(QMT_DAILY_DIR)
     ? fs.readdirSync(QMT_DAILY_DIR).filter(name => name.toLowerCase().endsWith(".json"))
@@ -1220,6 +1263,7 @@ function readQmtDataWarehouseStatus() {
     attemptsUpdatedAt: attempts.updatedAt || "",
     latestDebug: debug,
     sampleCodes: files.slice(0, 8).map(name => name.replace(/\.json$/i, "")),
+    freshness: readQmtWarehouseFreshness(files),
     indexCount: index.count || files.length,
     weekly: qmtWarehousePeriodStatus("weekly"),
     monthly: qmtWarehousePeriodStatus("monthly")
@@ -5253,6 +5297,7 @@ async function buildQmtSectorHistorySnapshots(options = {}) {
   const resultSource = rows.some(row => row.meta?.constituentLocalFallback)
     ? "QMT本地日线合成 + 本地BK映射兜底"
     : (rows.some(row => row.meta?.constituentStale) ? "QMT本地日线合成 + 东方财富BK旧缓存" : "QMT本地日线合成 + 东方财富BK成分");
+  const qmtFreshness = readQmtWarehouseFreshness();
   return {
     success: true,
     days,
@@ -5262,6 +5307,8 @@ async function buildQmtSectorHistorySnapshots(options = {}) {
     snapshots,
     warning,
     source: resultSource,
+    qmtFreshness,
+    qmtDailyFileCount: fs.existsSync(QMT_DAILY_DIR) ? fs.readdirSync(QMT_DAILY_DIR).filter(name => name.toLowerCase().endsWith(".json")).length : 0,
     sourcePolicy: "QMT/local daily warehouse is historical primary; Eastmoney is used for BK mapping and realtime calibration only."
   };
 }
@@ -9095,6 +9142,7 @@ const server = http.createServer((req, res) => {
         constituentCount: result.constituentCount,
         usedConstituentCount: result.usedConstituentCount,
         qmtHitCount: result.qmtHitCount,
+        qmtFreshness: readQmtWarehouseFreshness(),
         error: result.error || ""
       }))
       .catch(error => sendJson(res, 502, { success: false, code, error: error.message, rows: [] }));

@@ -17376,6 +17376,8 @@ async function backfillSectorHistorySnapshots(days = 90) {
           fetched: data.fetched || 0,
           failures: data.failures || [],
           warning: data.warning || "",
+          qmtFreshness: data.qmtFreshness || null,
+          qmtDailyFileCount: data.qmtDailyFileCount || 0,
           errors,
           firstDate: data.snapshots?.[data.snapshots.length - 1]?.date || "",
           lastDate: data.snapshots?.[0]?.date || ""
@@ -17418,6 +17420,8 @@ function openSectorBackfillDetail() {
   const meta = readSectorBackfillMeta();
   const snapshots = readSectorSnapshots();
   const rows = xiaokeSectorSnapshotsForRange("90").slice(0, 66);
+  const qmtFreshness = meta.qmtFreshness || {};
+  const qmtFreshClass = qmtFreshness.cls === "good" ? "rgba(25,201,139,.42)" : qmtFreshness.cls === "warn" ? "rgba(245,166,35,.48)" : "rgba(239,60,99,.48)";
   main.innerHTML = `
     <section class="review-head panel" style="border-color:rgba(141,92,246,.42);background:linear-gradient(180deg,rgba(141,92,246,.12),rgba(18,24,31,.88))">
       <div>
@@ -17429,6 +17433,7 @@ function openSectorBackfillDetail() {
     <section class="sector-market-summary">
       <div style="border-color:rgba(245,166,35,.42)"><span>最近回填</span><b>${escapeHtml(meta.snapshotCount || 0)}</b><small>${escapeHtml([meta.firstDate, meta.lastDate].filter(Boolean).join(" 至 ") || "尚未回填")}</small></div>
       <div style="border-color:rgba(34,195,214,.42)"><span>覆盖板块</span><b>${escapeHtml(meta.fetched || 0)}</b><small>QMT本地日线合成</small></div>
+      <div style="border-color:${qmtFreshClass}"><span>QMT最新交易日</span><b>${escapeHtml(qmtFreshness.latestTradeDate || "-")}</b><small>${escapeHtml(qmtFreshness.label || "待检测")} · 日线${escapeHtml(meta.qmtDailyFileCount || 0)}只</small></div>
       <div style="border-color:rgba(25,201,139,.42)"><span>本地快照</span><b>${snapshots.length}</b><small>用于近1月/近3月/全部对比</small></div>
       <div style="border-color:rgba(239,60,99,.42)"><span>失败数</span><b>${(meta.failures || []).length}</b><small>接口限流或无历史</small></div>
     </section>
@@ -17957,6 +17962,10 @@ function xiaokeSectorReliability(row = {}, meta = {}) {
   if (/QMT本地日线合成|QMT历史/.test(sourceText)) {
     score += 34;
     reasons.push("QMT本地日线历史主源");
+    if (/本地BK映射兜底|本地重点BK成分兜底/.test(sourceText)) {
+      score -= 8;
+      reasons.push("本地BK映射兜底");
+    }
   } else if (/东方财富/.test(sourceText) && !/历史K线/.test(sourceText)) {
     score += 35;
     reasons.push("东方财富实时/板块行情");
@@ -18026,7 +18035,10 @@ function xiaokeSectorSourceCellHtml(row = {}, meta = {}) {
 function xiaokeSectorDataAlertsHtml(rows = [], meta = {}, canUseCache = false) {
   const list = Array.isArray(rows) ? rows : [];
   const sourceText = [meta.source, meta.warning, ...list.slice(0, 100).map(row => row.source || row.rankingSource || "")].filter(Boolean).join(" / ");
+  const backfillMeta = typeof readSectorBackfillMeta === "function" ? readSectorBackfillMeta() : {};
+  const qmtFreshness = meta.qmtFreshness || meta.qmtWarehouse?.freshness || backfillMeta.qmtFreshness || {};
   const fallbackRows = list.filter(row => /新浪|缓存|回退/.test(row.source || row.rankingSource || ""));
+  const localMapRows = list.filter(row => /本地BK映射兜底|本地重点BK成分兜底/.test([row.source, row.rankingSource, row.constituentSource].filter(Boolean).join(" / ")));
   const sourceDiffRows = list.filter(row => {
     const diff = xiaokeFiniteNumberOrNull(row.sourceDiffAbs);
     return diff !== null && diff >= 2;
@@ -18043,6 +18055,8 @@ function xiaokeSectorDataAlertsHtml(rows = [], meta = {}, canUseCache = false) {
   const standard = list.filter(row => xiaokeIsStandardSector(row)).length;
   const alerts = [];
   if (/实时列表失败|fetch failed|不可用/.test(sourceText)) alerts.push({ cls: "warn", title: "东方财富实时未在线", text: "今日涨跌可能转向回退源；历史轨迹仍以QMT本地日线为准，盘中涨跌要看质量灯。" });
+  if (qmtFreshness?.cls === "warn" || qmtFreshness?.cls === "bad") alerts.push({ cls: qmtFreshness.cls === "bad" ? "bad" : "warn", title: "QMT历史偏旧", text: `本地日线最新到 ${qmtFreshness.latestTradeDate || "-"}，状态 ${qmtFreshness.label || "待确认"}；轨迹只代表已入库日期。` });
+  if (localMapRows.length) alerts.push({ cls: "warn", title: "使用本地BK映射兜底", text: `${localMapRows.length} 个板块用本地重点成分合成轨迹；东方财富成分恢复后会自动切回标准映射。` });
   if (fallbackRows.length) alerts.push({ cls: "warn", title: "存在回退源", text: `${fallbackRows.length} 个板块使用新浪/缓存等临时源，只适合临时观察。` });
   if (sourceDiffRows.length) alerts.push({ cls: "bad", title: "多源涨跌有偏离", text: `${sourceDiffRows.length} 个板块东方财富与回退源差异超过 2pct，已在差异校验表列出。` });
   if (staleRows.length) alerts.push({ cls: "warn", title: "SLA时间偏旧", text: `${staleRows.length} 个板块的数据更新时间偏旧，表格“可信度/来源”列已标出。` });
@@ -20990,6 +21004,8 @@ function clearSectorSourceQualityHistory() {
 function xiaokeSectorSourceQualityStatus(rows = [], meta = {}, canUseCache = false) {
   const list = Array.isArray(rows) ? rows : [];
   const sourceText = [meta.source, meta.warning, ...list.slice(0, 80).map(row => row.source || row.rankingSource || "")].filter(Boolean).join(" / ");
+  const backfillMeta = typeof readSectorBackfillMeta === "function" ? readSectorBackfillMeta() : {};
+  const qmtFreshness = meta.qmtFreshness || meta.qmtWarehouse?.freshness || backfillMeta.qmtFreshness || {};
   const freshnessRows = list.map(row => xiaokeSectorFreshness(row, meta)).filter(item => item.timestamp);
   const newest = freshnessRows.slice().sort((a, b) => b.timestamp - a.timestamp)[0] || xiaokeSectorFreshness({}, meta);
   const staleCount = freshnessRows.filter(item => item.cls === "bad" || item.cls === "warn").length;
@@ -20998,6 +21014,7 @@ function xiaokeSectorSourceQualityStatus(rows = [], meta = {}, canUseCache = fal
   const kline = list.filter(row => /QMT本地日线合成|QMT历史/.test(row.source || row.rankingSource || "")).length;
   const qmt = list.filter(row => /QMT|国信/.test(row.source || row.rankingSource || "")).length;
   const fallback = list.filter(row => /新浪|缓存|回退/.test(row.source || row.rankingSource || "")).length;
+  const localMap = list.filter(row => /本地BK映射兜底|本地重点BK成分兜底/.test([row.source, row.rankingSource, row.constituentSource].filter(Boolean).join(" / "))).length;
   const realOn = eastmoneyReal > 0;
   const klineOn = kline > 0 || /QMT本地日线合成|QMT历史/.test(sourceText);
   const qmtOn = qmt > 0;
@@ -21026,6 +21043,8 @@ function xiaokeSectorSourceQualityStatus(rows = [], meta = {}, canUseCache = fal
     kline,
     qmt,
     fallback,
+    localMap,
+    qmtFreshness,
     staleCount,
     total: list.length,
     cached: Boolean(canUseCache || meta.cached),
@@ -21076,7 +21095,10 @@ function xiaokeSectorSourceQualityHistoryHtml(current = {}) {
 function xiaokeSectorSourceQualityHtml(rows = [], meta = {}, canUseCache = false) {
   const status = xiaokeSectorSourceQualityStatus(rows, meta, canUseCache);
   xiaokeRecordSectorSourceQuality(status);
-  const { eastmoneyReal, kline, qmt, fallback, realOn, klineOn, qmtOn, fallbackOn, mainCls, summary, modeLabel, newestAgeText, staleCount, verdict } = status;
+  const { eastmoneyReal, kline, qmt, fallback, localMap, qmtFreshness, realOn, klineOn, qmtOn, fallbackOn, mainCls, summary, modeLabel, newestAgeText, staleCount, verdict } = status;
+  const qmtFreshNote = qmtFreshness?.latestTradeDate
+    ? `最新${qmtFreshness.latestTradeDate} · ${qmtFreshness.label || "已检测"}`
+    : "等待回填检测最新交易日";
   const sourceLamp = (title, statusText, cls, count, note, actions = "") => `<article class="${cls}">
     <span><i></i>${escapeHtml(title)}</span>
     <b>${escapeHtml(statusText)}</b>
@@ -21090,8 +21112,9 @@ function xiaokeSectorSourceQualityHtml(rows = [], meta = {}, canUseCache = false
     </div>
     <div class="sector-source-lamps">
       ${sourceLamp("东方财富实时", realOn ? "可用" : "未在线", realOn ? "good" : "bad", eastmoneyReal, realOn ? "实时列表或BK Quote校准" : "实时列表/Quote均未返回", `<button onclick="renderSectorStrength({ forceFetch: true })">重试实时</button>`)}
-      ${sourceLamp("QMT历史仓库", klineOn ? "启用" : "未启用", klineOn ? "ok" : "idle", kline, klineOn ? "本地日线合成轨迹" : "用于轨迹/K线/回填", `<button onclick="backfillSectorHistorySnapshots(90)">回填/校准</button>`)}
+      ${sourceLamp("QMT历史仓库", klineOn ? "启用" : "未启用", klineOn ? (qmtFreshness?.cls === "bad" ? "warn" : "ok") : "idle", kline, klineOn ? `本地日线合成轨迹；${qmtFreshNote}` : `用于轨迹/K线/回填；${qmtFreshNote}`, `<button onclick="backfillSectorHistorySnapshots(90)">回填/校准</button>`)}
       ${sourceLamp("国信/QMT桥接", qmtOn ? "参与" : "未参与", qmtOn ? "ok" : "idle", qmt || null, qmtOn ? "本地终端数据参与" : "先准备本地日线仓库", `<button onclick="prepareQmtDailyWarehouse()">准备QMT</button><button onclick="openDataScreening()">数据中心</button>`)}
+      ${sourceLamp("BK映射兜底", localMap ? "已使用" : "未使用", localMap ? "warn" : "good", localMap, localMap ? "东方财富成分不可用时启用本地重点映射" : "当前未触发本地映射兜底", `<button onclick="openSectorFullAnalysisGate()">查看映射</button>`)}
       ${sourceLamp("回退源", fallbackOn ? "有回退" : "无", fallbackOn ? "warn" : "good", fallback, fallbackOn ? "只作临时参考" : "未使用新浪/缓存回退", `<button onclick="hideUnmatchedSectorSamples()">隐藏样本</button>`)}
     </div>
     ${xiaokeSectorSourceQualityHistoryHtml(status)}
