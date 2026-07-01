@@ -6837,7 +6837,7 @@ function sectorStrengthFeatureGuideHtml() {
       </div>
       <div class="strategy-cache-ok" style="margin-top:12px">
         <b>推荐使用顺序</b>
-        <p>1. 先点金色“回填近3月东方财富”；2. 用蓝色“板块对比池”选择范围；3. 看“板块强度榜”；4. 看绿色“轨迹规律”；5. 点紫色“查看回填明细”核对历史；6. 点“看归因”落到股票。</p>
+        <p>1. 先点金色“回填近3月QMT历史”；2. 用蓝色“板块对比池”选择范围；3. 看“板块强度榜”；4. 看绿色“轨迹规律”；5. 点紫色“查看回填明细”核对历史；6. 点“看归因”落到股票。</p>
       </div>
     </section>
   `;
@@ -10472,7 +10472,7 @@ function agentSectorMainlineContext(query = "") {
       content: [
         "【板块主线情报】",
         `当前没有可用的东方财富 BK 标准板块快照。${packet.error ? "错误：" + packet.error : ""}`,
-        "回答规则：提示用户先刷新“板块强弱”或执行“回填近3月东方财富”，不要把本地样本股当作全市场板块结论。"
+        "回答规则：提示用户先刷新“板块强弱”或执行“回填近3月QMT历史”，不要把本地样本股当作全市场板块结论。"
       ].join("\n")
     };
   }
@@ -10496,7 +10496,7 @@ function agentSectorMainlineContext(query = "") {
 function agentSectorLocalAnswer(query = "", packet = window.currentAgentSectorMainline || agentSectorMainlineSnapshot()) {
   if (!agentSectorMainlineQuestion(query)) return "";
   if (!packet?.ok || !packet.lead) {
-    return "本地板块结论：当前没有可用的东方财富 BK 标准板块快照，先刷新“板块强弱”或回填近3月东方财富；本地样本股不能代表全板块。";
+    return "本地板块结论：当前没有可用的东方财富 BK 标准板块快照，先刷新“板块强弱”或回填近3月QMT历史；本地样本股不能代表全板块。";
   }
   const line = list => (list || []).slice(0, 4).map(row => row.name).filter(Boolean).join("、") || "暂无";
   const lead = packet.lead;
@@ -15738,7 +15738,7 @@ async function xiaokeFetchAllSectorRanking(force = false) {
           existingNames.add(name);
           if (code) existingCodes.add(code);
         });
-        if (namedData.calibrated) data.warning = [data.warning, `自定义/分组板块已用东方财富BK历史K线校准 ${namedData.calibrated} 个`].filter(Boolean).join("；");
+        if (namedData.calibrated) data.warning = [data.warning, `自定义/分组板块已用东方财富BK实时Quote校准 ${namedData.calibrated} 个`].filter(Boolean).join("；");
         if (namedData.source && /东方财富/.test(namedData.source) && !/东方财富/.test(data.source || "")) data.source = namedData.source;
       }
     }
@@ -16422,7 +16422,7 @@ function openSectorBoardHistory(row = {}) {
     <div class="review-actions"><button class="small-btn primary" onclick='openSectorBoardDetail(${JSON.stringify(payload)})'>看归因</button><button class="small-btn" onclick="renderSectorStrength({ skipFetch: true, scrollToSelected: true })">返回已选对比</button></div>
   </section>
   <section class="panel">
-    <div class="stock-table-wrap"><table class="stock-table sector-prof-table"><thead><tr><th>日期</th><th>排名</th><th>变化</th><th>强度</th><th>当日</th><th>60日</th><th>宽度</th><th>领涨股</th><th>操作</th></tr></thead><tbody>${rows || `<tr><td colspan="9"><div class="date">暂无这个板块的历史快照。可以先回填近3月东方财富，或等待每日快照保存。</div></td></tr>`}</tbody></table></div>
+    <div class="stock-table-wrap"><table class="stock-table sector-prof-table"><thead><tr><th>日期</th><th>排名</th><th>变化</th><th>强度</th><th>当日</th><th>60日</th><th>宽度</th><th>领涨股</th><th>操作</th></tr></thead><tbody>${rows || `<tr><td colspan="9"><div class="date">暂无这个板块的历史快照。可以先回填近3月QMT历史，或等待每日快照保存。</div></td></tr>`}</tbody></table></div>
   </section>`;
 }
 
@@ -16441,10 +16441,10 @@ function xiaokeSectorQuickNavHtml() {
     <small style="display:block;color:#aeb6c6;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(desc)}</small>
   </button>`;
   return `<section class="panel" style="margin-top:12px;border-color:rgba(255,255,255,.12)">
-    <div class="metadata-head"><div><div class="panel-title">关键操作导航</div><div class="date">这是快速入口，主线判断优先看“轨迹规律”。回填近3月走东方财富接口，不需要打开国信 QMT。</div></div></div>
+    <div class="metadata-head"><div><div class="panel-title">关键操作导航</div><div class="date">这是快速入口，主线判断优先看“轨迹规律”。历史轨迹走QMT本地日线合成，东方财富只做BK映射和实时校准。</div></div></div>
     <div style="display:grid;grid-template-columns:repeat(4,minmax(160px,1fr));gap:8px">
       ${navCard("#19c98b", "查看轨迹规律", "主线、启动、退潮和健康度集中在这里。", "openSectorMovementLab()", "重点")}
-      ${navCard("#f5a623", "回填近3月东方财富", `本地快照 ${snapshots.length} 条；${meta.snapshotCount ? `上次 ${meta.snapshotCount} 天` : "不需要 QMT"}`, "backfillSectorHistorySnapshots(90)", "取历史")}
+      ${navCard("#f5a623", "回填近3月QMT历史", `本地快照 ${snapshots.length} 条；${meta.snapshotCount ? `上次 ${meta.snapshotCount} 天` : "需要QMT日线仓库"}`, "backfillSectorHistorySnapshots(90)", "取历史")}
       ${navCard("#22c3d6", "板块对比池", "选择市场板块、细分板块或管理分组。", "scrollToSectorSection('sectorComparePool')", "去选择")}
       ${navCard("#8d5cf6", "查看回填详细数据", "看每个交易日的快照、前5名和完整明细，对比数据都在这里。", "openSectorBackfillDetail()", "看明细")}
     </div>
@@ -17264,7 +17264,7 @@ function xiaokeSectorRangeControlsHtml() {
   const current = xiaokeSectorTrajectoryRange();
   return `<div class="review-actions" style="justify-content:flex-start;flex-wrap:wrap">
     ${XIAOKE_SECTOR_TRAJECTORY_RANGE_OPTIONS.map(([value, label]) => `<button class="${current === value ? "small-btn primary" : "small-btn"}" style="${current === value ? 'border-color:#22c3d6;color:#d8fbff;background:rgba(34,195,214,.16)' : ''}" onclick="setSectorTrajectoryRange('${value}')">${label}</button>`).join("")}
-    <button class="small-btn" style="border-color:#f5a623;color:#ffe2a3;background:rgba(245,166,35,.14)" onclick="backfillSectorHistorySnapshots(90)">回填近3月东方财富</button>
+    <button class="small-btn" style="border-color:#f5a623;color:#ffe2a3;background:rgba(245,166,35,.14)" onclick="backfillSectorHistorySnapshots(90)">回填近3月QMT历史</button>
     <button class="small-btn" style="border-color:#8d5cf6;color:#d9c8ff;background:rgba(141,92,246,.14)" onclick="openSectorBackfillDetail()">查看回填明细</button>
   </div>`;
 }
@@ -17351,17 +17351,17 @@ function mergeSectorSnapshots(incoming = []) {
 async function backfillSectorHistorySnapshots(days = 90) {
   if (window.__xiaokeSectorBackfillRunning) return showToast("回填正在进行中，请稍等");
   window.__xiaokeSectorBackfillRunning = true;
-  showToast("正在小批量回填东方财富板块历史，先保证页面不卡死...");
+  showToast("正在用QMT本地日线合成板块历史，东方财富只用于BK成分映射...");
   const startedInMovement = Boolean(document.getElementById("main")?.querySelector("[data-sector-movement-lab]"));
   const plans = [
-    { label: "标准回填", limit: 120, timeout: 22000 },
-    { label: "降级回填", limit: 40, timeout: 14000 }
+    { label: "标准QMT合成", limit: 60, timeout: 26000 },
+    { label: "降级QMT合成", limit: 24, timeout: 16000 }
   ];
   const errors = [];
   try {
     for (const plan of plans) {
       try {
-        showToast(`${plan.label}：拉取近${days}天，最多 ${plan.limit} 个板块...`);
+        showToast(`${plan.label}：合成近${days}天，最多 ${plan.limit} 个BK板块...`);
         const { response, data } = await xiaokeFetchJsonWithTimeout(`/api/sector-history-snapshots?days=${encodeURIComponent(days)}&limit=${encodeURIComponent(plan.limit)}&t=${Date.now()}`, { cache: "no-store" }, plan.timeout);
         if (!response.ok || !data.success) throw new Error(data.error || "回填板块历史失败");
         if (!(data.snapshots || []).length) throw new Error("东方财富没有返回可用历史快照");
@@ -17381,7 +17381,7 @@ async function backfillSectorHistorySnapshots(days = 90) {
           lastDate: data.snapshots?.[0]?.date || ""
         };
         localStorage.setItem(XIAOKE_SECTOR_BACKFILL_META_KEY, JSON.stringify(meta));
-        showToast(`已回填 ${data.snapshots?.length || 0} 个交易日，覆盖 ${data.fetched || 0}/${data.sectorCount || 0} 个板块${errors.length ? "（已自动降级）" : ""}`);
+        showToast(`已用QMT合成 ${data.snapshots?.length || 0} 个交易日，覆盖 ${data.fetched || 0}/${data.sectorCount || 0} 个板块${errors.length ? "（已自动降级）" : ""}`);
         if (startedInMovement) openSectorMovementLab();
         else openSectorBackfillDetail();
         return rows;
@@ -17393,7 +17393,7 @@ async function backfillSectorHistorySnapshots(days = 90) {
   } catch (error) {
     const meta = { at: new Date().toISOString(), days, snapshotCount: 0, sectorCount: 0, fetched: 0, failures: [], errors, warning: error.message || "回填板块历史失败" };
     localStorage.setItem(XIAOKE_SECTOR_BACKFILL_META_KEY, JSON.stringify(meta));
-    showToast(`回填失败：${error.message || "东方财富历史暂不可用"}；已保留最近快照`);
+    showToast(`回填失败：${error.message || "QMT历史合成暂不可用"}；已保留最近快照`);
     if (startedInMovement) openSectorMovementLab();
     return [];
   } finally {
@@ -17422,13 +17422,13 @@ function openSectorBackfillDetail() {
     <section class="review-head panel" style="border-color:rgba(141,92,246,.42);background:linear-gradient(180deg,rgba(141,92,246,.12),rgba(18,24,31,.88))">
       <div>
         <div class="panel-title">回填历史明细</div>
-        <div class="date">这里就是“回填近3月东方财富”后的详细数据入口。点击任意日期可以看当天完整快照和排名变化。</div>
+        <div class="date">这里就是“回填近3月QMT历史”后的详细数据入口。历史涨跌由本地QMT日线合成；BK成分优先用东方财富映射，失败时会标注本地重点映射兜底。</div>
       </div>
       ${xiaokeSectorControlToolbarHtml()}
     </section>
     <section class="sector-market-summary">
       <div style="border-color:rgba(245,166,35,.42)"><span>最近回填</span><b>${escapeHtml(meta.snapshotCount || 0)}</b><small>${escapeHtml([meta.firstDate, meta.lastDate].filter(Boolean).join(" 至 ") || "尚未回填")}</small></div>
-      <div style="border-color:rgba(34,195,214,.42)"><span>覆盖板块</span><b>${escapeHtml(meta.fetched || 0)}</b><small>东方财富板块历史K线</small></div>
+      <div style="border-color:rgba(34,195,214,.42)"><span>覆盖板块</span><b>${escapeHtml(meta.fetched || 0)}</b><small>QMT本地日线合成</small></div>
       <div style="border-color:rgba(25,201,139,.42)"><span>本地快照</span><b>${snapshots.length}</b><small>用于近1月/近3月/全部对比</small></div>
       <div style="border-color:rgba(239,60,99,.42)"><span>失败数</span><b>${(meta.failures || []).length}</b><small>接口限流或无历史</small></div>
     </section>
@@ -17437,7 +17437,7 @@ function openSectorBackfillDetail() {
         <div><div class="panel-title">近三个月每日快照</div><div class="date">每一行是一个交易日；展示当天前5名，点“查看明细”进入完整表格。对比数据就来自这些快照。</div></div>
         ${xiaokeSectorRangeControlsHtml()}
       </div>
-      <div class="stock-table-wrap"><table class="stock-table sector-prof-table"><thead><tr><th>日期</th><th>前5名</th><th>样本数</th><th>来源</th><th>操作</th></tr></thead><tbody>${rows.map(snapshot => `<tr><td><b>${escapeHtml(snapshot.date)}</b></td><td>${escapeHtml((snapshot.items || []).slice(0, 5).map(item => `${item.rank}.${item.name}`).join("  |  "))}</td><td>${(snapshot.items || []).length}</td><td>${escapeHtml(snapshot.source || "本地快照")}</td><td><button class="small-btn" onclick='openSectorSnapshot(${JSON.stringify(snapshot.date)})'>查看明细</button></td></tr>`).join("") || `<tr><td colspan="5"><div class="date">暂无近三个月快照。请先点“回填近3月东方财富”。</div></td></tr>`}</tbody></table></div>
+      <div class="stock-table-wrap"><table class="stock-table sector-prof-table"><thead><tr><th>日期</th><th>前5名</th><th>样本数</th><th>来源</th><th>操作</th></tr></thead><tbody>${rows.map(snapshot => `<tr><td><b>${escapeHtml(snapshot.date)}</b></td><td>${escapeHtml((snapshot.items || []).slice(0, 5).map(item => `${item.rank}.${item.name}`).join("  |  "))}</td><td>${(snapshot.items || []).length}</td><td>${escapeHtml(snapshot.source || "本地快照")}</td><td><button class="small-btn" onclick='openSectorSnapshot(${JSON.stringify(snapshot.date)})'>查看明细</button></td></tr>`).join("") || `<tr><td colspan="5"><div class="date">暂无近三个月快照。请先点“回填近3月QMT历史”。</div></td></tr>`}</tbody></table></div>
     </section>`;
 }
 
@@ -17954,12 +17954,15 @@ function xiaokeSectorReliability(row = {}, meta = {}) {
   const downCount = Number(current.downCount ?? row.downCount);
   const reasons = [];
   let score = 22;
-  if (/东方财富/.test(sourceText) && !/历史K线/.test(sourceText)) {
+  if (/QMT本地日线合成|QMT历史/.test(sourceText)) {
+    score += 34;
+    reasons.push("QMT本地日线历史主源");
+  } else if (/东方财富/.test(sourceText) && !/历史K线/.test(sourceText)) {
     score += 35;
     reasons.push("东方财富实时/板块行情");
   } else if (/东方财富.*历史K线|历史K线校准/.test(sourceText)) {
-    score += 30;
-    reasons.push("东方财富BK历史K线校准");
+    score += 18;
+    reasons.push("旧版东方财富历史兼容源");
   } else if (/QMT|国信/.test(sourceText)) {
     score += 28;
     reasons.push("QMT本地终端");
@@ -18039,7 +18042,7 @@ function xiaokeSectorDataAlertsHtml(rows = [], meta = {}, canUseCache = false) {
   const highTrust = list.filter(row => xiaokeSectorReliability(row, meta).score >= 82).length;
   const standard = list.filter(row => xiaokeIsStandardSector(row)).length;
   const alerts = [];
-  if (/实时列表失败|fetch failed|不可用/.test(sourceText)) alerts.push({ cls: "warn", title: "东方财富实时未在线", text: "页面已自动转向BK历史K线校准或公开回退；盘中涨跌要以质量灯为准。" });
+  if (/实时列表失败|fetch failed|不可用/.test(sourceText)) alerts.push({ cls: "warn", title: "东方财富实时未在线", text: "今日涨跌可能转向回退源；历史轨迹仍以QMT本地日线为准，盘中涨跌要看质量灯。" });
   if (fallbackRows.length) alerts.push({ cls: "warn", title: "存在回退源", text: `${fallbackRows.length} 个板块使用新浪/缓存等临时源，只适合临时观察。` });
   if (sourceDiffRows.length) alerts.push({ cls: "bad", title: "多源涨跌有偏离", text: `${sourceDiffRows.length} 个板块东方财富与回退源差异超过 2pct，已在差异校验表列出。` });
   if (staleRows.length) alerts.push({ cls: "warn", title: "SLA时间偏旧", text: `${staleRows.length} 个板块的数据更新时间偏旧，表格“可信度/来源”列已标出。` });
@@ -18077,7 +18080,7 @@ function xiaokeSectorSourceDiffAuditHtml(rows = []) {
   };
   return `<section class="sector-source-audit">
     <div class="metadata-head">
-      <div><div class="panel-title">多源差异校验</div><div class="date">主口径使用东方财富 BK 实时Quote/历史K线；回退源只做对照。差异超过 2pct 提醒，超过 5pct 按严重偏离处理。</div></div>
+      <div><div class="panel-title">多源差异校验</div><div class="date">今日涨跌以东方财富 BK 实时Quote校准为优先，历史轨迹以QMT本地日线为主；回退源只做对照。差异超过 2pct 提醒。</div></div>
       <span class="video-group-badge">${escapeHtml(abnormal.length)} 个偏离 / ${escapeHtml(severe.length)} 个严重</span>
     </div>
     ${list.length ? `<div class="stock-table-wrap"><table class="stock-table sector-prof-table"><thead><tr><th>板块</th><th>东方财富BK</th><th>回退源</th><th>差异</th><th>处理建议</th></tr></thead><tbody>${list.slice(0, 18).map(rowHtml).join("")}</tbody></table></div>` : `<div class="empty-state"><b>暂无可比对差异</b><p>当前没有同时拥有东方财富 BK 校准和回退源涨跌的板块。实时源恢复时这里也可能为空，这是正常状态。</p></div>`}
@@ -20209,7 +20212,7 @@ function xiaokeSectorTrendChartHtml(row = {}, limit = 36, options = {}) {
   const realSource = options.realSource === true;
   const canLoadReal = !realSource && xiaokeSectorCanLoadRealKline({ ...row, code });
   const status = realSource ? "real" : canLoadReal ? "pending" : "local";
-  const sourceLabel = options.label || (realSource ? "东方财富板块K线" : canLoadReal ? "本地预览 · 正在换成东方财富K线" : "本地快照趋势");
+  const sourceLabel = options.label || (realSource ? "QMT合成板块K线" : canLoadReal ? "本地预览 · 正在换成QMT合成K线" : "本地快照趋势");
   const source = Array.isArray(options.points) && options.points.length
     ? options.points
     : Array.isArray(row.trendPoints) && row.trendPoints.length ? row.trendPoints : (row.points || []);
@@ -20217,7 +20220,7 @@ function xiaokeSectorTrendChartHtml(row = {}, limit = 36, options = {}) {
   if (!source.length) {
     return `<div class="sector-trend-chart ${status}" ${chartAttrs}>
       <div class="sector-trend-head"><span>${escapeHtml(sourceLabel)}</span><b>-</b></div>
-      <div class="sector-trend-empty">${canLoadReal ? "正在读取东方财富K线..." : "暂无趋势"}</div>
+      <div class="sector-trend-empty">${canLoadReal ? "正在读取QMT合成K线..." : "暂无趋势"}</div>
     </div>`;
   }
   const points = source.slice(-limit).map(point => {
@@ -20337,7 +20340,7 @@ async function xiaokeFetchSectorRealKline(code = "", days = xiaokeSectorRealKlin
   const request = fetch(`/api/sector-kline?code=${encodeURIComponent(boardCode)}&days=${encodeURIComponent(days)}&t=${Date.now()}`, { cache: "no-store" })
     .then(async response => {
       const data = await response.json().catch(() => ({}));
-      if (!response.ok || !data.success) throw new Error(data.error || "东方财富K线获取失败");
+      if (!response.ok || !data.success) throw new Error(data.error || "QMT合成K线获取失败");
       return xiaokeNormalizeSectorRealKlineRows(data.rows || []);
     })
     .catch(error => {
@@ -20371,14 +20374,14 @@ async function xiaokeHydrateSectorTrendCharts(root = document) {
     const rows = rowMap.get(code) || [];
     if (rows.length) {
       const name = node.dataset.sectorTrendName || code;
-      node.outerHTML = xiaokeSectorTrendChartHtml({ name, code }, limit, { points: rows, realSource: true, label: "东方财富板块K线" });
+      node.outerHTML = xiaokeSectorTrendChartHtml({ name, code }, limit, { points: rows, realSource: true, label: "QMT合成板块K线" });
       return;
     }
     node.dataset.sectorTrendStatus = "fallback";
     node.classList.remove("pending");
     node.classList.add("fallback");
     const label = node.querySelector(".sector-trend-head span");
-    if (label) label.textContent = "本地快照趋势（东方财富K线暂不可用）";
+    if (label) label.textContent = "本地快照趋势（QMT合成K线暂不可用）";
   });
 }
 
@@ -20957,10 +20960,10 @@ function loadSectorMovementProfessional(mode = "core") {
 function showSectorSourceConnectionGuide() {
   alert([
     "行情源连接说明：",
-    "1. 东方财富实时：优先走板块实时列表；列表失败时自动改用单板块 BK 实时Quote校准今日涨跌。",
-    "2. 东方财富K线校准：不需要QMT。点“回填/校准”会从东方财富BK历史K线拉近三个月日线，用来校准历史轨迹。",
+    "1. 东方财富实时：只负责今日板块实时涨跌、BK代码和成分股映射。",
+    "2. QMT历史仓库：轨迹、K线预览、近5/10/20/60日趋势都优先用本地日线合成，不再依赖东方财富历史K线。",
     "3. 国信/QMT：需要本机打开国信QMT/iQuant，先点“准备QMT”，再在QMT里运行 xiaoke_qmt_bridge.py。网页只能读取桥接写出的本地文件。",
-    "4. 回退源：不用连接。它只是主源失败时的临时保护，可信度低于东方财富BK和QMT。"
+    "4. 回退源：不用连接。它只是主源失败时的临时保护，只作参考，不作为主线核心证据。"
   ].join("\n"));
 }
 
@@ -20992,19 +20995,19 @@ function xiaokeSectorSourceQualityStatus(rows = [], meta = {}, canUseCache = fal
   const staleCount = freshnessRows.filter(item => item.cls === "bad" || item.cls === "warn").length;
   const modeLabel = xiaokeSectorQuoteModeLabel(meta.quoteMode || xiaokeSectorQuoteMode());
   const eastmoneyReal = list.filter(row => /东方财富板块$|东方财富板块实时Quote|实时Quote校准/.test(row.source || row.rankingSource || "") && !/历史K线/.test(row.source || "")).length;
-  const kline = list.filter(row => /东方财富.*历史K线|历史K线校准/.test(row.source || row.rankingSource || "")).length;
+  const kline = list.filter(row => /QMT本地日线合成|QMT历史/.test(row.source || row.rankingSource || "")).length;
   const qmt = list.filter(row => /QMT|国信/.test(row.source || row.rankingSource || "")).length;
   const fallback = list.filter(row => /新浪|缓存|回退/.test(row.source || row.rankingSource || "")).length;
   const realOn = eastmoneyReal > 0;
-  const klineOn = kline > 0 || /历史K线校准/.test(sourceText);
+  const klineOn = kline > 0 || /QMT本地日线合成|QMT历史/.test(sourceText);
   const qmtOn = qmt > 0;
   const fallbackOn = fallback > 0 || /新浪|回退/.test(sourceText);
   const mainCls = realOn ? "good" : klineOn ? "ok" : fallbackOn ? "warn" : "bad";
-  const verdict = realOn ? "最高可信" : klineOn ? "日线可用" : fallbackOn ? "谨慎使用" : "待恢复";
+  const verdict = realOn ? "实时可信" : klineOn ? "历史可用" : fallbackOn ? "谨慎使用" : "待恢复";
   const summary = realOn
     ? "东方财富实时列表或 BK 实时Quote可用，今日涨跌以东方财富口径为准。"
     : klineOn
-      ? "东方财富实时列表不可用，已用 BK 历史K线校准可匹配板块；适合看日线级强弱，不代表盘中实时。"
+      ? "QMT本地日线仓库可用，轨迹和趋势由本地股票日线合成，适合判断主线持续性。"
       : fallbackOn
         ? "当前主要使用回退源，适合临时观察，不建议作为主线核心依据。"
         : "当前缺少稳定行情源，请刷新或回填历史。";
@@ -21087,12 +21090,12 @@ function xiaokeSectorSourceQualityHtml(rows = [], meta = {}, canUseCache = false
     </div>
     <div class="sector-source-lamps">
       ${sourceLamp("东方财富实时", realOn ? "可用" : "未在线", realOn ? "good" : "bad", eastmoneyReal, realOn ? "实时列表或BK Quote校准" : "实时列表/Quote均未返回", `<button onclick="renderSectorStrength({ forceFetch: true })">重试实时</button>`)}
-      ${sourceLamp("东方财富K线校准", klineOn ? "启用" : "未启用", klineOn ? "ok" : "idle", kline, klineOn ? "按BK历史K线校准轨迹" : "用于历史轨迹和回填", `<button onclick="backfillSectorHistorySnapshots(90)">回填/校准</button>`)}
-      ${sourceLamp("国信/QMT", qmtOn ? "参与" : "未参与", qmtOn ? "ok" : "idle", qmt || null, qmtOn ? "本地终端行情参与" : "本页暂未调用QMT", `<button onclick="prepareQmtDailyWarehouse()">准备QMT</button><button onclick="openDataScreening()">数据中心</button>`)}
+      ${sourceLamp("QMT历史仓库", klineOn ? "启用" : "未启用", klineOn ? "ok" : "idle", kline, klineOn ? "本地日线合成轨迹" : "用于轨迹/K线/回填", `<button onclick="backfillSectorHistorySnapshots(90)">回填/校准</button>`)}
+      ${sourceLamp("国信/QMT桥接", qmtOn ? "参与" : "未参与", qmtOn ? "ok" : "idle", qmt || null, qmtOn ? "本地终端数据参与" : "先准备本地日线仓库", `<button onclick="prepareQmtDailyWarehouse()">准备QMT</button><button onclick="openDataScreening()">数据中心</button>`)}
       ${sourceLamp("回退源", fallbackOn ? "有回退" : "无", fallbackOn ? "warn" : "good", fallback, fallbackOn ? "只作临时参考" : "未使用新浪/缓存回退", `<button onclick="hideUnmatchedSectorSamples()">隐藏样本</button>`)}
     </div>
     ${xiaokeSectorSourceQualityHistoryHtml(status)}
-    <div class="sector-source-connect-note"><b>连接口径：</b>东方财富实时和K线是自动网页接口；QMT是本地桥接，必须在国信终端运行脚本；回退源不是正式数据源，只是断线保护。</div>
+    <div class="sector-source-connect-note"><b>连接口径：</b>历史主源 = QMT本地日线仓库；东方财富 = BK映射、成分股和今日实时校准；回退源只做断线保护。</div>
   </section>`;
 }
 
@@ -21166,7 +21169,7 @@ function xiaokeSectorControlGridHtml(active = "") {
     ${card("movement", "判断主线持续", "轨迹规律", "看谁连续前排、谁升温、谁退潮", "openSectorMovementLab()")}
     ${card("full", "本页深度区", "完整分析", "不再跳分支页，直接滚到下方深度区", "openSectorFullAnalysisGate()")}
     ${card("detail", "查历史记录", "快照明细", "按日期看回填和每日快照完整表", "openSectorBackfillDetail()")}
-    ${card("backfill", "补历史轨迹", "回填近3月", "用东方财富历史K线补齐主线轨迹", "backfillSectorHistorySnapshots(90)")}
+    ${card("backfill", "补历史轨迹", "回填近3月", "用QMT本地日线合成主线轨迹", "backfillSectorHistorySnapshots(90)")}
     ${card("manage", "维护细分板块", "导入/分组", "CPO/PCB/MLCC/产业链都在下方维护", "openSectorFullAnalysisGate('manage')")}
     ${card("clean", "页面卡顿时用", "清理缓存", "只清板块快照缓存，不动策略和任务", "clearSectorSnapshotCache()")}
   </section>`;
@@ -21281,7 +21284,7 @@ function xiaokeSectorHomeKlinePreviewHtml(rows = []) {
   const sampleRows = (rows || []).filter(row => !/^BK\d{4,6}$/i.test(row.code || row.current?.code || "")).slice(0, 4);
   return `<section class="panel sector-home-kline-panel" id="sectorHomeKlinePreview" style="margin-top:12px">
     <div class="metadata-head">
-      <div><div class="panel-title">板块K线预览</div><div class="date">这是之前你要的“像股票软件那种板块趋势图”。先显示前6个东方财富BK标准板块；进入后会自动换成东方财富板块K线，失败时保留本地快照趋势。</div></div>
+      <div><div class="panel-title">板块K线预览</div><div class="date">这是之前你要的“像股票软件那种板块趋势图”。先显示前6个标准BK板块；进入后会自动换成QMT本地日线合成K线，映射失败时保留最近快照趋势。</div></div>
       <div class="review-actions"><button class="small-btn" onclick="xiaokeHydrateSectorTrendCharts(document)">刷新K线</button><button class="small-btn" onclick="openSectorMovementLab()">轨迹详情</button></div>
     </div>
     <div class="sector-home-kline-grid">${standardRows.map(row => {
@@ -21295,7 +21298,7 @@ function xiaokeSectorHomeKlinePreviewHtml(rows = []) {
         ${xiaokeSectorTrendChartHtml(row, 28)}
         <div class="sector-home-jump-row"><button class="small-btn" onclick='openSectorBoardDetail(${JSON.stringify(payload)})'>归因</button></div>
       </article>`;
-    }).join("") || `<div class="empty-state"><b>暂无可画K线的东方财富BK板块</b><p>当前只有本地样本或管理分组，不能代表东方财富板块K线。先点“刷新今日榜”或“回填近3月”；若是 CPO/PCB/MLCC 这类细分，需要先在“板块映射字典”锁定到 BK。</p>${sampleRows.length ? `<p>当前样本：${escapeHtml(sampleRows.map(row => row.name).join("、"))}</p>` : ""}</div>`}</div>
+    }).join("") || `<div class="empty-state"><b>暂无可画K线的标准BK板块</b><p>当前只有本地样本或管理分组，不能代表标准BK趋势。先点“刷新今日榜”或“回填近3月”；若是 CPO/PCB/MLCC 这类细分，需要先在“板块映射字典”锁定到 BK。</p>${sampleRows.length ? `<p>当前样本：${escapeHtml(sampleRows.map(row => row.name).join("、"))}</p>` : ""}</div>`}</div>
   </section>`;
 }
 
@@ -21723,9 +21726,9 @@ renderSectorStrength = async function xiaokeSectorStrengthWorkbenchV2(options = 
     const sourceDiffAudit = xiaokeSectorSourceDiffAuditHtml(allRows);
     const bkAudit = xiaokeSectorBkAuditHtml(allRows, remoteRows);
     const mappingAudit = xiaokeSectorMappingRegistryHtml(allRows);
-    const sourceAlertText = /历史K线校准/.test(sourceName)
-      ? `东方财富实时列表失败，已启用东方财富 BK 历史K线校准${rankingMeta.warning ? `（${escapeHtml(rankingMeta.warning)}）` : ""}。这适合日线级强弱判断，不等同盘中实时。`
-      : `当前实时板块使用 ${escapeHtml(sourceName || "回退行情")}；东方财富接口未成功校准${rankingMeta.warning ? `（${escapeHtml(rankingMeta.warning)}）` : ""}。今日涨跌以当前回退源展示，主线核心仍优先看东方财富 BK 历史/可匹配板块。`;
+    const sourceAlertText = /QMT本地日线合成|QMT历史/.test(sourceName)
+      ? `已启用QMT本地日线历史主源${rankingMeta.warning ? `（${escapeHtml(rankingMeta.warning)}）` : ""}。轨迹适合看日线级持续性，不等同盘中实时。`
+      : `当前实时板块使用 ${escapeHtml(sourceName || "回退行情")}；东方财富实时未成功校准${rankingMeta.warning ? `（${escapeHtml(rankingMeta.warning)}）` : ""}。今日涨跌以当前源展示，主线核心优先看标准BK和QMT历史轨迹。`;
     const sourceAlert = !canUseCloseSnapshot && (rankingMeta.warning || (sourceName && !/东方财富/.test(sourceName)))
       ? `<section class="strategy-cache-warning" style="margin-top:-4px"><b>行情源提示：</b>${sourceAlertText}</section>`
       : "";

@@ -46,6 +46,7 @@ const ANNOUNCEMENTS_DIR = path.join(ROOT, "announcements");
 const ANNOUNCEMENT_CACHE_FILE = path.join(ROOT, "announcement_cache.json");
 const A_SHARE_UNIVERSE_CACHE_FILE = path.join(ROOT, "a_share_universe_cache.json");
 const SECTOR_QUOTE_CACHE_FILE = path.join(ROOT, "sector_quote_cache.json");
+const SECTOR_CONSTITUENT_CACHE_FILE = path.join(ROOT, "sector_constituent_cache.json");
 const DOCUMENT_TEXT_LIMIT = 160000;
 const DOCUMENT_CLIENT_TEXT_LIMIT = 80000;
 const DOCUMENT_OCR_DEFAULT_PAGES = 60;
@@ -157,6 +158,22 @@ function readMarketCache(filePath) {
 function writeMarketCache(filePath, items) {
   try {
     fs.writeFileSync(filePath, JSON.stringify({ at: new Date().toISOString(), items: items || [] }), "utf8");
+  } catch {}
+}
+
+function readSectorConstituentCache() {
+  try {
+    if (!fs.existsSync(SECTOR_CONSTITUENT_CACHE_FILE)) return {};
+    const data = JSON.parse(fs.readFileSync(SECTOR_CONSTITUENT_CACHE_FILE, "utf8"));
+    return data && typeof data === "object" ? data : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeSectorConstituentCache(cache) {
+  try {
+    fs.writeFileSync(SECTOR_CONSTITUENT_CACHE_FILE, JSON.stringify(cache || {}, null, 2), "utf8");
   } catch {}
 }
 
@@ -4562,14 +4579,12 @@ async function getEastmoneySectorConstituents(code = "") {
     fs: `b:${boardCode}`,
     fields: "f12,f14,f2,f3,f6,f8,f20,f21,f62"
   });
-  const response = await fetch(`https://82.push2.eastmoney.com/api/qt/clist/get?${params.toString()}`, {
-    headers: {
-      "User-Agent": "Mozilla/5.0",
-      Referer: "https://quote.eastmoney.com/"
-    }
-  });
-  if (!response.ok) throw new Error(`东方财富板块成分接口失败 ${response.status}`);
-  const data = await response.json();
+  const apiPath = `/api/qt/clist/get?${params.toString()}`;
+  const data = await fetchEastmoneyJsonWithRetry([
+    `https://82.push2.eastmoney.com${apiPath}`,
+    `https://push2.eastmoney.com${apiPath}`,
+    `https://91.push2.eastmoney.com${apiPath}`
+  ], { timeoutMs: 7000, retry: 1 });
   const rows = Array.isArray(data?.data?.diff) ? data.data.diff : [];
   return rows.map(row => ({
     code: String(row.f12 || ""),
@@ -4583,6 +4598,48 @@ async function getEastmoneySectorConstituents(code = "") {
     mainNetInflow: row.f62,
     source: "东方财富板块成分"
   })).filter(row => row.name);
+}
+
+async function getCachedEastmoneySectorConstituents(code = "", options = {}) {
+  const boardCode = String(code || "").trim().toUpperCase();
+  if (!/^BK\d{4,6}$/.test(boardCode)) return { items: [], cached: false, source: "无效BK代码" };
+  const maxAgeMs = Math.max(6 * 3600000, Number(options.maxAgeMs || 7 * 86400000));
+  const cache = readSectorConstituentCache();
+  const cached = cache[boardCode];
+  const cachedAt = cached?.at ? new Date(cached.at).getTime() : 0;
+  if (cached && Array.isArray(cached.items) && cached.items.length && Date.now() - cachedAt <= maxAgeMs) {
+    return { items: cached.items, cached: true, source: "东方财富BK成分缓存" };
+  }
+  try {
+    const items = await getEastmoneySectorConstituents(boardCode);
+    if (items.length) {
+      cache[boardCode] = { at: new Date().toISOString(), code: boardCode, items };
+      writeSectorConstituentCache(cache);
+    }
+    return { items, cached: false, source: "东方财富BK成分" };
+  } catch (error) {
+    const message = error?.message || String(error);
+    if (cached && Array.isArray(cached.items) && cached.items.length) {
+      return {
+        items: cached.items,
+        cached: true,
+        stale: true,
+        warning: message,
+        source: "东方财富BK成分旧缓存"
+      };
+    }
+    const fallbackItems = localPrioritySectorConstituents(boardCode);
+    if (fallbackItems.length) {
+      return {
+        items: fallbackItems,
+        cached: false,
+        localFallback: true,
+        warning: message,
+        source: "本地重点BK成分兜底"
+      };
+    }
+    throw error;
+  }
 }
 
 function eastmoneySectorFetchSleep(ms = 180) {
@@ -4811,6 +4868,66 @@ const EASTMONEY_SECTOR_HISTORY_PRIORITY = [
   { code: "BK1623", name: "钼" }
 ];
 
+const LOCAL_PRIORITY_SECTOR_CONSTITUENTS = {
+  BK1136: [
+    ["300308", "中际旭创"], ["300502", "新易盛"], ["300394", "天孚通信"], ["002281", "光迅科技"],
+    ["300548", "博创科技"], ["300620", "光库科技"], ["688498", "源杰科技"], ["300570", "太辰光"],
+    ["603083", "剑桥科技"], ["000063", "中兴通讯"], ["601869", "长飞光纤"], ["600522", "中天科技"],
+    ["600487", "亨通光电"], ["002463", "沪电股份"], ["002384", "东山精密"], ["002837", "英维克"]
+  ],
+  BK1325: [
+    ["300666", "江丰电子"], ["688126", "沪硅产业"], ["300346", "南大光电"], ["688019", "安集科技"],
+    ["300655", "晶瑞电材"], ["603650", "彤程新材"], ["300395", "菲利华"], ["603688", "石英股份"],
+    ["002409", "雅克科技"], ["300285", "国瓷材料"], ["600160", "巨化股份"], ["600703", "三安光电"]
+  ],
+  BK1326: [
+    ["002371", "北方华创"], ["688012", "中微公司"], ["688072", "拓荆科技"], ["300604", "长川科技"],
+    ["688037", "芯源微"], ["688120", "华海清科"], ["688361", "中科飞测"], ["688630", "芯碁微装"],
+    ["688082", "盛美上海"], ["300567", "精测电子"], ["603690", "至纯科技"], ["300316", "晶盛机电"],
+    ["688596", "正帆科技"]
+  ],
+  BK1137: [
+    ["603986", "兆易创新"], ["688525", "佰维存储"], ["688008", "澜起科技"], ["000021", "深科技"],
+    ["600584", "长电科技"], ["002156", "通富微电"], ["002185", "华天科技"], ["300223", "北京君正"],
+    ["301308", "江波龙"], ["688110", "东芯股份"], ["300302", "同有科技"], ["000977", "浪潮信息"]
+  ],
+  BK1152: [
+    ["688008", "澜起科技"], ["603986", "兆易创新"], ["688525", "佰维存储"], ["301308", "江波龙"],
+    ["600584", "长电科技"], ["002156", "通富微电"], ["002185", "华天科技"], ["300223", "北京君正"],
+    ["688110", "东芯股份"], ["000021", "深科技"]
+  ],
+  BK1036: [
+    ["688981", "中芯国际"], ["688041", "海光信息"], ["688012", "中微公司"], ["002371", "北方华创"],
+    ["603986", "兆易创新"], ["688008", "澜起科技"], ["600584", "长电科技"], ["002156", "通富微电"],
+    ["002185", "华天科技"], ["688256", "寒武纪"], ["688126", "沪硅产业"], ["688120", "华海清科"],
+    ["300666", "江丰电子"], ["300346", "南大光电"], ["688072", "拓荆科技"], ["688037", "芯源微"],
+    ["688019", "安集科技"]
+  ],
+  BK0935: [
+    ["688981", "中芯国际"], ["688012", "中微公司"], ["002371", "北方华创"], ["688120", "华海清科"],
+    ["688126", "沪硅产业"], ["688019", "安集科技"], ["300666", "江丰电子"], ["300346", "南大光电"],
+    ["603690", "至纯科技"], ["688072", "拓荆科技"], ["688037", "芯源微"], ["300316", "晶盛机电"]
+  ],
+  BK1623: [
+    ["603993", "洛阳钼业"], ["601958", "金钼股份"], ["000960", "锡业股份"], ["600549", "厦门钨业"],
+    ["000657", "中钨高新"]
+  ]
+};
+
+function localPrioritySectorConstituents(code = "") {
+  const boardCode = String(code || "").trim().toUpperCase();
+  const rows = LOCAL_PRIORITY_SECTOR_CONSTITUENTS[boardCode] || [];
+  return rows.map(([stockCode, name], index) => ({
+    code: stockCode,
+    name,
+    rankWeight: rows.length - index,
+    source: "本地重点BK成分兜底"
+  })).filter(row => {
+    const qmtCode = qmtCodeFromQuoteKey(row.code);
+    return qmtCode && fs.existsSync(qmtDailyFileForCode(qmtCode));
+  });
+}
+
 function mergeSectorHistoryPrioritySectors(rows = [], limit = 180) {
   const byCode = new Map();
   EASTMONEY_SECTOR_HISTORY_PRIORITY.forEach(row => byCode.set(String(row.code).toUpperCase(), { ...row, priority: true }));
@@ -4875,11 +4992,9 @@ async function findEastmoneySectorByName(name = "") {
 async function eastmoneySectorQuoteFromLatestKline(sector = {}, fallback = {}) {
   if (!/^BK\d{4,6}$/i.test(sector.code || "")) return fallback;
   const realtime = await getEastmoneySectorRealtimeQuote(sector.code).catch(() => null);
-  const rows = await getEastmoneySectorKline(sector.code, { days: 70 }).catch(() => []);
-  const latest = rows[rows.length - 1] || null;
-  if (!realtime && !latest) return fallback;
+  if (!realtime) return fallback;
   const fallbackPct = Number(fallback.pct);
-  const eastmoneyPct = Number(realtime?.pct ?? latest?.pct);
+  const eastmoneyPct = Number(realtime.pct);
   const sourceDiff = Number.isFinite(fallbackPct) && Number.isFinite(eastmoneyPct)
     ? Number((eastmoneyPct - fallbackPct).toFixed(2))
     : null;
@@ -4888,14 +5003,14 @@ async function eastmoneySectorQuoteFromLatestKline(sector = {}, fallback = {}) {
     ...fallback,
     code: sector.code,
     name: realtime?.name || sector.name || fallback.name,
-    price: realtime?.price ?? latest.close,
-    pct: realtime?.pct ?? latest.pct,
-    amount: realtime?.amount ?? latest.amount,
-    turnoverRate: latest?.turnoverRate ?? fallback.turnoverRate ?? null,
-    pct60: latest?.pct20 ?? fallback.pct60 ?? null,
-    source: realtime ? "东方财富板块实时Quote校准" : "东方财富板块历史K线校准",
-    sourceAt: realtime?.sourceAt || (latest?.date ? `${latest.date}T15:00:00+08:00` : new Date().toISOString()),
-    quoteMode: realtime ? "intraday" : "close",
+    price: realtime.price,
+    pct: realtime.pct,
+    amount: realtime.amount,
+    turnoverRate: fallback.turnoverRate ?? null,
+    pct60: fallback.pct60 ?? null,
+    source: "东方财富板块实时Quote校准",
+    sourceAt: realtime.sourceAt || new Date().toISOString(),
+    quoteMode: "intraday",
     fallbackSource: fallback.source || "",
     fallbackName: fallback.name || "",
     fallbackCode: fallback.code || "",
@@ -4903,7 +5018,6 @@ async function eastmoneySectorQuoteFromLatestKline(sector = {}, fallback = {}) {
     sourceDiff,
     sourceDiffAbs,
     sourceDiffLevel: sourceDiffAbs === null ? "" : sourceDiffAbs >= 5 ? "严重" : sourceDiffAbs >= 2 ? "偏离" : "正常",
-    klineDate: latest?.date || "",
     eastmoneyMatched: true
   };
 }
@@ -4937,6 +5051,219 @@ function sectorHistoryScore(row = {}) {
   const trend = (clamp(row.pct20, -20, 40) + 20) / 60 * 30;
   const activity = Math.max(0, Math.min(10, Math.log10(Math.max(1, Number(row.amount || 0))) - 8));
   return Math.round(Math.max(0, Math.min(100, daily + trend + activity)));
+}
+
+function qmtSectorDateLabel(dateText = "") {
+  const raw = String(dateText || "").replace(/[^\d]/g, "").slice(0, 8);
+  if (raw.length !== 8) return "";
+  return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+}
+
+function qmtSectorPctFromCloses(now, prev) {
+  const current = Number(now);
+  const previous = Number(prev);
+  if (!Number.isFinite(current) || !Number.isFinite(previous) || previous <= 0) return null;
+  return (current / previous - 1) * 100;
+}
+
+async function getQmtSectorSyntheticKline(code = "", options = {}) {
+  const boardCode = String(code || "").trim().toUpperCase();
+  if (!/^BK\d{4,6}$/.test(boardCode)) return { rows: [], source: "QMT本地日线合成", error: "无效BK代码" };
+  const days = Math.max(20, Math.min(180, Number(options.days || 90)));
+  const maxConstituents = Math.max(12, Math.min(120, Number(options.maxConstituents || 80)));
+  const constituentResult = await getCachedEastmoneySectorConstituents(boardCode, options);
+  const constituents = (constituentResult.items || [])
+    .filter(item => item && item.code)
+    .sort((a, b) => Number(b.amount || b.circulationMarketCap || b.marketCap || b.rankWeight || 0) - Number(a.amount || a.circulationMarketCap || a.marketCap || a.rankWeight || 0))
+    .slice(0, maxConstituents);
+  if (!constituents.length) return { rows: [], source: "QMT本地日线合成", code: boardCode, error: "没有可用成分股" };
+  const totalConstituents = constituents.length;
+  const byDate = new Map();
+  let qmtHit = 0;
+  constituents.forEach(item => {
+    const qmtCode = qmtCodeFromQuoteKey(item.code);
+    if (!qmtCode) return;
+    const bars = readQmtDailyBars(qmtCode, days + 90).rows;
+    if (bars.length >= 2) qmtHit += 1;
+    for (let i = 1; i < bars.length; i += 1) {
+      const prev = bars[i - 1];
+      const bar = bars[i];
+      const returnPct = qmtSectorPctFromCloses(bar.close, prev.close);
+      const date = qmtSectorDateLabel(bar.date);
+      if (!date || returnPct === null) continue;
+      let bucket = byDate.get(date);
+      if (!bucket) {
+        bucket = { date, returns: [], amount: 0, volume: 0, upCount: 0, downCount: 0, leaders: [] };
+        byDate.set(date, bucket);
+      }
+      bucket.returns.push(returnPct / 100);
+      bucket.amount += Number(bar.amount || 0);
+      bucket.volume += Number(bar.volume || 0);
+      if (returnPct > 0) bucket.upCount += 1;
+      if (returnPct < 0) bucket.downCount += 1;
+      bucket.leaders.push({
+        name: item.name || item.code,
+        code: item.code,
+        pct: returnPct,
+        amount: Number(bar.amount || 0)
+      });
+    }
+  });
+  const minDailyCoverage = totalConstituents <= 2 ? 1 : Math.min(8, Math.max(2, Math.ceil(totalConstituents * 0.08)));
+  let close = 100;
+  const chronological = Array.from(byDate.values())
+    .filter(day => day.returns.length >= minDailyCoverage)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+    .map(day => {
+      const prevClose = close;
+      const avgReturn = day.returns.reduce((sum, value) => sum + value, 0) / day.returns.length;
+      close = prevClose * (1 + avgReturn);
+      const pct = avgReturn * 100;
+      const high = Math.max(prevClose, close) * (1 + Math.min(0.03, Math.max(0, pct) / 100));
+      const low = Math.min(prevClose, close) * (1 - Math.min(0.03, Math.max(0, -pct) / 100));
+      const leader = day.leaders.sort((a, b) => Number(b.pct || -999) - Number(a.pct || -999))[0] || {};
+      return {
+        date: day.date,
+        open: prevClose,
+        high,
+        low,
+        close,
+        pct,
+        volume: day.volume,
+        amount: day.amount,
+        upCount: day.upCount,
+        downCount: day.downCount,
+        breadth: day.returns.length ? day.upCount / day.returns.length * 100 : null,
+        sampleCount: day.returns.length,
+        totalConstituents,
+        coverageRate: totalConstituents ? day.returns.length / totalConstituents * 100 : null,
+        leader: leader.name || "",
+        leaderCode: leader.code || "",
+        leaderPct: Number.isFinite(Number(leader.pct)) ? leader.pct : null
+      };
+    });
+  const withTrend = chronological.map((row, index) => {
+    const pct20 = index >= 20 ? qmtSectorPctFromCloses(row.close, chronological[index - 20].close) : null;
+    const pct60 = index >= 60 ? qmtSectorPctFromCloses(row.close, chronological[index - 60].close) : pct20;
+    return { ...row, pct20, pct60 };
+  });
+  return {
+    rows: withTrend.slice(-days),
+    code: boardCode,
+    source: "QMT本地日线合成",
+    constituentSource: constituentResult.source,
+    constituentCached: Boolean(constituentResult.cached),
+    constituentStale: Boolean(constituentResult.stale),
+    constituentLocalFallback: Boolean(constituentResult.localFallback),
+    constituentWarning: constituentResult.warning || "",
+    constituentCount: constituentResult.items?.length || 0,
+    usedConstituentCount: totalConstituents,
+    qmtHitCount: qmtHit
+  };
+}
+
+async function buildQmtSectorHistorySnapshots(options = {}) {
+  const days = Math.max(20, Math.min(120, Number(options.days || 90)));
+  const limit = Math.max(12, Math.min(60, Number(options.limit || 50)));
+  const wantedCodes = String(options.codes || "")
+    .split(/[,，\s]+/)
+    .map(code => code.trim().toUpperCase())
+    .filter(code => /^BK\d{4,6}$/.test(code));
+  let quoteRows = [];
+  let quoteWarning = "";
+  if (!wantedCodes.length) {
+    try {
+      quoteRows = await getEastmoneySectorQuotes([]);
+    } catch (error) {
+      quoteWarning = error.message || "东方财富板块列表获取失败";
+      const cached = readMarketCache(SECTOR_QUOTE_CACHE_FILE);
+      quoteRows = Array.isArray(cached?.items) ? cached.items : [];
+    }
+  }
+  const sectors = wantedCodes.length
+    ? wantedCodes.map(code => EASTMONEY_SECTOR_HISTORY_PRIORITY.find(item => item.code === code) || { code, name: code })
+    : mergeSectorHistoryPrioritySectors(quoteRows.filter(row => /^BK\d{4,6}$/i.test(row.code)), limit);
+  if (!sectors.length) throw new Error(quoteWarning || "没有可回填的东方财富标准BK板块");
+  const rows = [];
+  const failures = [];
+  const concurrency = 3;
+  for (let i = 0; i < sectors.length; i += concurrency) {
+    const batch = sectors.slice(i, i + concurrency);
+    const settled = await Promise.allSettled(batch.map(async sector => {
+      const result = await getQmtSectorSyntheticKline(sector.code, { days, maxConstituents: 80 });
+      if (!result.rows.length) throw new Error(result.error || "QMT本地日线不足");
+      return { sector: { ...sector, name: sector.name || result.name || sector.code }, history: result.rows, meta: result };
+    }));
+    settled.forEach((result, index) => {
+      if (result.status === "fulfilled") rows.push(result.value);
+      else failures.push({ code: batch[index]?.code, name: batch[index]?.name, error: result.reason?.message || String(result.reason) });
+    });
+  }
+  const byDate = new Map();
+  rows.forEach(({ sector, history, meta }) => {
+    const itemSource = meta.constituentLocalFallback
+      ? "QMT本地日线合成 + 本地BK映射兜底"
+      : (meta.constituentStale ? "QMT本地日线合成 + 东方财富BK旧缓存" : "QMT本地日线合成 + 东方财富BK成分");
+    history.forEach(day => {
+      if (!byDate.has(day.date)) byDate.set(day.date, []);
+      byDate.get(day.date).push({
+        name: sector.name,
+        code: sector.code,
+        pct: day.pct,
+        pct60: day.pct60,
+        score: sectorHistoryScore({ ...day, pct20: day.pct20 }),
+        breadth: day.breadth,
+        upCount: day.upCount,
+        downCount: day.downCount,
+        leader: day.leader || "",
+        leaderPct: day.leaderPct,
+        amount: day.amount,
+        volume: day.volume,
+        source: itemSource,
+        historyClose: day.close,
+        sampleCount: day.sampleCount,
+        totalConstituents: day.totalConstituents,
+        qmtCoverageRate: day.coverageRate,
+        constituentSource: meta.constituentSource || "",
+        constituentWarning: meta.constituentWarning || ""
+      });
+    });
+  });
+  const snapshots = Array.from(byDate.entries())
+    .sort(([a], [b]) => String(b).localeCompare(String(a)))
+    .slice(0, days)
+    .map(([date, items]) => ({
+      date,
+      at: new Date(`${date}T15:30:00+08:00`).toISOString(),
+      source: rows.some(row => row.meta?.constituentLocalFallback)
+        ? "QMT本地日线合成 + 本地BK映射兜底"
+        : (rows.some(row => row.meta?.constituentStale) ? "QMT本地日线合成 + 东方财富BK旧缓存" : "QMT本地日线合成 + 东方财富BK成分"),
+      quoteMode: "close",
+      items: items
+        .sort((a, b) => Number(b.score || 0) - Number(a.score || 0) || Number(b.pct || -999) - Number(a.pct || -999))
+        .slice(0, Math.min(limit, 240))
+        .map((item, index) => ({ ...item, rank: index + 1 }))
+    }));
+  const warning = [
+    quoteWarning,
+    rows.some(row => row.meta?.constituentLocalFallback) ? "东方财富BK成分暂不可用，部分重点板块使用本地映射兜底；恢复后会自动回到东方财富成分/缓存" : "",
+    rows.some(row => row.meta?.constituentStale) ? "部分板块使用东方财富BK成分旧缓存" : "",
+    failures.length ? `QMT历史合成跳过 ${failures.length} 个BK：${failures.slice(0, 4).map(item => item.name || item.code).join("、")}` : ""
+  ].filter(Boolean).join("；");
+  const resultSource = rows.some(row => row.meta?.constituentLocalFallback)
+    ? "QMT本地日线合成 + 本地BK映射兜底"
+    : (rows.some(row => row.meta?.constituentStale) ? "QMT本地日线合成 + 东方财富BK旧缓存" : "QMT本地日线合成 + 东方财富BK成分");
+  return {
+    success: true,
+    days,
+    sectorCount: sectors.length,
+    fetched: rows.length,
+    failures,
+    snapshots,
+    warning,
+    source: resultSource,
+    sourcePolicy: "QMT/local daily warehouse is historical primary; Eastmoney is used for BK mapping and realtime calibration only."
+  };
 }
 
 async function buildEastmoneySectorHistorySnapshots(options = {}) {
@@ -8708,12 +9035,12 @@ const server = http.createServer((req, res) => {
             sendJson(res, 200, {
             success: true,
             items: result.items,
-            source: quoteCalibrated ? "东方财富板块实时Quote校准" : result.calibrated ? "东方财富板块历史K线校准" : "新浪财经行业板块",
+            source: quoteCalibrated ? "东方财富板块实时Quote校准" : "新浪财经行业板块",
             asOf: new Date().toISOString(),
-            quoteMode: quoteCalibrated ? "intraday" : result.calibrated ? "close" : "fallback",
+            quoteMode: quoteCalibrated ? "intraday" : "fallback",
             cached: false,
             warning: result.calibrated
-              ? `${error.message}；实时列表失败，已用${quoteCalibrated ? "东方财富BK实时Quote" : "东方财富BK历史K线"}校准 ${result.calibrated} 个板块`
+              ? `${error.message}；实时列表失败，已用东方财富BK实时Quote校准 ${result.calibrated} 个板块`
               : error.message,
             calibrated: result.calibrated
             });
@@ -8734,8 +9061,17 @@ const server = http.createServer((req, res) => {
   if (req.url.startsWith("/api/sector-constituents")) {
     const url = new URL(req.url, "http://localhost");
     const code = url.searchParams.get("code") || "";
-    getEastmoneySectorConstituents(code)
-      .then(items => sendJson(res, 200, { success: true, code, items, source: "东方财富板块成分" }))
+    getCachedEastmoneySectorConstituents(code)
+      .then(result => sendJson(res, 200, {
+        success: true,
+        code,
+        items: result.items,
+        source: result.source,
+        cached: result.cached,
+        stale: Boolean(result.stale),
+        localFallback: Boolean(result.localFallback),
+        warning: result.warning || ""
+      }))
       .catch(error => sendJson(res, 502, { success: false, code, error: error.message, items: [] }));
     return;
   }
@@ -8744,13 +9080,22 @@ const server = http.createServer((req, res) => {
     const url = new URL(req.url, "http://localhost");
     const code = String(url.searchParams.get("code") || "").trim().toUpperCase();
     const days = Math.max(20, Math.min(260, Number(url.searchParams.get("days") || 90)));
-    getEastmoneySectorKline(code, { days })
-      .then(rows => sendJson(res, rows.length ? 200 : 404, {
-        success: Boolean(rows.length),
+    getQmtSectorSyntheticKline(code, { days })
+      .then(result => sendJson(res, result.rows.length ? 200 : 404, {
+        success: Boolean(result.rows.length),
         code,
-        rows,
-        count: rows.length,
-        source: "东方财富板块历史K线"
+        rows: result.rows,
+        count: result.rows.length,
+        source: result.source,
+        constituentSource: result.constituentSource,
+        constituentCached: result.constituentCached,
+        constituentStale: result.constituentStale,
+        constituentLocalFallback: result.constituentLocalFallback,
+        constituentWarning: result.constituentWarning,
+        constituentCount: result.constituentCount,
+        usedConstituentCount: result.usedConstituentCount,
+        qmtHitCount: result.qmtHitCount,
+        error: result.error || ""
       }))
       .catch(error => sendJson(res, 502, { success: false, code, error: error.message, rows: [] }));
     return;
@@ -8758,7 +9103,7 @@ const server = http.createServer((req, res) => {
 
   if (req.url.startsWith("/api/sector-history-snapshots")) {
     const url = new URL(req.url, "http://localhost");
-    buildEastmoneySectorHistorySnapshots({
+    buildQmtSectorHistorySnapshots({
       days: url.searchParams.get("days") || 90,
       limit: url.searchParams.get("limit") || 200,
       codes: url.searchParams.get("codes") || ""

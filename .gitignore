@@ -26,6 +26,7 @@ qmt_bridge_debug.log
 stock_profiles.json
 a_share_universe_cache.json
 sector_quote_cache.json
+sector_constituent_cache.json
 video_data_export.json
 video-folders.txt
 
