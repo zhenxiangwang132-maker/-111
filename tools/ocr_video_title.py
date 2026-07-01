@@ -1,7 +1,15 @@
 import json
 import sys
 
-from rapidocr_onnxruntime import RapidOCR
+try:
+    from rapidocr_onnxruntime import RapidOCR
+except ModuleNotFoundError:
+    RapidOCR = None
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
 
 
 def main():
@@ -10,6 +18,13 @@ def main():
         return 2
 
     image_path = sys.argv[1]
+    if RapidOCR is None:
+        print(json.dumps({
+            "success": False,
+            "error": "OCR依赖缺失：请安装 rapidocr-onnxruntime，或重启服务后再试。"
+        }, ensure_ascii=False))
+        return 3
+
     ocr = RapidOCR()
     result, _ = ocr(image_path)
     rows = []

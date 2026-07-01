@@ -1365,7 +1365,7 @@ function sectorImportPanelHtml(prefix = "sector") {
       <div class="metadata-head">
         <div>
           <div class="panel-title">导入产业链表到关注分组</div>
-          <div class="date">支持 Excel / CSV / TXT / PDF 文字层；图片 OCR 入口已预留。表格按“板块、强弱、上中下游、分类、核心、细化”识别。</div>
+          <div class="date">支持 Excel / CSV / TXT / PDF / 图片 OCR。表格按“板块、强弱、上中下游、分类、核心、细化”识别，导入后会同步到管理分组和板块强弱。</div>
         </div>
         <div class="review-actions">
           <button class="small-btn" onclick="parseSectorMapImport('${prefix}')">解析预览</button>
@@ -4112,6 +4112,91 @@ function renderDashboard() {
 }
 
 const STRATEGY_KEY = "xiaoke_my_strategy_v1";
+const LEGACY_NOTES_RECOVERY_DONE_KEY = "xiaoke_legacy_notes_recovery_done_v1";
+
+function recoveredLegacyStrategy() {
+  return {
+    main: "我的策略：\n\n1. 只在主线清晰、标的有辨识度、风险可控的时候出手。\n2. 不因为情绪热闹而追高，先看位置，再看承接。\n3. 小可课堂负责记录、复盘和提醒，最终决策仍以自己的交易系统为准。\n\n\n\n\n☆右侧交易，波浪理论\n1、把握市场主线，错了就割，不要后悔\n2、优选龙头，再进中军，不去杂毛，风险最低\n3、MACD金叉，KDJ金叉,RSI逐步抬升，关注超买超卖，量能需逐步放大\n4、需画支撑线和压力线，目标价价位，关注量价关系\n5、看不懂市场，可空仓，持续盈利\n6、保证本金是交易的第一步\n7.要信早信，不要犹豫\n8、上升趋势关注5日线，10日线可介入，下降趋势跌破20日线离场（待定）",
+    entry: "入场条件：\n- 主线明确\n- 板块有持续性\n- 标的有量价承接",
+    risk: "风险规则：\n- 看不懂不下手\n- 高位不重仓\n- 错了先降仓再复盘",
+    position: "仓位规则：\n- 试错仓\n- 确认后加仓\n- 分歧加大时降仓",
+    forbid: "禁做清单：\n- 不看风险只看涨幅\n- 没复盘就连续操作\n- 用情绪代替系统"
+  };
+}
+
+function recoveredLegacyDailyTask() {
+  return "1.毛泽东思想20页\n2.股市趋势分析，越多越好\n3.八段锦10分钟\n4.模型视频学习，优先完成板块分析\n5.辩证唯物主义原理20页\n板块排行，寻找规律，验证规律，每日复盘";
+}
+
+function xiaokeStrategyHasUserText(data = {}) {
+  return ["main", "entry", "risk", "position", "forbid"].some(field => String(data?.[field] || "").trim());
+}
+
+function xiaokeReadRawStrategyValue() {
+  try {
+    const raw = localStorage.getItem(STRATEGY_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function xiaokeBackupCurrentNotesBeforeRecovery(reason = "legacy-recovery") {
+  try {
+    const rows = JSON.parse(localStorage.getItem("xiaoke_notes_recovery_backups_v1") || "[]");
+    rows.unshift({
+      id: `backup_${Date.now()}`,
+      reason,
+      at: new Date().toISOString(),
+      strategy: xiaokeReadRawStrategyValue(),
+      dailyTask: localStorage.getItem(DAILY_TASK_KEY) || "",
+      dailyFocus: localStorage.getItem(DAILY_FOCUS_KEY) || ""
+    });
+    localStorage.setItem("xiaoke_notes_recovery_backups_v1", JSON.stringify(rows.slice(0, 12)));
+  } catch {}
+}
+
+function xiaokeEnsureLegacyNotesRecovered() {
+  try {
+    const done = localStorage.getItem(LEGACY_NOTES_RECOVERY_DONE_KEY);
+    const rawStrategy = xiaokeReadRawStrategyValue();
+    const hasStrategy = rawStrategy && xiaokeStrategyHasUserText(rawStrategy);
+    const hasTask = String(localStorage.getItem(DAILY_TASK_KEY) || "").trim();
+    if (!done && (!hasStrategy || !hasTask)) {
+      xiaokeBackupCurrentNotesBeforeRecovery("auto-empty-recovery");
+      if (!hasStrategy) localStorage.setItem(STRATEGY_KEY, JSON.stringify(recoveredLegacyStrategy()));
+      if (!hasTask) localStorage.setItem(DAILY_TASK_KEY, recoveredLegacyDailyTask());
+      localStorage.setItem(LEGACY_NOTES_RECOVERY_DONE_KEY, new Date().toISOString());
+    }
+  } catch {}
+}
+
+function restoreRecoveredStrategy() {
+  xiaokeBackupCurrentNotesBeforeRecovery("manual-strategy-recovery");
+  localStorage.setItem(STRATEGY_KEY, JSON.stringify(recoveredLegacyStrategy()));
+  localStorage.setItem(LEGACY_NOTES_RECOVERY_DONE_KEY, new Date().toISOString());
+  showToast("已恢复从浏览器缓存找回的旧策略记录");
+  renderStrategy();
+}
+
+function restoreRecoveredDailyTask() {
+  xiaokeBackupCurrentNotesBeforeRecovery("manual-daily-task-recovery");
+  localStorage.setItem(DAILY_TASK_KEY, recoveredLegacyDailyTask());
+  localStorage.setItem(LEGACY_NOTES_RECOVERY_DONE_KEY, new Date().toISOString());
+  const box = document.getElementById("dailyTaskBox");
+  if (box) box.value = recoveredLegacyDailyTask();
+  showToast("已恢复从浏览器缓存找回的旧每日任务");
+}
+
+function restoreRecoveredLegacyNotes() {
+  xiaokeBackupCurrentNotesBeforeRecovery("manual-full-recovery");
+  localStorage.setItem(STRATEGY_KEY, JSON.stringify(recoveredLegacyStrategy()));
+  localStorage.setItem(DAILY_TASK_KEY, recoveredLegacyDailyTask());
+  localStorage.setItem(LEGACY_NOTES_RECOVERY_DONE_KEY, new Date().toISOString());
+  showToast("已恢复旧策略和旧每日任务");
+  if (state.view === "strategy") renderStrategy();
+  else render();
+}
 
 function defaultStrategy() {
   return {
@@ -4494,6 +4579,166 @@ function deleteVideoGroup(name) {
   showToast("\u5df2\u5220\u9664\u5206\u7ec4");
 }
 
+function defaultSystemNavItems() {
+  return [
+    { id: "strategy", label: "我的策略", view: "strategy" },
+    { id: "dataScreening", label: "数据中心", view: "dataScreening" },
+    { id: "quantWorkbench", label: "量化", view: "quantWorkbench" },
+    { id: "dailyReview", label: "每日复盘", view: "dailyReview" },
+    { id: "dailyCheckin", label: "每日打卡", view: "dailyCheckin" },
+    { id: "sectorStrength", label: "板块强弱", view: "sectorStrength" },
+    { id: "modelFramework", label: "模型框架", view: "modelFramework" },
+    { id: "stockProfiles", label: "股票档案", view: "stockProfiles" },
+    { id: "pipelineCenter", label: "能力中心", view: "pipelineCenter" },
+    { id: "videoGroupManager", label: "管理分组", view: "videoGroupManager" }
+  ];
+}
+
+function readSystemNavSettings() {
+  try {
+    const data = JSON.parse(localStorage.getItem("xiaoke_system_nav_settings_v1") || "{}");
+    return {
+      order: Array.isArray(data.order) ? data.order : [],
+      hidden: Array.isArray(data.hidden) ? data.hidden : [],
+      renames: data && typeof data.renames === "object" ? data.renames : {},
+      colors: data && typeof data.colors === "object" ? data.colors : {}
+    };
+  } catch {
+    return { order: [], hidden: [], renames: {}, colors: {} };
+  }
+}
+
+function saveSystemNavSettings(settings) {
+  localStorage.setItem("xiaoke_system_nav_settings_v1", JSON.stringify({
+    order: Array.isArray(settings.order) ? settings.order : [],
+    hidden: Array.isArray(settings.hidden) ? settings.hidden : [],
+    renames: settings.renames || {},
+    colors: settings.colors || {}
+  }));
+}
+
+function orderedSystemNavItems(includeHidden = false) {
+  const defaults = defaultSystemNavItems();
+  const byId = new Map(defaults.map(item => [item.id, item]));
+  const settings = readSystemNavSettings();
+  const order = [...settings.order.filter(id => byId.has(id)), ...defaults.map(item => item.id).filter(id => !settings.order.includes(id))];
+  const hidden = new Set(settings.hidden || []);
+  return order
+    .map(id => ({
+      ...byId.get(id),
+      label: settings.renames?.[id] || byId.get(id).label,
+      color: settings.colors?.[id] || "",
+      hidden: hidden.has(id)
+    }))
+    .filter(item => includeHidden || !item.hidden);
+}
+
+function updateSystemNavOrder(mutator) {
+  const settings = readSystemNavSettings();
+  const ids = orderedSystemNavItems(true).map(item => item.id);
+  mutator(ids, settings);
+  settings.order = ids;
+  saveSystemNavSettings(settings);
+  renderTopChips();
+  if (state.view === "videoGroupManager") openVideoGroupManager();
+}
+
+function pinSystemNavItem(id) {
+  updateSystemNavOrder(ids => {
+    const index = ids.indexOf(id);
+    if (index > 0) ids.unshift(...ids.splice(index, 1));
+  });
+}
+
+function moveSystemNavItem(id, delta) {
+  updateSystemNavOrder(ids => {
+    const index = ids.indexOf(id);
+    const next = index + Number(delta || 0);
+    if (index < 0 || next < 0 || next >= ids.length) return;
+    const [item] = ids.splice(index, 1);
+    ids.splice(next, 0, item);
+  });
+}
+
+function toggleSystemNavItem(id) {
+  const settings = readSystemNavSettings();
+  const hidden = new Set(settings.hidden || []);
+  if (hidden.has(id)) hidden.delete(id);
+  else hidden.add(id);
+  settings.hidden = [...hidden];
+  if (!settings.order.length) settings.order = orderedSystemNavItems(true).map(item => item.id);
+  saveSystemNavSettings(settings);
+  renderTopChips();
+  if (state.view === "videoGroupManager") openVideoGroupManager();
+}
+
+function resetSystemNavItems() {
+  saveSystemNavSettings({ order: [], hidden: [], renames: {}, colors: {} });
+  renderTopChips();
+  if (state.view === "videoGroupManager") openVideoGroupManager();
+  showToast("系统入口顺序已恢复默认");
+}
+
+function renameSystemNavItem(id) {
+  const item = orderedSystemNavItems(true).find(row => row.id === id);
+  if (!item) return;
+  const next = prompt("新的入口名称", item.label);
+  if (!next || !next.trim()) return;
+  const settings = readSystemNavSettings();
+  settings.renames = settings.renames || {};
+  settings.renames[id] = next.trim();
+  if (!settings.order.length) settings.order = orderedSystemNavItems(true).map(row => row.id);
+  saveSystemNavSettings(settings);
+  renderTopChips();
+  if (state.view === "videoGroupManager") openVideoGroupManager();
+}
+
+function cycleSystemNavColor(id) {
+  const settings = readSystemNavSettings();
+  settings.colors = settings.colors || {};
+  const current = settings.colors[id] || "";
+  const next = VIDEO_TAG_COLORS[(VIDEO_TAG_COLORS.indexOf(current) + 1) % VIDEO_TAG_COLORS.length];
+  if (next) settings.colors[id] = next;
+  else delete settings.colors[id];
+  if (!settings.order.length) settings.order = orderedSystemNavItems(true).map(row => row.id);
+  saveSystemNavSettings(settings);
+  renderTopChips();
+  if (state.view === "videoGroupManager") openVideoGroupManager();
+}
+
+function systemNavManagerHtml() {
+  const items = orderedSystemNavItems(true);
+  return `
+    <section class="panel" style="margin-bottom:12px;border-color:rgba(34,195,214,.25)">
+      <div class="metadata-head">
+        <div>
+          <div class="panel-title">管理系统入口</div>
+          <div class="date">这里管理顶部固定功能：我的策略、数据中心、量化、股票档案等；改名、颜色、排序都和下面分组管理保持一致。</div>
+        </div>
+        <button class="small-btn" onclick="resetSystemNavItems()">恢复默认</button>
+      </div>
+      <div class="group-manage-list">
+        ${items.map((item, index) => `
+          <div class="group-manage-row ${item.hidden ? "muted-row" : ""}" style="${groupColorStyle(item.color)}">
+            <div>
+              <b>${escapeHtml(item.label)}${item.hidden ? " · 已隐藏" : ""}</b>
+              <span>系统入口 · ${escapeHtml(item.view)}${item.color ? ` · 颜色 ${escapeHtml(item.color)}` : ""}</span>
+            </div>
+            <div>
+              <button class="small-btn" onclick='pinSystemNavItem(${JSON.stringify(item.id)})'>置顶</button>
+              <button class="small-btn" ${index === 0 ? "disabled" : ""} onclick='moveSystemNavItem(${JSON.stringify(item.id)}, -1)'>上移</button>
+              <button class="small-btn" ${index === items.length - 1 ? "disabled" : ""} onclick='moveSystemNavItem(${JSON.stringify(item.id)}, 1)'>下移</button>
+              <button class="small-btn" onclick='cycleSystemNavColor(${JSON.stringify(item.id)})'>颜色</button>
+              <button class="small-btn" onclick='renameSystemNavItem(${JSON.stringify(item.id)})'>改名</button>
+              <button class="small-btn" onclick='toggleSystemNavItem(${JSON.stringify(item.id)})'>${item.hidden ? "恢复" : "隐藏"}</button>
+            </div>
+          </div>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
 function openVideoGroupManager() {
   const groupItems = orderedVideoTagItems(true);
   state.view = "videoGroupManager";
@@ -4509,6 +4754,7 @@ function openVideoGroupManager() {
         <button class="small-btn" onclick="renderDashboard()">\u8fd4\u56de\u770b\u677f</button>
       </div>
     </section>
+    ${systemNavManagerHtml()}
     ${sectorImportPanelHtml("manager")}
     <section class="panel">
       <div class="panel-title">\u5df2\u6709\u5206\u7ec4</div>
@@ -4618,6 +4864,8 @@ const XIAOKE_TRADITIONAL_MAP = {};
 
 const XIAOKE_EMPTY_TEXT_MARKERS = [
   "暂无转录", "暂未转录", "待补充", "本地库暂无转录", "本地库暂无标题",
+  "新同步视频", "待识别标题", "待识别", "待转写", "本地视频已导入",
+  "可继续补转写", "暂无完整转录", "补充视频转录", "没有识别到可用文字",
   "Douyin requires", "browser cookies", "cookies", "无法加载", "导入失败"
 ];
 
@@ -4652,6 +4900,7 @@ function isGenericVideoTitle(title) {
     || /^dy[_-]?\d+/i.test(text)
     || /^local[_-]/i.test(text)
     || /^\d{4}-\d{2}-\d{2}/.test(text)
+    || /^\d+(?:\.\d+)?万?赞$/.test(text)
     || /^(本地视频素材|视频素材|待补标题|未命名视频|未命名)$/.test(text)
     || XIAOKE_EMPTY_TEXT_MARKERS.some(marker => text.includes(marker));
 }
@@ -4753,7 +5002,9 @@ function videoCardDisplayTitle(v) {
 function detailTextPanel(v) {
   const title = escapeHtml(getVideoDetailTitle(v));
   const transcript = escapeHtml(getVideoDetailTranscript(v));
-  const transcribeButton = v.videoUrl
+  const transcribeButton = v.videoUrl && v.hasAudio === false
+    ? `<button class="small-btn" id="transcribeBtn" disabled title="本地视频没有音频流">缺音频</button>`
+    : v.videoUrl
     ? `<button class="small-btn" id="transcribeBtn" onclick="transcribeVideo('${v.id}')">提取语音文字</button>`
     : `<button class="small-btn" id="transcribeBtn" disabled title="这条没有本地视频文件">需本地视频</button>`;
   return `
@@ -6502,6 +6753,20 @@ async function learnDocument(id, maxPages = 0) {
 function buildVideoAnalysisPrompt(v) {
   const title = getVideoDetailTitle(v);
   const transcript = getVideoDetailTranscript(v);
+  const commentRows = typeof finalVideoComments === "function" ? finalVideoComments(v).slice(0, 12) : [];
+  const interactionRows = typeof finalVideoInteractions === "function" ? finalVideoInteractions(v).slice(0, 8) : [];
+  const commentText = commentRows.map((row, index) => {
+    const likes = row.likes || row.digg_count || row.like_count || "";
+    const replies = Array.isArray(row.replies) && row.replies.length
+      ? ` 回复：${row.replies.slice(0, 3).map(reply => `${reply.user || "@用户"}:${compactPlainText(reply.text || "", 60)}`).join("；")}`
+      : "";
+    return `${index + 1}. ${row.user || "@用户"}${likes ? `(${likes}赞)` : ""}：${compactPlainText(row.text || row.content || "", 140)}${replies}`;
+  }).join("\n") || "暂无高赞评论。";
+  const interactionText = interactionRows.map((row, index) => {
+    const base = compactPlainText(row.text || row.content || "", 120);
+    const reply = compactPlainText(row.reply || row.replyText || "", 120);
+    return `${index + 1}. ${row.user || "@用户"}：${base}${reply ? `\n   博主回复：${reply}` : ""}`;
+  }).join("\n") || "暂无博主回复/互动。";
   const sourceLabel = v.isDocument ? "文档正文" : "语音转文字";
   const usefulText = isEmptyTranscript(transcript)
     ? (v.isDocument ? "暂无文档正文，请先点击“学习书籍”。" : "暂无完整转录，请只基于标题、日期和互动数据做低置信度复盘。")
@@ -6517,6 +6782,8 @@ function buildVideoAnalysisPrompt(v) {
     `浣滆€咃細${v.author || "-"}`,
     `日期：${v.date || "-"}`,
     `${sourceLabel}：${usefulText}`,
+    `高赞评论：\n${commentText}`,
+    `博主互动/回复：\n${interactionText}`,
     "",
     "请必须逐项输出，不允许空项，不允许只复制原文。每项格式为：字段名：内容。",
     "关注标的：",
@@ -6538,6 +6805,44 @@ function saveSidebarQuote(value) {
   localStorage.setItem(SIDEBAR_QUOTE_KEY, value);
 }
 
+function sectorStrengthFeatureGuideHtml() {
+  return `
+    <section class="panel" style="margin-bottom:12px;border-color:rgba(34,195,214,.38);background:linear-gradient(180deg,rgba(34,195,214,.09),rgba(18,24,31,.9))">
+      <div class="metadata-head">
+        <div>
+          <div class="panel-title">板块强弱页速查</div>
+          <div class="date">这页不是买卖建议页，而是“选择板块 -> 回填历史 -> 查看强弱 -> 观察轨迹 -> 打开个股”的复盘工作台。</div>
+        </div>
+        <button class="small-btn" onclick="openSectorStrength()">打开板块强弱</button>
+      </div>
+      <div class="sector-market-summary">
+        <div style="border-color:rgba(34,195,214,.55)"><span>蓝色</span><b>对比池</b><small>选择哪些板块参与比较</small></div>
+        <div style="border-color:rgba(245,166,35,.55)"><span>金色</span><b>回填</b><small>从东方财富补近3月历史</small></div>
+        <div style="border-color:rgba(25,201,139,.55)"><span>绿色</span><b>轨迹</b><small>看主线/升温/退潮</small></div>
+        <div style="border-color:rgba(141,92,246,.55)"><span>紫色</span><b>明细</b><small>查看每日快照和完整表格</small></div>
+      </div>
+      <div class="stock-table-wrap" style="margin-top:12px">
+        <table class="stock-table sector-prof-table">
+          <thead><tr><th>区域</th><th>解决什么问题</th><th>怎么用</th></tr></thead>
+          <tbody>
+            <tr><td><b>关键操作导航</b></td><td>入口太多时先看这里</td><td>按颜色进入：蓝色选板块，金色补历史，绿色看规律，紫色查明细。</td></tr>
+            <tr><td><b>板块对比池</b></td><td>决定“谁和谁比”</td><td>开关全市场/我的细分/管理分组；点具体板块可只比较少数几个。</td></tr>
+            <tr><td><b>板块强度榜</b></td><td>看当前强弱排序</td><td>强度榜会把市场板块、自定义细分、管理分组产业链合并排序。</td></tr>
+            <tr><td><b>板块轨迹与规律</b></td><td>看运动方向</td><td>用近1月/近3月/全部快照判断主线确认、次主线跟随、升温启动、退潮降温。</td></tr>
+            <tr><td><b>最近板块快照</b></td><td>核对数据从哪里来</td><td>点日期查看当天完整排名；回填后的历史也会出现在这里。</td></tr>
+            <tr><td><b>查看归因</b></td><td>从板块落到股票</td><td>市场板块读东方财富成分股，先看贡献/拖累；管理分组会递归读取左侧树图里的个股。</td></tr>
+            <tr><td><b>板块池管理</b></td><td>新增或导入细分方向</td><td>折叠区里可新增 CPO/PCB/玻纤等，也可导入 Excel、PDF、图片 OCR。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="strategy-cache-ok" style="margin-top:12px">
+        <b>推荐使用顺序</b>
+        <p>1. 先点金色“回填近3月东方财富”；2. 用蓝色“板块对比池”选择范围；3. 看“板块强度榜”；4. 看绿色“轨迹规律”；5. 点紫色“查看回填明细”核对历史；6. 点“看归因”落到股票。</p>
+      </div>
+    </section>
+  `;
+}
+
 async function openFeatureList() {
   state.view = "featureList";
   renderTopChips();
@@ -6555,6 +6860,7 @@ async function openFeatureList() {
           </div>
           <button class="small-btn" onclick="renderDashboard()">\u8fd4\u56de\u770b\u677f</button>
         </div>
+        ${sectorStrengthFeatureGuideHtml()}
         <pre class="feature-list-text">${escapeHtml(text)}</pre>
       </section>
     `;
@@ -8096,9 +8402,10 @@ function qmtBridgeHealthHtml(status = {}) {
     <div class="panel" style="margin-top:12px;background:rgba(90,157,255,.07);border-color:rgba(90,157,255,.2)">
       <div class="metadata-head">
         <div>
-          <div class="panel-title">QMT 行情桥接</div>
+          <div class="panel-title">QMT 实时行情桥接</div>
           <div class="date">策略：${status.strategyInstalled ? "已安装到 QMT 策略目录" : "未安装"}；行情文件：${status.hasQuotes ? "已收到" : "未收到"}；更新：${escapeHtml(age)}</div>
           <div class="date" style="margin-top:4px">同步代码 ${escapeHtml(status.codeCount || 0)} 个：${escapeHtml(codePreview)}${(status.codes || []).length > 10 ? " ..." : ""}</div>
+          <div class="date" style="margin-top:4px;color:#a8c7ff">日线/周线/月线仓库属于“数据中心”的数据仓库，条件选股会直接使用，量化页只复用结果做验证。</div>
           <div class="date" style="margin-top:4px">QMT 策略路径：${escapeHtml(status.qmtStrategyFile || "")}</div>
         </div>
         <span class="${status.hasQuotes && !status.stale ? "decision-chip good" : "decision-chip warn"}">${status.hasQuotes && !status.stale ? "桥接在线" : "待运行"}</span>
@@ -8107,6 +8414,7 @@ function qmtBridgeHealthHtml(status = {}) {
       <div class="review-actions" style="justify-content:flex-start;margin-top:10px">
         <button class="small-btn" onclick="syncQmtBridgeCodes()">同步关注标的</button>
         <button class="small-btn" onclick="installQmtBridgeStrategy()">安装桥接策略</button>
+        <button class="small-btn primary" onclick="openDataScreening()">去数据中心看仓库</button>
         <button class="small-btn" onclick="refreshQmtBridgeStatus()">刷新桥接状态</button>
       </div>
     </div>
@@ -8177,7 +8485,9 @@ function dataSourceHealthHtml(data = {}) {
 async function showDataSourceHealth() {
   const panel = document.getElementById("institutionalProbePanel");
   if (!panel) {
-    showToast("请先打开股票档案页");
+    if (state.view === "dataScreening" && typeof loadInvestmentDataQuality === "function") {
+      loadInvestmentDataQuality();
+    }
     return;
   }
   panel.style.display = "block";
@@ -8219,7 +8529,7 @@ async function syncQmtBridgeCodes() {
     const data = await response.json();
     if (!response.ok || !data.success) throw new Error(data.error || "QMT 列表同步失败");
     showToast(`已同步 ${data.synced || data.codeCount || 0} 个 QMT 代码`);
-    showDataSourceHealth();
+    refreshAfterQmtWarehouseChange();
   } catch (error) {
     showToast(error.message || "QMT 列表同步失败");
   }
@@ -8233,9 +8543,55 @@ async function syncQmtUniverseCodes() {
     const source = data.source ? `，来源 ${data.source}` : "";
     showToast(`已同步 ${data.synced || data.codeCount || 0} 个全市场 QMT 代码${source}`);
     if (typeof loadInvestmentDataQuality === "function") loadInvestmentDataQuality();
-    if (typeof showDataSourceHealth === "function") showDataSourceHealth();
+    if (state.view === "quantWorkbench" && typeof showDataSourceHealth === "function") showDataSourceHealth();
   } catch (error) {
     showToast(error.message || "全市场 QMT 列表同步失败");
+  }
+}
+
+async function prepareQmtDailyWarehouse() {
+  showToast("正在准备 QMT 日线仓库...");
+  try {
+    const response = await fetch("/api/qmt-data/bootstrap", { method: "POST" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.success) throw new Error(data.error || "QMT 日线仓库准备失败");
+    const count = Number(data.warehouse?.dailyFileCount || 0);
+    if (typeof loadInvestmentDataQuality === "function") await loadInvestmentDataQuality();
+    const synced = Number(data.synced || data.codeCount || 0);
+    const message = count >= 1000
+      ? `QMT 日线仓库已可用：${count} 只`
+      : `已准备 ${synced} 只代码和桥接脚本，请到国信 QMT 运行 xiaoke_qmt_bridge.py 写入日线`;
+    showToast(message);
+    if (Array.isArray(data.steps) && data.steps.length) console.info("QMT daily warehouse steps:", data.steps);
+  } catch (error) {
+    showToast(error.message || "QMT 日线仓库准备失败");
+  }
+}
+
+function refreshAfterQmtWarehouseChange() {
+  if (state.view === "dataScreening" && typeof loadInvestmentDataQuality === "function") {
+    loadInvestmentDataQuality();
+    return;
+  }
+  if (state.view === "quantWorkbench" && typeof showDataSourceHealth === "function") {
+    showDataSourceHealth();
+    return;
+  }
+  if (typeof loadInvestmentDataQuality === "function") loadInvestmentDataQuality();
+}
+
+async function buildQmtDerivedWarehouses() {
+  showToast("正在由日线生成周线/月线...");
+  try {
+    const response = await fetch("/api/qmt-data/build-derived", { method: "POST" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.success) throw new Error(data.error || "周线/月线生成失败");
+    const weekly = Number(data.weekly?.fileCount || data.warehouse?.weeklyFileCount || 0);
+    const monthly = Number(data.monthly?.fileCount || data.warehouse?.monthlyFileCount || 0);
+    showToast(`周/月线已生成：周线 ${weekly} 只，月线 ${monthly} 只`);
+    refreshAfterQmtWarehouseChange();
+  } catch (error) {
+    showToast(error.message || "周线/月线生成失败");
   }
 }
 
@@ -8245,7 +8601,7 @@ async function installQmtBridgeStrategy() {
     const data = await response.json();
     if (!response.ok || !data.success) throw new Error(data.error || "桥接策略安装失败");
     showToast("QMT 桥接策略已安装到国信 iQuant 策略目录");
-    showDataSourceHealth();
+    refreshAfterQmtWarehouseChange();
   } catch (error) {
     showToast(error.message || "桥接策略安装失败");
   }
@@ -8254,7 +8610,6 @@ async function installQmtBridgeStrategy() {
 async function probeInstitutionalTerminals(connect = false) {
   const panel = document.getElementById("institutionalProbePanel");
   if (!panel) {
-    showToast("请先打开股票档案页");
     return;
   }
   panel.style.display = "block";
@@ -10047,11 +10402,224 @@ function agentInvestmentFrameworkContext(responseMode = getAgentResponseMode()) 
       "6. 预期差/观察条件：给可复盘条件，不给确定性买卖指令。",
       "7. 风险边界：说明什么情况会推翻判断。",
       "8. 来源标注：行情和财务必须写实际来源；公告写巨潮资讯公告；观点写本地视频、评论互动或记忆编号；没有来源写缺少直接证据。",
+      "当上下文出现【板块主线情报】时，用户询问当前市场主线、板块强弱、题材轮动或赛道位置，必须优先引用该情报，不能回答没有市场数据。",
+      "当上下文出现【板块归因快照】时，用户询问主线扩散/收缩、贡献股、拖累股、成分股宽度或轮动，必须优先引用归因快照。",
+      "板块主线判断只按东方财富 BK 标准板块；本地自定义细分、管理分组和样本股票只作为观察样本，不代表全板块。",
       "严禁输出必涨、必跌、买入、卖出、满仓等确定性交易指令。",
       ...professionalRules,
       "禁止只说关注政策、业绩、估值等无法验证的套话。"
     ].join("\n")
   };
+}
+
+function agentSectorMainlineQuestion(query = "") {
+  return /主线|板块|题材|赛道|强弱|轮动|轨迹|行情|当前市场|市场风格|CPO|PCB|MLCC|半导体|有机硅|钼|光模块|机器人|AI/.test(String(query || ""));
+}
+
+function agentSectorDescribeRows(rows = [], limit = 4) {
+  return (rows || []).slice(0, limit).map(row => {
+    const current = row.current || row;
+    const pct = current.pct ?? row.pct;
+    const pct60 = current.pct60 ?? row.pct60;
+    const code = row.code || current.code || "";
+    return `${row.name}${code ? `(${code})` : ""}：第${row.currentRank || current.rank || "-"}，运动分${row.motionScore ?? "-"}，前10 ${row.top10Count || 0}次，今日${xiaokeSectorSignedPct(pct, 2)}，60日${xiaokeSectorSignedPct(pct60, 1)}`;
+  }).join("；") || "暂无";
+}
+
+function agentSectorMainlineSnapshot() {
+  try {
+    const snapshots = typeof xiaokeSectorSnapshotsForRange === "function"
+      ? xiaokeSectorSnapshotsForRange()
+      : (typeof readSectorSnapshots === "function" ? readSectorSnapshots() : []);
+    const latest = snapshots[0] || {};
+    const currentRows = (latest.items || []).length ? latest.items : (window.xiaokeSectorMergedRowsCache || []);
+    const analysisRows = typeof xiaokeSectorAnalysisRows === "function" ? xiaokeSectorAnalysisRows(currentRows) : currentRows;
+    const coreRows = typeof xiaokeCoreAnalysisRows === "function" ? xiaokeCoreAnalysisRows(analysisRows) : analysisRows.filter(row => /^BK\d{4,6}$/i.test(row.code || row.current?.code || ""));
+    const sampleRows = typeof xiaokeSampleOnlyAnalysisRows === "function" ? xiaokeSampleOnlyAnalysisRows(analysisRows) : analysisRows.filter(row => !/^BK\d{4,6}$/i.test(row.code || row.current?.code || ""));
+    const primary = coreRows.filter(row => row.bucket === "主线确认").slice(0, 5);
+    const secondary = coreRows.filter(row => row.bucket === "次主线跟随").slice(0, 5);
+    const warming = coreRows.filter(row => row.bucket === "升温启动" || row.bucket === "新观察").slice(0, 5);
+    const cooling = coreRows.filter(row => row.bucket === "退潮降温").slice(0, 5);
+    const lead = primary[0] || secondary[0] || warming[0] || coreRows[0] || null;
+    const dateSpan = snapshots.length ? [snapshots[snapshots.length - 1]?.date, snapshots[0]?.date].filter(Boolean).join(" 至 ") : "";
+    return {
+      ok: Boolean(lead),
+      rangeLabel: typeof xiaokeSectorRangeLabel === "function" ? xiaokeSectorRangeLabel() : "当前范围",
+      latestDate: latest.date || todayString(),
+      dateSpan,
+      snapshotCount: snapshots.length,
+      lead,
+      primary,
+      secondary,
+      warming,
+      cooling,
+      samples: sampleRows.slice(0, 5),
+      coreCount: coreRows.length,
+      sampleCount: sampleRows.length
+    };
+  } catch (error) {
+    return { ok: false, error: error.message || "板块主线快照读取失败" };
+  }
+}
+
+function agentSectorMainlineContext(query = "") {
+  if (!agentSectorMainlineQuestion(query) && state.view !== "sectorStrength") return null;
+  const packet = agentSectorMainlineSnapshot();
+  window.currentAgentSectorMainline = packet;
+  if (!packet.ok) {
+    return {
+      role: "system",
+      content: [
+        "【板块主线情报】",
+        `当前没有可用的东方财富 BK 标准板块快照。${packet.error ? "错误：" + packet.error : ""}`,
+        "回答规则：提示用户先刷新“板块强弱”或执行“回填近3月东方财富”，不要把本地样本股当作全市场板块结论。"
+      ].join("\n")
+    };
+  }
+  return {
+    role: "system",
+    content: [
+      "【板块主线情报】",
+      `数据范围：${packet.rangeLabel}，${packet.dateSpan || packet.latestDate}，快照 ${packet.snapshotCount} 条。`,
+      "口径：只按东方财富 BK 标准板块判断主线；本地自定义细分/管理分组/样本股票只做观察。",
+      `当前优先：${agentSectorDescribeRows([packet.lead], 1)}`,
+      `主线确认：${agentSectorDescribeRows(packet.primary)}`,
+      `次主线跟随：${agentSectorDescribeRows(packet.secondary)}`,
+      `升温启动：${agentSectorDescribeRows(packet.warming)}`,
+      `退潮风险：${agentSectorDescribeRows(packet.cooling)}`,
+      `样本观察：${agentSectorDescribeRows(packet.samples, 3)}`,
+      "回答规则：用户问当前主线/板块强弱/题材轮动时，直接基于上面数据给结论、确认条件和风险边界；不要回答“没有市场数据”。"
+    ].join("\n")
+  };
+}
+
+function agentSectorLocalAnswer(query = "", packet = window.currentAgentSectorMainline || agentSectorMainlineSnapshot()) {
+  if (!agentSectorMainlineQuestion(query)) return "";
+  if (!packet?.ok || !packet.lead) {
+    return "本地板块结论：当前没有可用的东方财富 BK 标准板块快照，先刷新“板块强弱”或回填近3月东方财富；本地样本股不能代表全板块。";
+  }
+  const line = list => (list || []).slice(0, 4).map(row => row.name).filter(Boolean).join("、") || "暂无";
+  const lead = packet.lead;
+  return [
+    `本地板块结论：当前优先看 ${lead.name}，最新第${lead.currentRank}，前10出现 ${lead.top10Count} 次，运动分 ${lead.motionScore}。`,
+    `主线确认：${line(packet.primary)}；次主线：${line(packet.secondary)}；升温：${line(packet.warming)}；退潮风险：${line(packet.cooling)}。`,
+    `口径：${packet.rangeLabel} / ${packet.dateSpan || packet.latestDate}；只按东方财富 BK 标准板块判断，本地样本只作观察。`,
+    "确认条件：主线继续留在前排并扩散宽度；失效条件：跌出前25、当日强度转弱或连续快照掉队。"
+  ].join("\n");
+}
+
+function agentSectorAttributionQuestion(query = "") {
+  return agentSectorMainlineQuestion(query) && /归因|贡献|拖累|成分|宽度|扩散|收缩|缩窄|缩小|轮动|领涨|领跌|分歧|硬撑|核心股|上涨家数|下跌家数|健康|评分|预警/.test(String(query || ""));
+}
+
+function agentSectorAttributionNames(rows = [], limit = 3) {
+  return (rows || []).slice(0, limit).map(item => item?.name).filter(Boolean).join("、") || "暂无";
+}
+
+function agentSectorAttributionPacket(query = "", sectorPacket = window.currentAgentSectorMainline || null) {
+  try {
+    const allRows = typeof readSectorAttributionSnapshots === "function" ? readSectorAttributionSnapshots() : [];
+    if (!allRows.length) return { ok: false, rows: [], error: "暂无归因快照" };
+    const queryText = String(query || "").toUpperCase();
+    const focusNames = new Set([
+      sectorPacket?.lead?.name,
+      ...(sectorPacket?.primary || []).map(row => row.name),
+      ...(sectorPacket?.warming || []).map(row => row.name),
+      ...(sectorPacket?.secondary || []).map(row => row.name)
+    ].filter(Boolean));
+    const queryMatches = allRows.filter(row => {
+      const name = String(row.name || "");
+      const code = String(row.code || "").toUpperCase();
+      return (name && queryText.includes(name.toUpperCase())) || (code && queryText.includes(code)) || focusNames.has(name);
+    });
+    const candidates = queryMatches.length ? queryMatches : allRows.slice(0, 8);
+    const grouped = new Map();
+    candidates.forEach(row => {
+      const key = String(row.code || row.name || "").toUpperCase();
+      if (!key || grouped.has(key)) return;
+      const history = allRows.filter(item => String(item.code || item.name || "").toUpperCase() === key);
+      const latest = history[0] || row;
+      const previous = history.find(item => item.id !== latest.id && String(item.date || "") < String(latest.date || "")) || history.find(item => item.id !== latest.id) || null;
+      const widthDelta = previous && Number.isFinite(Number(latest.upRate)) && Number.isFinite(Number(previous.upRate))
+        ? Number(latest.upRate) - Number(previous.upRate)
+        : null;
+      const driverNames = (latest.drivers || []).map(item => item.name).filter(Boolean);
+      const previousDriverNames = new Set((previous?.drivers || []).map(item => item.name).filter(Boolean));
+      const keptDrivers = driverNames.filter(name => previousDriverNames.has(name));
+      const newDrivers = driverNames.filter(name => !previousDriverNames.has(name));
+      const health = typeof xiaokeSectorAttributionHealth === "function"
+        ? xiaokeSectorAttributionHealth(latest, previous)
+        : { score: null, label: "", reasons: [], cls: "neutral", widthDelta };
+      grouped.set(key, { latest, previous, history, widthDelta, driverNames, keptDrivers, newDrivers, health });
+    });
+    const items = Array.from(grouped.values()).slice(0, 6);
+    return { ok: Boolean(items.length), rows: allRows, items, latestDate: allRows[0]?.date || "" };
+  } catch (error) {
+    return { ok: false, rows: [], error: error.message || "归因快照读取失败" };
+  }
+}
+
+function agentSectorAttributionLine(item = {}) {
+  const latest = item.latest || {};
+  const health = item.health || {};
+  const width = latest.upRate == null ? "宽度暂无" : `宽度${latest.upRate}%（涨${latest.upCount ?? "-"} / 跌${latest.downCount ?? "-"}）`;
+  const delta = item.widthDelta === null || item.widthDelta === undefined
+    ? "首次记录"
+    : item.widthDelta > 0 ? `较前次扩散+${item.widthDelta}%`
+    : item.widthDelta < 0 ? `较前次收缩${item.widthDelta}%`
+    : "较前次宽度持平";
+  return `${latest.name}${latest.code ? `(${latest.code})` : ""}：${latest.date || "-"}，健康度${health.score ?? "-"}(${health.label || "暂无"})，${latest.rank ? `第${latest.rank}，` : ""}${width}，${delta}；核心贡献 ${agentSectorAttributionNames(latest.drivers, 3)}；拖累 ${agentSectorAttributionNames(latest.drags, 3)}；活跃 ${agentSectorAttributionNames(latest.active, 3)}`;
+}
+
+function agentSectorAttributionContext(query = "") {
+  const sectorPacket = window.currentAgentSectorMainline || agentSectorMainlineSnapshot();
+  const packet = agentSectorAttributionPacket(query, sectorPacket);
+  window.currentAgentSectorAttribution = packet;
+  if (!agentSectorAttributionQuestion(query) && !agentSectorMainlineQuestion(query) && state.view !== "sectorStrength") return null;
+  if (!packet.ok) {
+    return {
+      role: "system",
+      content: [
+        "【板块归因快照】",
+        `当前没有可用归因快照。${packet.error || ""}`,
+        "回答规则：提示用户先在轨迹规律页点击“刷新当前主线归因”，或打开标准板块的“归因”页保存快照。"
+      ].join("\n")
+    };
+  }
+  return {
+    role: "system",
+    content: [
+      "【板块归因快照】",
+      `已保存 ${packet.rows.length} 条归因快照，最新日期 ${packet.latestDate || "-"}。`,
+      "口径：板块主线仍以东方财富 BK 标准板块为准；归因快照看东方财富成分股内部宽度、贡献、拖累和成交活跃。",
+      ...packet.items.map(agentSectorAttributionLine),
+      "回答规则：问扩散/收缩看宽度变化；问轮动看核心贡献股延续/新贡献；问风险看拖累股和宽度是否下降。"
+    ].join("\n")
+  };
+}
+
+function agentSectorAttributionLocalAnswer(query = "", packet = window.currentAgentSectorAttribution || agentSectorAttributionPacket(query)) {
+  if (!agentSectorAttributionQuestion(query)) return "";
+  if (!packet?.ok || !packet.items?.length) {
+    return "归因快照结论：当前还没有可用归因快照。先在“轨迹规律”点“刷新当前主线归因”，或打开某个标准板块的“归因”页保存快照。";
+  }
+  const item = packet.items[0];
+  const latest = item.latest || {};
+  const health = item.health || {};
+  const widthText = latest.upRate == null ? "宽度暂无" : `宽度 ${latest.upRate}%（上涨${latest.upCount ?? "-"} / 下跌${latest.downCount ?? "-"}）`;
+  const trendText = item.widthDelta === null || item.widthDelta === undefined
+    ? "这是首次归因记录，先作为后续对比基线"
+    : item.widthDelta > 0 ? `较前次扩散 ${item.widthDelta}%`
+    : item.widthDelta < 0 ? `较前次收缩 ${Math.abs(item.widthDelta)}%`
+    : "较前次宽度持平";
+  const rotationText = item.keptDrivers?.length
+    ? `贡献股延续：${item.keptDrivers.slice(0, 3).join("、")}`
+    : item.newDrivers?.length ? `贡献股轮动：${item.newDrivers.slice(0, 3).join("、")}` : "贡献股暂无可比变化";
+  return [
+    `归因快照结论：${latest.name} ${latest.date || ""} 健康度 ${health.score ?? "-"}（${health.label || "暂无"}），${widthText}，${trendText}。`,
+    `核心贡献：${agentSectorAttributionNames(latest.drivers, 4)}；拖累分歧：${agentSectorAttributionNames(latest.drags, 4)}；${rotationText}。`,
+    `评分原因：${(health.reasons || []).slice(0, 4).join("；") || "暂无"}。判断规则：宽度上升代表扩散，宽度下降代表收缩；贡献股持续说明主线更稳，贡献股频繁更换说明轮动增强。`
+  ].join("\n");
 }
 
 async function buildAgentContext(query, responseMode = getAgentResponseMode()) {
@@ -10076,6 +10644,8 @@ async function buildAgentContext(query, responseMode = getAgentResponseMode()) {
     agentSourceDirectiveContext(stockBriefs, evidence),
     agentBacktestContext(),
     agentStructuredStrategyContext(),
+    agentSectorMainlineContext(query),
+    agentSectorAttributionContext(query),
     ...base
   ].filter(Boolean);
   try {
@@ -10104,6 +10674,11 @@ async function sendAgent(forcedMode) {
   try {
     const responseMode = /详细|完整|研报|深度|后续趋势|目标价格/.test(text) ? "professional" : getAgentResponseMode();
     const context = await buildAgentContext(text, responseMode);
+    const sectorMainline = window.currentAgentSectorMainline || (agentSectorMainlineQuestion(text) ? agentSectorMainlineSnapshot() : null);
+    const sectorLead = agentSectorLocalAnswer(text, sectorMainline);
+    const sectorAttribution = window.currentAgentSectorAttribution || agentSectorAttributionPacket(text, sectorMainline);
+    const attributionLead = agentSectorAttributionLocalAnswer(text, sectorAttribution);
+    const localLead = [sectorLead, attributionLead].filter(Boolean).join("\n");
     const evidence = window.currentAgentEvidence || [];
     const briefs = window.currentAgentStockBriefs || [];
     const peerBriefs = window.currentAgentPeerBriefs || [];
@@ -10114,7 +10689,7 @@ async function sendAgent(forcedMode) {
     if (route.provider === "codex") {
       answer = codexSystemAnswer(text);
     } else if (route.provider === "team") {
-      const investPrompt = "作为 WorkBuddy 投资主脑，请基于腾讯行情、东方财富财务、巨潮资讯公告、本地视频、评论互动、复盘和记忆证据，按有证据链的投研框架分析；不要检索书籍：\n" + text;
+      const investPrompt = "作为 WorkBuddy 投资主脑，请基于腾讯行情、东方财富财务、巨潮资讯公告、本地视频、评论互动、复盘和记忆证据，按有证据链的投研框架分析；不要检索书籍。若有本地板块主线/归因结论，必须优先引用：\n" + (localLead ? localLead + "\n\n" : "") + text;
       const invest = await callAgentProvider("workbuddy", investPrompt, context, route.label);
       const contentPrompt = "作为内容主脑，请把下面的投资分析改写成通俗、有条理的小课堂表达，并保留来源编号和风险边界：\n" + invest;
       const content = await callAgentProvider("doubao", contentPrompt, context, route.label);
@@ -10130,21 +10705,26 @@ async function sendAgent(forcedMode) {
         "同时引用上下文提供的研究质量等级，并按偏强/基准/偏弱三个条件情景输出；不得把资料完备度解释为上涨概率。",
         "来源与覆盖必须明确：哪些结论来自行情/财务/公告/历史日线，哪些来自本地视频、评论互动或复盘；投资问答不要引用书籍。没有模型先生直接讨论证据时，写明‘公开数据 + 模型先生投资框架推断’，不得冒充其本人观点。",
         "结尾只保留一条简短风险声明。全文 1200-2200 个汉字，数字优先，避免空话。",
+        localLead ? `本地板块主线/归因结论，若用户问题涉及市场/板块/主线/归因必须优先使用：\n${localLead}` : "",
         "",
         text
       ].join("\n") : [
         "请极简回答。第一行直接给结论，后面最多 4 条要点，全文不超过 300 个汉字。",
         "只保留：核心依据、观察条件、风险边界、来源。缺少的证据合并成一句话，不逐项罗列。",
         "必须引用技术快照中的具体数字和日期，并明确：当前趋势、确认条件、失效条件。没有技术数据就直说无法判断，不要用套话填充。",
+        localLead ? `本地板块主线/归因结论，若用户问题涉及市场/板块/主线/归因必须优先使用：\n${localLead}` : "",
         "不要复述问题，不写长免责声明，不重复同义观点，不给确定性买卖指令。",
         "",
         text
       ].join("\n");
       answer = await callAgentProvider(route.provider, prompt, context, route.label);
     }
-    const finalAnswer = responseMode === "professional" ? xiaokeProfessionalAgentAnswer(answer, briefs, evidence) : xiaokeCompactAgentAnswer(answer);
+    const modelAnswer = responseMode === "professional" ? xiaokeProfessionalAgentAnswer(answer, briefs, evidence) : xiaokeCompactAgentAnswer(answer);
+    const finalAnswer = localLead
+      ? (responseMode === "professional" ? `${localLead}\n\n${modelAnswer}`.slice(0, 9000) : xiaokeCompactAgentAnswer(`${localLead}\n${answer}`))
+      : modelAnswer;
     window.lastAgentEvidence = evidence;
-    window.lastAgentTurn = { user: text, assistant: finalAnswer, route: route.label, at: new Date().toISOString(), evidence, stockBriefs: briefs, peerBriefs, changeSnapshot, researchQuality, scenarioMatrix };
+    window.lastAgentTurn = { user: text, assistant: finalAnswer, route: route.label, at: new Date().toISOString(), evidence, stockBriefs: briefs, peerBriefs, changeSnapshot, researchQuality, scenarioMatrix, sectorMainline, sectorAttribution };
     const savedReport = responseMode === "professional" ? saveAgentReportRecord(window.lastAgentTurn, true) : null;
     await autoPersistAgentMemory(text, finalAnswer, route.label);
     const node = document.getElementById(pendingId);
@@ -10687,7 +11267,6 @@ renderStockProfiles = async function finalRenderStockProfiles() {
       <div class="library-search-row" style="margin:0">
         <label class="library-search" style="width:min(520px,52vw)"><span>搜索</span><input id="stockProfileSearchInput" placeholder="输入股票名或代码，例如：长电科技 / 600584 / 寒武纪" onkeydown="if(event.key==='Enter')searchAndSaveStockProfile()"></label>
         <button class="open-btn" style="width:auto;padding:0 16px" onclick="searchAndSaveStockProfile()">搜索并建立档案</button>
-        <button class="small-btn" onclick="openQuantWorkbenchWindow()">打开量化工作台</button>
       </div>
       <div class="date" style="margin-top:8px">当前先显示本地关注和已保存档案；需要实时财务时再点“自动补行情估值”。</div>
     </section>
@@ -10696,7 +11275,7 @@ renderStockProfiles = async function finalRenderStockProfiles() {
       ${finalMetricCell("已保存档案", filled)}
       ${finalMetricCell("有行情缓存", quoted)}
       ${finalMetricCell("本次展示", visibleRows.length)}
-      ${finalMetricCell("量化工作台", "独立")}
+      ${finalMetricCell("量化验证", "量化页")}
       ${finalMetricCell("页面状态", "可用")}
     </section>
     <section class="stock-profile-grid" style="margin-top:12px">
@@ -10853,7 +11432,8 @@ function exposeXiaokeGlobals() {
     "showStockAnnouncements", "rememberLatestAnnouncement",
     "searchAndSaveStockProfile", "showDataSourceHealth",
     "probeInstitutionalTerminals", "openQuantWorkbenchWindow",
-    "syncQmtBridgeCodes", "syncQmtUniverseCodes", "installQmtBridgeStrategy", "refreshQmtBridgeStatus",
+    "syncQmtBridgeCodes", "syncQmtUniverseCodes", "prepareQmtDailyWarehouse",
+    "buildQmtDerivedWarehouses", "installQmtBridgeStrategy", "refreshQmtBridgeStatus",
     "openPipelineCenter", "openVideoGroupManager", "openSectorStrength",
     "renderSectorStrength", "parseSectorMapImport", "importSectorMapPreview",
     "updateWatchGroupField", "updateSectorStrengthNote",
@@ -11295,11 +11875,48 @@ renderLibrary = function finalStableRenderLibrary() {
   `;
 };
 
+async function xiaokeRepairVideoAudio(video = {}) {
+  const url = xiaokeVideoDouyinUrl(video);
+  if (!url) {
+    showToast("这条视频缺音频，且没有抖音原链接，无法自动修复。");
+    return false;
+  }
+  showToast("本地视频缺音频，正在重新同步带声音版本...");
+  try {
+    const response = await fetch("/api/repair-video-audio", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: video.id, sourceId: xiaokeExtractKnownVideoId(video), originalUrl: url })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.success || !data.video) throw new Error(data.error || "重新同步失败");
+    const repaired = restoredLocalFileToVideo(data.video, 0);
+    const keepTitle = String(video.title || "").trim() && !isGenericVideoTitle(video.title) ? video.title : repaired.title;
+    Object.assign(video, repaired, {
+      id: video.id || repaired.id,
+      title: keepTitle,
+      originalUrl: video.originalUrl || repaired.originalUrl,
+      hasAudio: repaired.hasAudio !== false
+    });
+    saveUserVideos(state.videos || []);
+    clearVideoRuntimeCache(video.id);
+    showToast("已修复为带声音视频，继续转写");
+    return true;
+  } catch (error) {
+    showToast("音频修复失败：" + (error.message || "请稍后重试"));
+    return false;
+  }
+}
+
 async function transcribeVideo(id) {
   const v = (state.videos || []).find(item => item.id === id);
   if (!v || !v.videoUrl) {
     showToast("这条没有本地视频文件，不能转写");
     return "";
+  }
+  if (v.hasAudio === false) {
+    const repaired = await xiaokeRepairVideoAudio(v);
+    if (!repaired || v.hasAudio === false) return "";
   }
   const btn = document.getElementById("transcribeBtn");
   if (btn) {
@@ -11362,7 +11979,11 @@ syncVideoTitleFromFrame = async function finalSyncVideoTitleFromFrame(id, force 
     renderTopChips();
     return title;
   } catch (error) {
-    showToast("识别失败：" + (error.message || "请检查 OCR 环境"));
+    const message = String(error.message || "请检查 OCR 环境")
+      .replace(/Traceback[\s\S]*/i, "OCR运行失败，请确认依赖已安装并重启服务")
+      .replace(/\s+/g, " ")
+      .slice(0, 120);
+    showToast("识别失败：" + message);
     return "";
   }
 };
@@ -11551,7 +12172,6 @@ renderStockProfiles = async function finalAutoStockProfilesPage() {
       <div class="library-search-row" style="margin:0">
         <label class="library-search"><span>搜索</span><input id="stockProfileSearchInput" placeholder="输入股票名或代码"></label>
         <button class="open-btn" style="width:auto;padding:0 16px" onclick="searchAndSaveStockProfile()">搜索并建立档案</button>
-        <button class="small-btn" onclick="openQuantWorkbenchWindow()">打开量化工作台</button>
       </div>
     </section>
     <section class="stock-profile-grid" style="margin-top:12px">
@@ -11651,7 +12271,7 @@ renderAgent = function finalCompactAgent() {
       <div class="role-card"><strong>系统主脑</strong><span>错误诊断 / 维护</span></div>
     </div>
     <div class="agent-tabs">
-      ${["投资主脑","素材检索","三脑复盘","查看证据","记住这条","路由规则","诊断"].map((name, i) => `<button class="${i === 0 ? "primary" : ""}" onclick='event.stopPropagation();agentQuickAsk(${JSON.stringify(name)})'>${name}</button>`).join("")}
+      ${["投资主脑","素材检索","三脑复盘","查看证据","记住这条","路由规则","诊断"].map(name => `<button onclick='event.stopPropagation();agentQuickAsk(${JSON.stringify(name)})'>${name}</button>`).join("")}
       <button onclick="event.stopPropagation();openAgentReportHistory()">研报历史</button>
     </div>
     <div class="agent-chat" id="agentChat">${currentChat || restoredAgentBubble("你问股票时，我会先识别标的、同步行情，检索视频、评论互动、复盘和记忆，再按数据前提、核心矛盾、观察条件与风险边界回答。投资问答不检索书籍。", "bot", "小可课堂 / 投资知识库")}</div>
@@ -11790,7 +12410,6 @@ renderStockProfiles = async function xiaokeLastStockProfiles() {
       <div class="library-search-row" style="margin:0">
         <label class="library-search"><span>搜索</span><input id="stockProfileSearchInput" placeholder="输入股票名或代码"></label>
         <button class="open-btn" style="width:auto;padding:0 16px" onclick="searchAndSaveStockProfile()">搜索并建立档案</button>
-        <button class="small-btn" onclick="openQuantWorkbenchWindow()">打开量化工作台</button>
       </div>
     </section>
     <section class="stock-profile-grid" style="margin-top:12px">
@@ -11818,7 +12437,7 @@ renderAgent = function xiaokeLastCompactAgent() {
       <div class="role-card"><strong>系统主脑</strong><span>错误诊断 / 维护</span></div>
     </div>
     <div class="agent-tabs">
-      ${["投资主脑","素材检索","三脑复盘","查看证据","记住这条","路由规则","诊断"].map((name, i) => `<button class="${i === 0 ? "primary" : ""}" onclick='event.stopPropagation();agentQuickAsk(${JSON.stringify(name)})'>${name}</button>`).join("")}
+      ${["投资主脑","素材检索","三脑复盘","查看证据","记住这条","路由规则","诊断"].map(name => `<button onclick='event.stopPropagation();agentQuickAsk(${JSON.stringify(name)})'>${name}</button>`).join("")}
     </div>
     <div class="agent-chat" id="agentChat">${currentChat || restoredAgentBubble("你问股票时，我会先识别标的、同步行情、检索视频/书籍/记忆，再按数据前提、市场阶段、核心矛盾、观察清单、风险边界回答。", "bot", "小可课堂 / 投资知识库")}</div>
     <div class="agent-input">
@@ -11832,6 +12451,10 @@ document.addEventListener("click", event => {
   if (!button) return;
   event.preventDefault();
   event.stopImmediatePropagation();
+  const view = button.dataset ? button.dataset.view : "";
+  const tag = button.dataset ? button.dataset.tag : "";
+  if (view && typeof xiaokeNavigateTopView === "function") return xiaokeNavigateTopView(view);
+  if (tag && typeof xiaokeNavigateTag === "function") return xiaokeNavigateTag(tag);
   restoredRouteTopChip(button.textContent || "");
 }, true);
 
@@ -11893,11 +12516,71 @@ function restoredLocalFileToVideo(file, index = 0) {
     philosophy: file.philosophy || "素材先沉淀，再反复验证。",
     confidence: file.confidence || "待补充",
     duration: Number(file.duration || 0),
+    hasAudio: file.hasAudio !== false,
     filename: file.filename || "",
     local: true,
     userAdded: true,
     sizeLabel: file.sizeLabel || ""
   };
+}
+
+function xiaokeLocalVideoMatchKeys(video = {}) {
+  const values = [
+    video.id,
+    video.sourceId,
+    video.awemeId,
+    video.originalUrl,
+    video.shareUrl,
+    video.sourceUrl,
+    video.webpageUrl,
+    video.filename,
+    video.title
+  ].filter(Boolean).map(value => String(value || ""));
+  values.forEach(value => {
+    const match = value.match(/\d{10,}/);
+    if (match) values.push(match[0]);
+  });
+  const title = typeof stripVideoBrandText === "function" ? stripVideoBrandText(video.title || "") : String(video.title || "");
+  const titleKey = String(title || "").replace(/\s+/g, "").toLowerCase();
+  if (titleKey && titleKey.length >= 4 && !isGenericVideoTitle(titleKey)) values.push(`title:${titleKey}`);
+  return uniqueClean(values);
+}
+
+function xiaokeMergeLocalVideoPayloads() {
+  const playable = (state.videos || []).filter(video => video && video.videoUrl && !video.isDocument);
+  if (!playable.length) return 0;
+  const byKey = new Map();
+  playable.forEach(video => {
+    xiaokeLocalVideoMatchKeys(video).forEach(key => {
+      if (!byKey.has(key)) byKey.set(key, video);
+    });
+  });
+  let merged = 0;
+  (state.videos || []).forEach(video => {
+    if (!video || video.videoUrl || video.isDocument) return;
+    const match = xiaokeLocalVideoMatchKeys(video).map(key => byKey.get(key)).find(Boolean);
+    if (!match) return;
+    const keepTitle = String(video.title || "").trim() && !isGenericVideoTitle(video.title) ? video.title : match.title;
+    Object.assign(video, {
+      title: keepTitle,
+      topic: video.topic || match.topic,
+      date: video.date || match.date,
+      author: video.author || match.author || "模型先生",
+      likes: Number(video.likes || 0) || Number(match.likes || 0),
+      comments: Number(video.comments || 0) || Number(match.comments || 0),
+      shares: Number(video.shares || 0) || Number(match.shares || 0),
+      videoUrl: match.videoUrl,
+      thumbnail: video.thumbnail || match.thumbnail,
+      originalUrl: video.originalUrl || match.originalUrl,
+      filename: video.filename || match.filename,
+      duration: Number(video.duration || 0) || Number(match.duration || 0),
+      hasAudio: match.hasAudio !== false,
+      local: true,
+      userAdded: true
+    });
+    merged += 1;
+  });
+  return merged;
 }
 
 async function restoredImportLocalVideosNow() {
@@ -11910,12 +12593,23 @@ async function restoredImportLocalVideosNow() {
     const data = await response.json();
     if (document.body) document.body.dataset.localVideoRestoreShape = Array.isArray(data.videos) ? "videos" : Object.keys(data || {}).join(",");
     const files = Array.isArray(data.videos) ? data.videos : [];
+    const seenLocalIds = new Set();
     files.forEach((file, index) => {
       const nextVideo = restoredLocalFileToVideo(file, index);
+      seenLocalIds.add(nextVideo.id);
       const existing = state.videos.find(video => video.id === nextVideo.id);
       if (existing) Object.assign(existing, nextVideo);
       else state.videos.push(nextVideo);
     });
+    xiaokeMergeLocalVideoPayloads();
+    state.videos = (state.videos || []).filter(video => {
+      if (!video || !video.id) return false;
+      if (!video.local || video.isDocument) return true;
+      return seenLocalIds.has(video.id);
+    });
+    try {
+      saveUserVideos(state.videos || []);
+    } catch {}
     try {
       if (typeof finalVideoSearchCache !== "undefined" && typeof finalVideoSearchCache.clear === "function") finalVideoSearchCache.clear();
     } catch {}
@@ -12245,7 +12939,6 @@ renderStockProfiles = async function restoredSimpleStockProfiles() {
       <div class="library-search-row" style="margin:0">
         <label class="library-search"><span>搜索</span><input id="stockProfileSearchInput" placeholder="输入股票名或代码"></label>
         <button class="open-btn" style="width:auto;padding:0 16px" onclick="searchAndSaveStockProfile()">搜索并建立档案</button>
-        <button class="small-btn" onclick="openQuantWorkbenchWindow()">打开量化工作台</button>
       </div>
     </section>
     <section class="stock-profile-grid" style="margin-top:12px">
@@ -12932,6 +13625,7 @@ function finalCommentListHtml(rows = [], emptyText = "暂无评论数据。可�
   return `<div class="comment-list">${rows.map((row, index) => `<article class="comment-card">
     <div class="comment-meta"><b>${escapeHtml(row.user || row.author || `@${index + 1}`)}</b><span>${escapeHtml(row.region || row.time || "")}</span><span>${row.likes ? `❤ ${escapeHtml(row.likes)}` : ""}</span></div>
     <p>${escapeHtml(row.text || row.content || row.comment || "")}</p>
+    ${Array.isArray(row.replies) && row.replies.length ? `<div class="author-reply">回复：${row.replies.slice(0, 3).map(reply => `${escapeHtml(reply.user || "@用户")}：${escapeHtml(reply.text || "")}`).join("<br>")}</div>` : ""}
     ${row.reply ? `<div class="author-reply">博主回复：${escapeHtml(row.reply)}</div>` : ""}
   </article>`).join("")}</div>`;
 }
@@ -13036,7 +13730,6 @@ renderStockProfiles = async function finalStockProfilesWithBriefs() {
       <div class="library-search-row" style="margin:0">
         <label class="library-search"><span>搜索</span><input id="stockProfileSearchInput" placeholder="输入股票名或代码"></label>
         <button class="open-btn" style="width:auto;padding:0 16px" onclick="searchAndSaveStockProfile()">搜索并建立档案</button>
-        <button class="small-btn" onclick="openQuantWorkbenchWindow()">打开量化工作台</button>
       </div>
     </section>
     <section class="stock-profile-grid" style="margin-top:12px">
@@ -13115,8 +13808,175 @@ function xiaokeTrueFinalCss() {
     .agent-roles{grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
     .agent-tabs{display:flex;gap:8px;overflow:auto;padding-bottom:6px}
     .sector-source-note{font-size:12px;color:#8ea0ba;line-height:1.7;margin-top:8px}
+    .sector-control-grid{grid-template-columns:repeat(auto-fit,minmax(210px,1fr));align-items:stretch}
+    .sector-control-grid .signal-card{color:inherit;text-align:left;cursor:pointer;min-height:104px}
+    .sector-control-grid .signal-card:hover,.sector-control-grid .signal-card.active{border-color:rgba(34,195,214,.55);background:linear-gradient(180deg,rgba(34,195,214,.13),rgba(15,22,29,.9));box-shadow:0 0 0 1px rgba(34,195,214,.12) inset}
+    .sector-home-guide-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;margin-top:10px}
+    .sector-home-guide-grid article{border:1px solid rgba(90,157,255,.16);border-radius:8px;background:rgba(9,15,23,.72);padding:11px;min-width:0}
+    .sector-home-guide-grid b{display:block;color:#edf5ff;font-size:14px;margin-bottom:6px}
+    .sector-home-guide-grid span{display:block;color:#9fb0c5;font-size:12px;line-height:1.55}
+    .sector-home-layout{display:block}
+    .sector-home-utility-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:stretch;margin-top:12px}
+    .sector-home-utility-row>section{height:100%}
+    .sector-home-kline-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;margin-top:10px}
+    .sector-home-kline-card{min-width:0;border:1px solid rgba(64,76,102,.6);border-radius:8px;background:rgba(8,13,20,.78);padding:10px}
+    .sector-home-kline-card-head{display:flex;justify-content:space-between;gap:8px;align-items:flex-start;margin-bottom:8px}
+    .sector-home-kline-card-head b{display:block;color:#f2f7ff;font-size:13px}.sector-home-kline-card-head span{color:#8fa0b5;font-size:11px}
+    .sector-home-kline-card-head em{font-style:normal;font-weight:900;font-size:12px}
+    .sector-home-kline-card-head em.up{color:#7ef1bd}.sector-home-kline-card-head em.down{color:#ff89a6}.sector-home-kline-card-head em.flat{color:#9fb0c5}
+    .sector-home-compact-table{width:100%;border-collapse:collapse;font-size:12px}
+    .sector-home-compact-table th{color:#91a1b6;text-align:left;font-size:11px;padding:8px;border-bottom:1px solid rgba(255,255,255,.07)}
+    .sector-home-compact-table td{padding:8px;border-bottom:1px solid rgba(255,255,255,.055);vertical-align:top}
+    .sector-home-compact-table tr:last-child td{border-bottom:0}
+    .sector-home-jump-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+    .sector-home-deep-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-top:10px}
+    .sector-home-deep-grid article{border:1px solid rgba(148,163,184,.18);border-radius:8px;background:rgba(8,13,20,.78);padding:12px;min-width:0;box-shadow:inset 3px 0 0 rgba(148,163,184,.38)}
+    .sector-home-deep-grid article.good{box-shadow:inset 3px 0 0 #19c98b}.sector-home-deep-grid article.warn{box-shadow:inset 3px 0 0 #f5a623}.sector-home-deep-grid article.info{box-shadow:inset 3px 0 0 #22c3d6}.sector-home-deep-grid article.purple{box-shadow:inset 3px 0 0 #8d5cf6}
+    .sector-home-deep-grid b{display:block;color:#f3f7ff;font-size:15px}.sector-home-deep-grid span{display:block;color:#94a3b8;font-size:12px;line-height:1.55;margin-top:6px}
     .stock-card-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
     .video-grid{align-items:start}
+    .sector-mode-toggle{display:inline-flex;gap:6px;align-items:center}
+    .sector-source-diff{display:inline-flex;align-items:center;height:20px;padding:0 6px;border-radius:5px;border:1px solid rgba(148,163,184,.3);font-weight:800;font-size:11px}
+    .sector-source-diff.good{color:#7ef1bd;border-color:rgba(25,201,139,.45);background:rgba(25,201,139,.12)}
+    .sector-source-diff.ok{color:#9edcff;border-color:rgba(34,195,214,.45);background:rgba(34,195,214,.12)}
+    .sector-source-diff.warn{color:#ffd07a;border-color:rgba(245,166,35,.5);background:rgba(245,166,35,.12)}
+    .sector-source-diff.bad{color:#ff89a6;border-color:rgba(239,60,99,.55);background:rgba(239,60,99,.12)}
+    .sector-source-history{margin-top:10px;border-top:1px solid rgba(255,255,255,.08);padding-top:10px}
+    .sector-source-history-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;color:#dfeaff;font-size:12px}
+    .sector-source-history-head span{color:#8fa0b5}.sector-source-history-head button{height:24px;border:1px solid rgba(148,163,184,.28);border-radius:6px;background:rgba(255,255,255,.06);color:#dce8ff;font-size:11px;cursor:pointer}
+    .sector-source-history-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:8px}
+    .sector-source-history-list article{min-width:0;border:1px solid rgba(148,163,184,.18);border-radius:8px;background:rgba(8,13,20,.68);padding:8px;box-shadow:inset 3px 0 0 rgba(148,163,184,.25)}
+    .sector-source-history-list article.good{box-shadow:inset 3px 0 0 #19c98b}.sector-source-history-list article.ok{box-shadow:inset 3px 0 0 #22c3d6}.sector-source-history-list article.warn{box-shadow:inset 3px 0 0 #f5a623}.sector-source-history-list article.bad{box-shadow:inset 3px 0 0 #ef3c63}
+    .sector-source-history-list b{display:block;color:#f3f7ff;font-size:12px}.sector-source-history-list span,.sector-source-history-list small{display:block;margin-top:4px;color:#91a2ba;font-size:11px;line-height:1.35}
+    .sector-rank-track{display:flex;flex-wrap:wrap;gap:4px;align-items:center;min-height:24px}
+    .sector-rank-pill{display:inline-flex;align-items:center;justify-content:center;width:26px;height:22px;border-radius:5px;font-size:11px;line-height:1;font-weight:900;border:1px solid rgba(148,163,184,.25);box-sizing:border-box}
+    .sector-rank-pill.rank-main{background:rgba(25,201,139,.16);border-color:rgba(25,201,139,.55);color:#7ef1bd}
+    .sector-rank-pill.rank-follow{background:rgba(34,195,214,.14);border-color:rgba(34,195,214,.5);color:#8decff}
+    .sector-rank-pill.rank-watch{background:rgba(245,166,35,.14);border-color:rgba(245,166,35,.55);color:#ffd07a}
+    .sector-rank-pill.rank-weak{background:rgba(239,60,99,.14);border-color:rgba(239,60,99,.55);color:#ff89a6}
+    .sector-rank-legend{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px;font-size:11px;color:#91a2ba}
+    .sector-rank-legend span{display:inline-flex;align-items:center;gap:4px}
+    .sector-rank-legend i{width:9px;height:9px;border-radius:3px;display:inline-block}
+    .sector-rank-legend .rank-main{background:#19c98b}.sector-rank-legend .rank-follow{background:#22c3d6}.sector-rank-legend .rank-watch{background:#f5a623}.sector-rank-legend .rank-weak{background:#ef3c63}
+    .sector-lifecycle-panel{border-color:rgba(34,195,214,.35)!important;background:linear-gradient(180deg,rgba(34,195,214,.075),rgba(12,18,27,.92))!important}
+    .sector-lifecycle-flow{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin:10px 0}
+    .sector-lifecycle-flow article{min-width:0;border:1px solid rgba(255,255,255,.08);border-radius:8px;background:rgba(9,15,23,.76);padding:9px;box-shadow:inset 3px 0 0 rgba(255,255,255,.12)}
+    .sector-lifecycle-flow b{display:block;color:#eef4ff;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .sector-lifecycle-flow span{display:block;margin-top:5px;color:#8fa0b5;font-size:11px;line-height:1.35}
+    .sector-lifecycle-badge{display:inline-flex;align-items:center;height:24px;border-radius:6px;padding:0 8px;font-size:12px;font-weight:900;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);white-space:nowrap}
+    .sector-lifecycle-badge.confirm{border-color:rgba(25,201,139,.52);background:rgba(25,201,139,.15);color:#a8f5d4}
+    .sector-lifecycle-badge.launch{border-color:rgba(245,166,35,.52);background:rgba(245,166,35,.15);color:#ffd07a}
+    .sector-lifecycle-badge.divergence{border-color:rgba(255,138,61,.55);background:rgba(255,138,61,.15);color:#ffc49f}
+    .sector-lifecycle-badge.repair{border-color:rgba(34,195,214,.52);background:rgba(34,195,214,.15);color:#b7f5ff}
+    .sector-lifecycle-badge.cooling{border-color:rgba(239,60,99,.55);background:rgba(239,60,99,.15);color:#ffb4c5}
+    .sector-lifecycle-badge.secondary{border-color:rgba(90,157,255,.5);background:rgba(90,157,255,.13);color:#bad6ff}
+    .sector-lifecycle-badge.watch{border-color:rgba(148,163,184,.34);background:rgba(148,163,184,.08);color:#cbd5e1}
+    .sector-invalidation-panel{border-color:rgba(239,60,99,.34)!important;background:linear-gradient(180deg,rgba(239,60,99,.07),rgba(12,18,27,.92))!important}
+    .sector-candidate-pool{border-color:rgba(25,201,139,.34)!important;background:linear-gradient(180deg,rgba(25,201,139,.07),rgba(12,18,27,.92))!important}
+    .sector-rule-compare{border-color:rgba(141,92,246,.36)!important;background:linear-gradient(180deg,rgba(141,92,246,.075),rgba(12,18,27,.92))!important}
+    .sector-rule-settings-panel{border-color:rgba(90,157,255,.36)!important;background:linear-gradient(180deg,rgba(90,157,255,.075),rgba(12,18,27,.92))!important}
+    .sector-rule-settings-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-top:12px}
+    .sector-rule-settings-grid article{min-width:0;border:1px solid rgba(64,76,102,.6);border-radius:8px;background:rgba(8,13,20,.78);padding:10px}
+    .sector-rule-settings-grid h4{margin:0 0 8px;color:#e8f1ff;font-size:13px}
+    .sector-rule-field{display:block;border-top:1px solid rgba(255,255,255,.06);padding:8px 0}
+    .sector-rule-field:first-of-type{border-top:0}
+    .sector-rule-field span{display:block;color:#d9e7ff;font-size:12px;font-weight:800;margin-bottom:5px}
+    .sector-rule-field div{display:flex;align-items:center;gap:6px}
+    .sector-rule-field input{width:76px;height:30px;border:1px solid rgba(90,157,255,.42);border-radius:6px;background:#0b121c;color:#f3f7ff;padding:0 8px;font-weight:900}
+    .sector-rule-field em{font-style:normal;color:#8fa0b5;font-size:11px}
+    .sector-rule-field small{display:block;color:#8192aa;font-size:10px;line-height:1.45;margin-top:5px}
+    .sector-rule-settings-note{margin-top:10px;border:1px solid rgba(90,157,255,.28);border-radius:7px;background:rgba(90,157,255,.08);padding:9px;color:#bcd3ff;font-size:12px;line-height:1.55}
+    .sector-invalidation-rule{display:inline-flex;align-items:center;height:20px;border-radius:5px;padding:0 6px;margin:0 4px 4px 0;font-size:11px;font-weight:900;border:1px solid rgba(148,163,184,.25);background:rgba(148,163,184,.08);color:#d6deea}
+    .sector-invalidation-rule.good{border-color:rgba(25,201,139,.46);background:rgba(25,201,139,.13);color:#8df0c3}
+    .sector-invalidation-rule.warn,.sector-invalidation-rule.observe{border-color:rgba(245,166,35,.5);background:rgba(245,166,35,.13);color:#ffd07a}
+    .sector-invalidation-rule.stop{border-color:rgba(239,60,99,.58);background:rgba(239,60,99,.15);color:#ff9ab1}
+    .sector-stock-funnel-panel{border-color:rgba(34,195,214,.35)!important;background:linear-gradient(180deg,rgba(34,195,214,.07),rgba(12,18,27,.92))!important}
+    .sector-funnel-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px;margin-top:12px;align-items:start}
+    .sector-funnel-card{min-width:0;border:1px solid rgba(64,76,102,.68);border-radius:8px;background:rgba(8,13,20,.82);padding:12px;box-shadow:inset 3px 0 0 rgba(34,195,214,.55)}
+    .sector-funnel-card.strong,.sector-funnel-card.healthy{box-shadow:inset 3px 0 0 rgba(25,201,139,.8)}
+    .sector-funnel-card.diverge,.sector-funnel-card.missing{box-shadow:inset 3px 0 0 rgba(245,166,35,.78)}
+    .sector-funnel-card.warn{box-shadow:inset 3px 0 0 rgba(239,60,99,.82)}
+    .sector-funnel-card-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;margin-bottom:10px}
+    .sector-funnel-card-head b{display:block;color:#f3f7ff;font-size:15px}
+    .sector-funnel-card-head small{display:block;margin-top:3px;color:#8fa0b5;font-size:11px;line-height:1.35}
+    .sector-funnel-card p{margin:8px 0 10px;color:#9cadc4;font-size:12px;line-height:1.6}
+    .sector-funnel-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:8px 0 10px}
+    .sector-funnel-metrics div{border:1px solid rgba(64,76,102,.56);border-radius:7px;background:rgba(15,22,32,.74);padding:8px;min-width:0}
+    .sector-funnel-metrics span{display:block;color:#8fa0b5;font-size:11px}
+    .sector-funnel-metrics b{display:block;color:#f3f7ff;font-size:15px;margin-top:4px}
+    .sector-funnel-metrics small{display:block;color:#8fa0b5;font-size:10px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .sector-funnel-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+    .sector-funnel-columns section{min-width:0;border:1px solid rgba(64,76,102,.48);border-radius:7px;background:rgba(5,10,16,.72);padding:8px}
+    .sector-funnel-columns h4{margin:0 0 7px;font-size:12px;color:#dce9ff}
+    .sector-funnel-stock{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 8px;width:100%;text-align:left;border:0;border-radius:6px;background:rgba(255,255,255,.035);padding:7px 8px;color:inherit;cursor:pointer;margin-top:5px}
+    .sector-funnel-stock:hover{background:rgba(34,195,214,.12)}
+    .sector-funnel-stock.leader{border-left:3px solid #19c98b}
+    .sector-funnel-stock.core{border-left:3px solid #22c3d6}
+    .sector-funnel-stock.catchup{border-left:3px solid #f5a623}
+    .sector-funnel-stock.laggard{border-left:3px solid #ef3c63}
+    .sector-funnel-stock.driver{border-left:3px solid #19c98b}
+    .sector-funnel-stock.confirm{border-left:3px solid #22c3d6}
+    .sector-funnel-stock.risk{border-left:3px solid #ef3c63}
+    .sector-funnel-stock b{min-width:0;color:#f3f7ff;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .sector-funnel-stock span{font-weight:900;font-size:12px}
+    .sector-funnel-stock em{grid-column:1 / -1;color:#8fa0b5;font-style:normal;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .sector-funnel-note{margin-top:8px;color:#9fb0c8;font-size:11px;line-height:1.5}
+    .sector-close-review{border-color:rgba(245,166,35,.32)!important;background:linear-gradient(180deg,rgba(245,166,35,.075),rgba(12,18,27,.92))!important}
+    .sector-close-review.ready{border-color:rgba(25,201,139,.38)!important;background:linear-gradient(180deg,rgba(25,201,139,.09),rgba(12,18,27,.92))!important}
+    .sector-daily-judgment-panel{border-color:rgba(34,195,214,.34)!important;background:linear-gradient(180deg,rgba(34,195,214,.075),rgba(12,18,27,.92))!important}
+    .sector-daily-summary-box{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 14px;align-items:center;margin-top:10px;border:1px solid rgba(34,195,214,.24);border-radius:8px;background:rgba(5,18,24,.68);padding:12px}
+    .sector-daily-summary-box b{min-width:0;color:#f3f7ff;font-size:15px;line-height:1.5}
+    .sector-daily-summary-box span{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+    .sector-daily-summary-box small{grid-column:1/-1;color:#91a4bd;font-size:12px;line-height:1.55}
+    .sector-eval-inline{display:flex;gap:5px;flex-wrap:wrap}
+    .sector-eval-badge{display:inline-grid;gap:2px;min-width:78px;border:1px solid rgba(148,163,184,.28);border-radius:7px;background:rgba(148,163,184,.08);padding:5px 7px;color:#dce8f8}
+    .sector-eval-badge b{font-size:11px;line-height:1.15;white-space:nowrap}
+    .sector-eval-badge em{font-style:normal;color:#8fa0b5;font-size:10px;line-height:1.25;white-space:nowrap}
+    .sector-eval-badge.good{border-color:rgba(25,201,139,.48);background:rgba(25,201,139,.13);color:#a8f5d4}
+    .sector-eval-badge.ok{border-color:rgba(34,195,214,.48);background:rgba(34,195,214,.13);color:#b7f5ff}
+    .sector-eval-badge.warn{border-color:rgba(245,166,35,.52);background:rgba(245,166,35,.13);color:#ffd07a}
+    .sector-eval-badge.neutral{border-color:rgba(148,163,184,.28);background:rgba(148,163,184,.08);color:#d6deea}
+    .sector-mistake-book-panel{border-color:rgba(239,60,99,.32)!important;background:linear-gradient(180deg,rgba(239,60,99,.065),rgba(12,18,27,.92))!important}
+    .sector-mistake-severity,.sector-mistake-tag{display:inline-flex;align-items:center;min-height:22px;border-radius:6px;padding:0 8px;border:1px solid rgba(148,163,184,.28);background:rgba(148,163,184,.08);font-size:11px;font-weight:900;white-space:nowrap}
+    .sector-mistake-severity.bad,.sector-mistake-tag.bad{border-color:rgba(239,60,99,.58);background:rgba(239,60,99,.15);color:#ffb4c5}
+    .sector-mistake-severity.warn,.sector-mistake-tag.warn,.sector-mistake-tag.launch{border-color:rgba(245,166,35,.54);background:rgba(245,166,35,.14);color:#ffd07a}
+    .sector-mistake-tag.data{border-color:rgba(141,92,246,.54);background:rgba(141,92,246,.14);color:#decfff}
+    .sector-mistake-tag.diverge{border-color:rgba(255,138,61,.54);background:rgba(255,138,61,.14);color:#ffc49f}
+    .sector-mistake-tag.weak{border-color:rgba(148,163,184,.34);background:rgba(148,163,184,.09);color:#d6deea}
+    .sector-rule-advisor-panel{border-color:rgba(90,157,255,.35)!important;background:linear-gradient(180deg,rgba(90,157,255,.07),rgba(12,18,27,.92))!important}
+    .sector-rule-advisor-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-top:10px}
+    .sector-rule-advisor-grid article{min-width:0;border:1px solid rgba(148,163,184,.22);border-radius:8px;background:rgba(8,13,20,.78);padding:11px;box-shadow:inset 3px 0 0 rgba(148,163,184,.45)}
+    .sector-rule-advisor-grid article.warn,.sector-rule-advisor-grid article.launch{box-shadow:inset 3px 0 0 #f5a623}
+    .sector-rule-advisor-grid article.bad{box-shadow:inset 3px 0 0 #ef3c63}
+    .sector-rule-advisor-grid article.diverge{box-shadow:inset 3px 0 0 #ff8a3d}
+    .sector-rule-advisor-grid article.data{box-shadow:inset 3px 0 0 #8d5cf6}
+    .sector-rule-advisor-grid article.neutral{box-shadow:inset 3px 0 0 #64748b}
+    .sector-rule-advisor-grid span{display:block;color:#dce8f8;font-size:13px;font-weight:900}
+    .sector-rule-advisor-grid b{display:block;margin-top:7px;color:#f3f7ff;font-size:12px;line-height:1.45}
+    .sector-rule-advisor-grid small{display:block;margin-top:7px;color:#94a3b8;font-size:11px;line-height:1.45}
+    .sector-rule-advisor-grid em{display:block;margin-top:7px;color:#8fb7ff;font-size:11px;line-height:1.45;font-style:normal}
+    .sector-score-explainer-panel{border-color:rgba(25,201,139,.35)!important;background:linear-gradient(180deg,rgba(25,201,139,.07),rgba(12,18,27,.92))!important}
+    .sector-score-explainer-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:10px;margin-top:10px}
+    .sector-score-explainer-grid article{min-width:0;border:1px solid rgba(64,76,102,.62);border-radius:8px;background:rgba(8,13,20,.82);padding:11px}
+    .sector-score-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:9px}
+    .sector-score-head b{display:block;color:#f3f7ff;font-size:15px}
+    .sector-score-head span{display:block;margin-top:3px;color:#8fa0b5;font-size:11px}
+    .sector-score-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+    .sector-score-metric{min-width:0;border:1px solid rgba(255,255,255,.06);border-radius:7px;background:rgba(255,255,255,.025);padding:7px}
+    .sector-score-metric.good{border-color:rgba(25,201,139,.25);background:rgba(25,201,139,.07)}
+    .sector-score-metric.ok{border-color:rgba(34,195,214,.22);background:rgba(34,195,214,.06)}
+    .sector-score-metric.warn{border-color:rgba(245,166,35,.24);background:rgba(245,166,35,.07)}
+    .sector-score-metric.bad{border-color:rgba(239,60,99,.28);background:rgba(239,60,99,.08)}
+    .sector-score-metric span{display:block;color:#9fb0c4;font-size:10px}
+    .sector-score-metric b{display:block;margin-top:4px;color:#eef4ff;font-size:15px}
+    .sector-score-metric i{display:block;height:4px;border-radius:999px;background:rgba(255,255,255,.09);overflow:hidden;margin:5px 0}
+    .sector-score-metric i em{display:block;height:100%;border-radius:999px;background:#22c3d6}
+    .sector-score-metric.good i em{background:#19c98b}.sector-score-metric.warn i em{background:#f5a623}.sector-score-metric.bad i em{background:#ef3c63}
+    .sector-score-metric small{display:block;color:#8d99aa;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .sector-score-explainer-grid p{margin:9px 0 0;color:#aeb9c9;font-size:12px;line-height:1.45}
+    @media(max-width:1180px){.sector-lifecycle-flow{grid-template-columns:repeat(3,minmax(0,1fr))}}
+    @media(max-width:1180px){.sector-home-utility-row{grid-template-columns:1fr}}
+    @media(max-width:760px){.sector-lifecycle-flow{grid-template-columns:1fr}.sector-funnel-grid{grid-template-columns:1fr}.sector-funnel-metrics{grid-template-columns:1fr}.sector-funnel-columns{grid-template-columns:1fr}.sector-daily-summary-box{grid-template-columns:1fr}.sector-daily-summary-box span{justify-content:flex-start}.sector-score-explainer-grid{grid-template-columns:1fr}.sector-score-metrics{grid-template-columns:1fr}.sector-control-grid,.sector-home-guide-grid,.sector-home-deep-grid{grid-template-columns:1fr}}
   `;
   document.head.appendChild(style);
 }
@@ -13143,6 +14003,7 @@ async function xiaokeFetchSectorQuoteMap(names = []) {
 }
 
 restoredRenderRightPane = function xiaokeTrueFinalRightPane() {
+  xiaokeEnsureLegacyNotesRecovered();
   const pane = document.getElementById("rightPane");
   if (!pane) return;
   let themeTags = [];
@@ -13168,6 +14029,7 @@ restoredRenderRightPane = function xiaokeTrueFinalRightPane() {
     <div class="side-section workbench-section">
       <div class="side-title">每日任务</div>
       <textarea class="side-note big" id="dailyTaskBox" oninput="saveRightNote('task', this.value)" placeholder="直接写今天要做的事：复盘视频、补行情代码、整理长鑫产业链...">${escapeHtml(localStorage.getItem(DAILY_TASK_KEY) || "")}</textarea>
+      <div class="review-actions" style="margin-top:7px"><button class="small-btn" onclick="restoreRecoveredDailyTask()">恢复旧任务</button></div>
     </div>
     <div class="side-section workbench-section">
       <div class="side-title">今日关注</div>
@@ -13359,7 +14221,6 @@ renderStockProfiles = async function xiaokeTrueFinalStockProfiles() {
       <div class="library-search-row" style="margin:0">
         <label class="library-search"><span>搜索</span><input id="stockProfileSearchInput" placeholder="输入股票名或代码"></label>
         <button class="open-btn" style="width:auto;padding:0 16px" onclick="searchAndSaveStockProfile()">搜索并建立档案</button>
-        <button class="small-btn" onclick="openQuantWorkbenchWindow()">打开量化工作台</button>
       </div>
     </section>
     <section class="stock-profile-grid" style="margin-top:12px">
@@ -13821,6 +14682,27 @@ function xiaokeAgentResearchGateHtml(quality, scenarios) {
   </details>`;
 }
 
+function agentQuickAsk(name = "", autoSend = false) {
+  const prompts = {
+    当前主线: "当前市场主线是啥？请按东方财富标准板块给出主线、次主线、升温、退潮风险，以及确认条件和失效条件。",
+    主线归因: "当前主线是在扩散还是收缩？请按归因快照说明宽度变化、核心贡献股、拖累分歧、贡献股是否轮动。",
+    主线健康度: "当前主线健康度如何？请按归因快照给出强扩散/健康轮动/正常分歧/分歧加大/退潮预警，并说明评分原因。",
+    投资主脑: "请按投资主脑框架分析：",
+    内容主脑: "请用小可课堂的表达方式整理：",
+    素材检索: "帮我检索本地视频、评论互动和记忆里与这个问题相关的证据：",
+    三脑复盘: "请用投资主脑、素材主脑、记忆主脑一起复盘：",
+    查看证据: "请列出上一轮回答用到的数据与证据，并说明哪些缺口需要人工核验。",
+    记住这条: "请把下面这条记录进我的长期记忆：",
+    路由规则: "说明这次问题应该走哪个主脑/模型路由，并给出原因。",
+    诊断: "请诊断当前小可课堂数据链路有哪些缺口，按优先级列出下一步。"
+  };
+  const input = document.getElementById("agentInput");
+  if (!input) return;
+  input.value = prompts[name] || String(name || "");
+  input.focus();
+  if (autoSend && typeof sendAgentMessage === "function") setTimeout(() => sendAgentMessage(), 20);
+}
+
 renderAgent = function xiaokeTrueFinalCompactAgent() {
   const agent = document.getElementById("agent");
   if (!agent) return;
@@ -13849,6 +14731,9 @@ renderAgent = function xiaokeTrueFinalCompactAgent() {
       <div class="role-card"><strong>系统主脑</strong><span>错误诊断 / 维护</span></div>
     </div>
     <div class="agent-tabs">
+      <button class="primary" onclick='event.stopPropagation();agentQuickAsk("当前主线", true)'>当前主线</button>
+      <button onclick='event.stopPropagation();agentQuickAsk("主线归因", true)'>主线归因</button>
+      <button onclick='event.stopPropagation();agentQuickAsk("主线健康度", true)'>主线健康度</button>
       ${["投资主脑","素材检索","三脑复盘","查看证据","记住这条","路由规则","诊断"].map((name, i) => `<button class="${i === 0 ? "primary" : ""}" onclick='event.stopPropagation();agentQuickAsk(${JSON.stringify(name)})'>${name}</button>`).join("")}
       <button onclick="event.stopPropagation();openAgentReportHistory()">研报历史</button>
     </div>
@@ -14105,6 +14990,11 @@ function investmentDataQualityHtml(data = {}) {
   const methodology = data.methodology || {};
   const qmt = data.qmt || data.qmtBridge || {};
   const qmtWarehouse = qmt.warehouse || data.qmtWarehouse || {};
+  const qmtDailyCount = Number(qmtWarehouse.dailyFileCount || 0);
+  const qmtWeeklyCount = Number(qmtWarehouse.weeklyFileCount || qmtWarehouse.weekly?.fileCount || 0);
+  const qmtMonthlyCount = Number(qmtWarehouse.monthlyFileCount || qmtWarehouse.monthly?.fileCount || 0);
+  const qmtReady = qmtDailyCount >= 1000;
+  const derivedReady = qmtWeeklyCount > 0 && qmtMonthlyCount > 0;
   const resultCoverage = strategyResultCoverage();
   return `<div class="quality-score-row"><div class="quality-grade"><span>数据质量</span><b>${escapeHtml(data.grade || "-")}</b><em>${Number(data.score || 0)}分</em></div>
     <div><span>A股覆盖</span><b>${Number(market.count || 0)}只</b><small>${escapeHtml(market.source || "-")}</small></div>
@@ -14112,7 +15002,21 @@ function investmentDataQualityHtml(data = {}) {
     <div><span>财务完整率</span><b>${Number(market.financialCoverage || 0)}%</b><small>缺失字段必须复核</small></div>
     <div><span>趋势完整率</span><b>${Number(market.trendCoverage || 0)}%</b><small>60日/年内</small></div>
     <div><span>板块覆盖</span><b>${Number(sectors.count || 0)}个</b><small>${escapeHtml(sectors.source || "-")}</small></div></div>
-    <div class="quality-meta"><span>行情更新：${escapeHtml(market.updatedAt ? new Date(market.updatedAt).toLocaleString() : "无")}</span><span>板块更新：${escapeHtml(sectors.updatedAt ? new Date(sectors.updatedAt).toLocaleString() : "无")}</span><span>QMT：${qmt.online ? "在线" : "离线/未更新"}</span><span>QMT日线：${Number(qmtWarehouse.dailyFileCount || 0)}只</span></div>
+    <div class="quality-meta"><span>行情更新：${escapeHtml(market.updatedAt ? new Date(market.updatedAt).toLocaleString() : "无")}</span><span>板块更新：${escapeHtml(sectors.updatedAt ? new Date(sectors.updatedAt).toLocaleString() : "无")}</span><span>QMT实时：${qmt.online ? "在线" : "离线/未更新"}</span><span>日线：${qmtDailyCount}只</span><span>周线：${qmtWeeklyCount}只</span><span>月线：${qmtMonthlyCount}只</span></div>
+    <div class="${qmtReady ? "strategy-cache-ok" : "strategy-cache-warning"}">
+      <div class="metadata-head">
+        <div>
+          <b>${qmtReady ? "QMT K线仓库已可用于全市场技术筛选" : "QMT日线仓库还没跑通"}</b>
+          <p>日线 ${qmtDailyCount} 只，周线 ${qmtWeeklyCount} 只，月线 ${qmtMonthlyCount} 只；日线目录：${escapeHtml(qmtWarehouse.dir || "-")}。</p>
+          <p>${qmtReady ? "数据中心里的 MACD / KDJ / RSI / BOLL / 均线优先使用本地 QMT 日线；周线/月线也用于条件选股的趋势过滤、位置判断和结果分层，量化页再复用这些数据做验证。" : "请点“准备QMT日线仓库”，再到国信 QMT/iQuant 里运行小可QMT日线仓库桥接。"}</p>
+        </div>
+        <div class="review-actions">
+          <button class="small-btn" onclick="prepareQmtDailyWarehouse()">准备/安装日线桥接</button>
+          <button class="small-btn primary" onclick="buildQmtDerivedWarehouses()">生成周/月线</button>
+        </div>
+      </div>
+      ${qmtReady && !derivedReady ? `<p style="color:#ffd07a">日线已可用，但周线/月线还没生成；点“生成周/月线”即可。</p>` : ""}
+    </div>
     <div class="quality-methodology"><b>交易口径</b><span>${escapeHtml(methodology.adjustment || "复权方式待确认")}</span><span>${escapeHtml(methodology.suspension || "停牌处理待确认")}</span><span>${escapeHtml(methodology.limit || "涨跌停处理待确认")}</span><span>${escapeHtml(methodology.delisting || "退市处理待确认")}</span><span>${escapeHtml(methodology.universe || "历史股票池待确认")}</span></div>
     ${(data.warnings || []).length ? `<div class="quality-warning-list">${data.warnings.map(item => `<p>${escapeHtml(item)}</p>`).join("")}</div>` : ""}`;
 }
@@ -14294,15 +15198,27 @@ function naturalScreenResultHtml(data) {
   const unparsed = data.parsed?.unparsed || [];
   const warnings = Array.isArray(data.warnings) ? data.warnings.filter(Boolean) : [];
   const items = data.items || [];
-  const meta = `全市场 ${data.universeCount || 0} 只 · 基础命中 ${data.baseMatchedCount || 0} 只 · 技术扫描 ${data.technicalScannedCount || 0} 只 · 最终命中 ${data.matchedCount || items.length} 只`;
+  const qmtCount = Number(data.qmtWarehouse?.dailyFileCount || 0);
+  const qmtMeta = qmtCount ? ` · QMT日线 ${qmtCount} 只` : "";
+  const meta = `全市场 ${data.universeCount || 0} 只 · 基础命中 ${data.baseMatchedCount || 0} 只 · 技术扫描 ${data.technicalScannedCount || 0} 只 · 最终命中 ${data.matchedCount || items.length} 只${qmtMeta}`;
   const chips = conditions.map(condition => `<span class="strategy-score-pill">${escapeHtml(naturalConditionLabel(condition))}</span>`).join("");
   const warn = unparsed.length ? `<div class="strategy-cache-warning">未完全识别：${escapeHtml(unparsed.join("；"))}。可以改成“字段 + 大于/小于 + 数值”，例如“量比大于1.5”。</div>` : "";
   const sourceWarn = warnings.length ? `<div class="strategy-cache-warning">${warnings.map(item => escapeHtml(item)).join("<br>")}</div>` : "";
+  const note = data.note ? `<div class="strategy-cache-warning">${escapeHtml(data.note)}</div>` : "";
+  const hasTechnicalCondition = conditions.some(condition => {
+    const field = String(condition.field || "").toLowerCase();
+    return condition.scope === "technical"
+      || ["signal", "cross", "formula"].includes(condition.type)
+      || ["macd", "kdj", "rsi", "boll", "ma", "high", "low", "pct", "volume"].some(key => field.includes(key));
+  });
+  const qmtWarn = hasTechnicalCondition && qmtCount < 1000
+    ? `<div class="strategy-cache-warning"><b>QMT 日线仓库未跑通</b><p>当前只有 ${qmtCount} 只本地日线。MACD / KDJ / RSI / BOLL / 5/10/20/60 日线会先回退公开日线小范围计算，所以可能筛不出结果。请点“准备QMT日线仓库”，再到国信 QMT 运行桥接策略。</p></div>`
+    : "";
   if (!items.length) {
-    return `<div class="strategy-result-head"><div><b>没有命中股票</b><span>${escapeHtml(meta)}</span></div><button class="small-btn" onclick="exportNaturalScreenCsv()">导出 CSV</button></div><div class="natural-condition-list">${chips || "未识别条件"}</div>${warn}${sourceWarn}<div class="empty-state"><b>条件过严或技术扫描范围过小</b><p>可以放宽 RSI、MACD/KDJ 金叉，或把技术扫描上限调到 500。</p></div>`;
+    return `<div class="strategy-result-head"><div><b>没有命中股票</b><span>${escapeHtml(meta)}</span></div><button class="small-btn" onclick="exportNaturalScreenCsv()">导出 CSV</button></div><div class="natural-condition-list">${chips || "未识别条件"}</div>${warn}${sourceWarn}${note}${qmtWarn}<div class="empty-state"><b>条件过严或日线仓库不足</b><p>可以放宽 RSI、MACD/KDJ/BOLL/均线条件，或先跑通 QMT 日线仓库后再全市场扫描。</p></div>`;
   }
   return `<div class="strategy-result-head"><div><b>自然语言命中 ${items.length} 只</b><span>${escapeHtml(meta)} · ${escapeHtml(data.source || "")} · ${escapeHtml(data.technicalSource || "")}</span></div><div class="table-actions"><button class="small-btn" onclick="exportNaturalScreenCsv()">导出 CSV</button><button class="small-btn" onclick="runNaturalStockScreenFrontend(true)">刷新重跑</button></div></div>
-    <div class="natural-condition-list">${chips}</div>${warn}${sourceWarn}
+    <div class="natural-condition-list">${chips}</div>${warn}${sourceWarn}${note}${qmtWarn}
     <div class="stock-table-wrap"><table class="stock-table strategy-screen-table natural-screen-table"><thead><tr><th>排序</th><th>股票</th><th>现价/涨幅</th><th>量比/换手</th><th>均线</th><th>MACD</th><th>KDJ</th><th>RSI</th><th>BOLL</th><th>20/60日</th><th>来源</th><th>操作</th></tr></thead><tbody>${items.map((item, index) => {
       const t = item.technical || {};
       const pctClass = Number(item.pct) >= 0 ? "up" : "down";
@@ -14324,7 +15240,7 @@ function naturalScreenResultHtml(data) {
         <td><div class="table-actions"><button class="small-btn" onclick='addStockComparePoolItem(${JSON.stringify(item.name)})'>加入对比</button><button class="small-btn" onclick='openAgentWithQuestion(${JSON.stringify("按专业研报模式分析" + item.name + "，并解释它为什么命中自然语言选股条件：" + (data.query || ""))}, "investment", true)'>研报</button></div></td>
       </tr>`;
     }).join("")}</tbody></table></div>
-    <p class="strategy-disclaimer">说明：基础条件全市场过滤；MACD/KDJ/RSI/BOLL/均线等历史指标默认扫描成交额靠前候选，避免一次性请求全市场日线导致卡死。需要更精确的全市场技术选股，下一步应建立本地日线仓库。</p>`;
+    <p class="strategy-disclaimer">说明：基础条件全市场过滤；MACD/KDJ/RSI/BOLL/均线等历史指标优先读取 QMT 本地日线仓库，缺失时回退公开历史日线。字段留空表示不限制，勾选的技术信号才会作为硬条件。</p>`;
 }
 
 function applyNaturalScreenExample(text) {
@@ -14340,12 +15256,12 @@ async function runNaturalStockScreenFrontend(force = false) {
   saveNaturalStockQuery(query);
   const scanLimit = document.getElementById("naturalScreenLimit")?.value || "all";
   const box = document.getElementById("naturalScreenResult");
-  if (box) box.innerHTML = `<div class="strategy-running"><b>正在解析并筛选...</b><span>先全市场过滤基础条件，再分批计算 MACD / KDJ / RSI / BOLL / 均线，避免页面卡死。</span></div>`;
+  if (box) box.innerHTML = `<div class="strategy-running"><b>正在解析并筛选...</b><span>先全市场过滤基础条件，再优先读取 QMT 本地日线计算 MACD / KDJ / RSI / BOLL / 均线；缺失时回退公开日线。</span></div>`;
   try {
     const response = await fetch("/api/a-share-natural-screen", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query, options: { scanLimit, limit: 80, concurrency: 6, force } })
+      body: JSON.stringify({ query, options: { scanLimit, limit: "all", concurrency: 6, force } })
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.success) throw new Error(data.error || "自然语言选股失败");
@@ -14397,9 +15313,9 @@ renderStrategy = function xiaokeProfessionalStrategyWorkbench() {
     "今日竞价金额大于180万，今日9:25量比/昨日量比大于1.7，排除ST"
   ];
   document.getElementById("main").innerHTML = `
-    <section class="review-head panel"><div><div class="panel-title">专业投资策略工作台</div><div class="date">自由文本记录交易哲学；结构化规则负责全 A 股筛选。先筛候选，再用公告、研报、回测和 Agent 复核。</div></div><div class="review-actions"><button class="small-btn" onclick="saveCurrentStrategyVersion()">保存策略版本</button><button class="small-btn" onclick="loadInvestmentDataQuality()">刷新质量</button><button class="small-btn" onclick="runAShareStrategy(true)">刷新数据并筛选</button><button class="small-btn" onclick="renderDashboard()">返回看板</button></div></section>
-    <section class="panel" style="margin-bottom:12px"><div class="metadata-head"><div><div class="panel-title">数据质量中心</div><div class="date">先判断数据能不能支持结论，再讨论候选排名。</div></div></div><div id="investmentDataQuality"></div></section>
-    <section class="panel natural-screen-panel" style="margin-bottom:12px"><div class="metadata-head"><div><div class="panel-title">同花顺式自然语言选股</div><div class="date">直接输入“量比、MACD、KDJ、RSI、BOLL、5/10/20/60日线”等条件，系统先解析再筛选。</div></div><div class="table-actions"><label class="date">技术扫描上限 <select id="naturalScreenLimit" class="small-select"><option value="all" selected>全市场</option><option value="500">500</option><option value="1000">1000</option><option value="3000">3000</option><option value="6000">6000</option></select> 只</label><button class="small-btn primary" onclick="runNaturalStockScreenFrontend()">智能解析并选股</button></div></div>
+    <section class="review-head panel"><div><div class="panel-title">专业投资策略工作台</div><div class="date">自由文本记录交易哲学；结构化规则负责全 A 股筛选。数据中心先筛候选，再用公告、研报、回测和 Agent 复核。</div></div><div class="review-actions"><button class="small-btn" onclick="saveCurrentStrategyVersion()">保存策略版本</button><button class="small-btn" onclick="loadInvestmentDataQuality()">刷新质量</button><button class="small-btn" onclick="runAShareStrategy(true)">刷新数据并筛选</button><button class="small-btn" onclick="renderDashboard()">返回看板</button></div></section>
+    <section class="panel" style="margin-bottom:12px"><div class="metadata-head"><div><div class="panel-title">数据仓库</div><div class="date">先判断日线/周线/月线和质量是否足够支撑筛选，再讨论候选排名。</div></div></div><div id="investmentDataQuality"></div></section>
+    <section class="panel natural-screen-panel" style="margin-bottom:12px"><div class="metadata-head"><div><div class="panel-title">条件选股</div><div class="date">直接输入“量比、MACD、KDJ、RSI、BOLL、5/10/20/60日线、周线/月线趋势”等条件，系统先解析再筛选。</div></div><div class="table-actions"><label class="date">技术扫描上限 <select id="naturalScreenLimit" class="small-select"><option value="all" selected>全市场</option><option value="500">500</option><option value="1000">1000</option><option value="3000">3000</option><option value="6000">6000</option></select> 只</label><button class="small-btn primary" onclick="runNaturalStockScreenFrontend()">智能解析并选股</button></div></div>
       <textarea id="naturalStockQuery" class="strategy-textarea natural-query-textarea" oninput="saveNaturalStockQuery(this.value)" placeholder="例如：股价大于5元，量比大于1.5，MACD金叉，KDJ金叉，RSI6小于70，站上20日线">${escapeHtml(naturalQuery)}</textarea>
       <div class="strategy-rule-toolbar">${naturalExamples.map(text => `<button class="small-btn" onclick='applyNaturalScreenExample(${JSON.stringify(text)})'>${escapeHtml(text)}</button>`).join("")}</div>
       <div id="naturalScreenResult">${naturalScreenResultHtml(naturalResult)}</div>
@@ -14412,12 +15328,239 @@ renderStrategy = function xiaokeProfessionalStrategyWorkbench() {
       </div>
       <div class="panel strategy-manual"><div class="panel-title">策略正文</div><textarea class="strategy-textarea main" oninput="saveStrategyField('main',this.value)">${escapeHtml(data.main || "")}</textarea><div class="strategy-mini-grid">${strategyCompactBox('entry','入场条件',data.entry)}${strategyCompactBox('risk','风险规则',data.risk)}${strategyCompactBox('position','仓位规则',data.position)}${strategyCompactBox('forbid','禁做清单',data.forbid)}</div></div>
     </section>
-    <section class="panel" style="margin-top:12px"><div class="panel-title">策略筛选结果</div><div id="strategyScreenResult">${strategyScreenResultHtml(result)}</div></section>
+    <section class="panel" style="margin-top:12px"><div class="panel-title">结果列表</div><div id="strategyScreenResult">${strategyScreenResultHtml(result)}</div></section>
     <section class="panel" style="margin-top:12px"><div class="metadata-head"><div><div class="panel-title">策略版本与审计</div><div class="date">保存规则、策略正文和当时筛选结果；恢复版本不会删除其他历史版本。</div></div><button class="small-btn" onclick="saveCurrentStrategyVersion()">+保存当前版本</button></div>${strategyVersionsHtml()}</section>`;
   setTimeout(() => loadInvestmentDataQuality(), 0);
 };
 
 const XIAOKE_SECTOR_SNAPSHOTS_KEY = "xiaoke_sector_daily_snapshots_v1";
+const XIAOKE_SECTOR_ATTRIBUTION_SNAPSHOTS_KEY = "xiaoke_sector_attribution_snapshots_v1";
+const XIAOKE_SECTOR_QUOTE_MODE_KEY = "xiaoke_sector_quote_mode_v1";
+const XIAOKE_SECTOR_MAPPING_REGISTRY_KEY = "xiaoke_sector_mapping_registry_v1";
+const XIAOKE_SECTOR_SOURCE_QUALITY_HISTORY_KEY = "xiaoke_sector_source_quality_history_v1";
+const XIAOKE_SECTOR_CLOSE_REVIEWS_KEY = "xiaoke_sector_close_reviews_v1";
+const XIAOKE_SECTOR_CANDIDATE_POOL_KEY = "xiaoke_sector_candidate_pool_v1";
+const XIAOKE_SECTOR_DAILY_JUDGMENTS_KEY = "xiaoke_sector_daily_judgments_v1";
+const XIAOKE_SECTOR_RULE_SETTINGS_KEY = "xiaoke_sector_rule_settings_v1";
+const XIAOKE_SECTOR_LIFECYCLE_VERSION = "v1.0-mainline-lifecycle";
+const XIAOKE_SECTOR_MAINLINE_FORMULA_VERSION = "v1.3-bk-motion-volume-review";
+const XIAOKE_SECTOR_RULE_SETTINGS_VERSION = "v1.0-custom-mainline-thresholds";
+const XIAOKE_SECTOR_DAILY_JUDGMENT_VERSION = "v1.1-daily-mainline-review";
+const XIAOKE_SECTOR_MISTAKE_BOOK_VERSION = "v1.1-mainline-error-book";
+const XIAOKE_SECTOR_RULE_ADVISOR_VERSION = "v1.0-error-driven-rule-advisor";
+let xiaokeSectorSnapshotsRuntimeCacheRaw = null;
+let xiaokeSectorSnapshotsRuntimeCacheRows = null;
+const XIAOKE_SECTOR_RULE_DEFAULTS = {
+  coreRank: 10,
+  frontRank: 25,
+  previousFrontRank: 12,
+  repairRank: 18,
+  divergenceRank: 12,
+  weakRank: 40,
+  watchRank: 18,
+  pullbackWarn: 15,
+  pullbackStop: 25,
+  breadthWarn: 45,
+  coreRateWarn: 35,
+  frontRateWarn: 45,
+  confirmCoreRate: 45,
+  candidateLimit: 18,
+  funnelLimit: 8
+};
+const XIAOKE_SECTOR_MAINLINE_FORMULA_WEIGHTS = {
+  bucket: 42,
+  motion: .42,
+  top10: 58,
+  top25: 28,
+  avgRank: 1.2,
+  pct: 1.6,
+  improvement: .8,
+  visibility: 10,
+  liquidity: 12
+};
+const XIAOKE_SECTOR_DEFAULT_MAPPINGS = [
+  { alias: "钼", matchName: "钼", code: "BK1623", confidence: 100, status: "已确认", note: "东方财富标准BK，主线和涨跌以BK为准" },
+  { alias: "有机硅", matchName: "有机硅", code: "BK1431", confidence: 100, status: "已确认", note: "东方财富标准BK，主线和涨跌以BK为准" },
+  { alias: "半导体材料", matchName: "半导体材料", code: "BK1325", confidence: 100, status: "已确认", note: "东方财富标准BK，个股样本只辅助盯盘" },
+  { alias: "半导体设备", matchName: "半导体设备", code: "BK1326", confidence: 100, status: "已确认", note: "东方财富标准BK，不能按本地2只样本代表板块" },
+  { alias: "半导体", matchName: "半导体", code: "BK1036", confidence: 100, status: "已确认", note: "东方财富标准BK" },
+  { alias: "玻纤", matchName: "玻纤", code: "BK0546", confidence: 100, status: "已确认", note: "东方财富标准BK" },
+  { alias: "中芯概念", matchName: "中芯概念", code: "BK0935", confidence: 100, status: "已确认", note: "东方财富标准BK" },
+  { alias: "中心概念", matchName: "中芯概念", code: "BK0935", confidence: 95, status: "别名", note: "纠正常见写法，统一到中芯概念" },
+  { alias: "高带宽内存", matchName: "高带宽内存", code: "BK1152", confidence: 100, status: "已确认", note: "东方财富标准BK" },
+  { alias: "HBM", matchName: "高带宽内存", code: "BK1152", confidence: 95, status: "别名", note: "HBM统一按高带宽内存BK观察" },
+  { alias: "CPO", matchName: "", code: "", confidence: 40, status: "待人工确认", note: "东方财富未必有完全等价BK，确认前只作细分样本" },
+  { alias: "PCB", matchName: "", code: "", confidence: 40, status: "待人工确认", note: "需手动指定东方财富等价板块，确认前不进主线核心" },
+  { alias: "MLCC", matchName: "", code: "", confidence: 40, status: "待人工确认", note: "需手动指定东方财富等价板块，确认前不进主线核心" }
+];
+
+function xiaokeSectorQuoteMode() {
+  return localStorage.getItem(XIAOKE_SECTOR_QUOTE_MODE_KEY) === "close" ? "close" : "intraday";
+}
+
+function xiaokeSectorQuoteModeLabel(mode = xiaokeSectorQuoteMode()) {
+  return mode === "close" ? "收盘快照" : "盘中实时";
+}
+
+function setXiaokeSectorQuoteMode(mode = "intraday") {
+  localStorage.setItem(XIAOKE_SECTOR_QUOTE_MODE_KEY, mode === "close" ? "close" : "intraday");
+  renderSectorStrength(mode === "close" ? { skipFetch: true } : { forceFetch: true });
+}
+
+function xiaokeSectorQuoteModeControlsHtml() {
+  const mode = xiaokeSectorQuoteMode();
+  return `<span class="sector-mode-toggle">
+    <button class="${mode === "intraday" ? "small-btn primary" : "small-btn"}" onclick="setXiaokeSectorQuoteMode('intraday')">盘中实时</button>
+    <button class="${mode === "close" ? "small-btn primary" : "small-btn"}" onclick="setXiaokeSectorQuoteMode('close')">收盘快照</button>
+  </span>`;
+}
+
+async function xiaokeFetchJsonWithTimeout(url, options = {}, timeoutMs = 9000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    const data = await response.json().catch(() => ({}));
+    return { response, data };
+  } catch (error) {
+    if (error?.name === "AbortError") throw new Error(`行情接口超时（>${Math.round(timeoutMs / 1000)}秒），已切换最近快照`);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function xiaokeSectorRuleFieldDefs() {
+  return [
+    { key: "coreRank", title: "主线核心排名", suffix: "名内", min: 3, max: 20, step: 1, group: "主线区", desc: "进入主线确认的核心排名区，默认前10。" },
+    { key: "frontRank", title: "前排跟踪排名", suffix: "名内", min: 10, max: 50, step: 1, group: "主线区", desc: "跌出这个区间后，主线需要降级观察，默认前25。" },
+    { key: "previousFrontRank", title: "前次强势排名", suffix: "名内", min: 5, max: 25, step: 1, group: "主线区", desc: "前次足够靠前、次日跌出前排时触发隔日失守。" },
+    { key: "repairRank", title: "修复回流排名", suffix: "名内", min: 10, max: 35, step: 1, group: "确认区", desc: "分歧后重新回到这个名次以内，识别为修复回流。" },
+    { key: "divergenceRank", title: "分歧换手排名", suffix: "名内", min: 5, max: 25, step: 1, group: "确认区", desc: "仍在该排名内但出现宽度/涨跌分歧时，标记分歧换手。" },
+    { key: "watchRank", title: "候选跟随上限", suffix: "名内", min: 10, max: 40, step: 1, group: "候选池", desc: "跟随观察板块进入候选池的排名上限。" },
+    { key: "breadthWarn", title: "宽度黄灯", suffix: "%", min: 20, max: 80, step: 1, group: "风险红线", desc: "成分股上涨宽度低于该值，提示扩散不足。" },
+    { key: "pullbackWarn", title: "排名回撤黄灯", suffix: "位", min: 5, max: 40, step: 1, group: "风险红线", desc: "从最佳排名回撤超过该值，提示黄灯观察。" },
+    { key: "pullbackStop", title: "排名回撤红线", suffix: "位", min: 10, max: 80, step: 1, group: "风险红线", desc: "从最佳排名回撤超过该值，直接触发红线。" },
+    { key: "weakRank", title: "弱势排名红线", suffix: "名后", min: 25, max: 80, step: 1, group: "风险红线", desc: "排名跌到该名之后且近段转弱，生命周期降级。" },
+    { key: "coreRateWarn", title: "核心占比不足", suffix: "%", min: 10, max: 80, step: 1, group: "持续性", desc: "前核心区占比低于该值，提示持续性不足。" },
+    { key: "frontRateWarn", title: "前排占比不足", suffix: "%", min: 10, max: 90, step: 1, group: "持续性", desc: "前排区占比低于该值，提示后排观察。" },
+    { key: "confirmCoreRate", title: "主升确认占比", suffix: "%", min: 20, max: 90, step: 1, group: "持续性", desc: "前核心区占比达到该值，更容易进入主升确认。" },
+    { key: "candidateLimit", title: "观察池数量", suffix: "个", min: 5, max: 40, step: 1, group: "候选池", desc: "主线候选观察池最多保留多少个板块。" },
+    { key: "funnelLimit", title: "漏斗板块数", suffix: "个", min: 3, max: 16, step: 1, group: "候选池", desc: "主线到个股漏斗最多展示多少个标准BK板块。" }
+  ];
+}
+
+function xiaokeClampRuleValue(key, value) {
+  const def = xiaokeSectorRuleFieldDefs().find(item => item.key === key);
+  const fallback = XIAOKE_SECTOR_RULE_DEFAULTS[key];
+  const number = Number(value);
+  if (!def || !Number.isFinite(number)) return fallback;
+  const stepped = def.step >= 1 ? Math.round(number) : number;
+  return Math.max(def.min, Math.min(def.max, stepped));
+}
+
+function xiaokeSectorRuleSettings() {
+  let raw = {};
+  try {
+    const parsed = JSON.parse(localStorage.getItem(XIAOKE_SECTOR_RULE_SETTINGS_KEY) || "{}");
+    raw = parsed && typeof parsed === "object" ? parsed : {};
+  } catch {}
+  const next = { ...XIAOKE_SECTOR_RULE_DEFAULTS };
+  Object.keys(next).forEach(key => {
+    next[key] = xiaokeClampRuleValue(key, raw[key] ?? next[key]);
+  });
+  if (next.pullbackStop < next.pullbackWarn) next.pullbackStop = next.pullbackWarn;
+  if (next.frontRank < next.coreRank) next.frontRank = next.coreRank;
+  if (next.repairRank < next.coreRank) next.repairRank = next.coreRank;
+  return next;
+}
+
+function writeSectorRuleSettings(settings = {}) {
+  const next = { ...xiaokeSectorRuleSettings(), ...settings };
+  Object.keys(XIAOKE_SECTOR_RULE_DEFAULTS).forEach(key => {
+    next[key] = xiaokeClampRuleValue(key, next[key]);
+  });
+  if (next.pullbackStop < next.pullbackWarn) next.pullbackStop = next.pullbackWarn;
+  if (next.frontRank < next.coreRank) next.frontRank = next.coreRank;
+  if (next.repairRank < next.coreRank) next.repairRank = next.coreRank;
+  localStorage.setItem(XIAOKE_SECTOR_RULE_SETTINGS_KEY, JSON.stringify({ ...next, version: XIAOKE_SECTOR_RULE_SETTINGS_VERSION, updatedAt: new Date().toISOString() }));
+  return next;
+}
+
+function updateSectorRuleSetting(key, value) {
+  writeSectorRuleSettings({ [key]: value });
+  showToast("主线规则已更新");
+  if (xiaokeSectorMovementLabIsOpen()) openSectorMovementLab();
+  else if (state.view === "sectorStrength") renderSectorStrength({ skipFetch: true });
+}
+
+function resetSectorRuleSettings() {
+  localStorage.removeItem(XIAOKE_SECTOR_RULE_SETTINGS_KEY);
+  showToast("主线规则已恢复默认");
+  if (xiaokeSectorMovementLabIsOpen()) openSectorMovementLab();
+  else if (state.view === "sectorStrength") renderSectorStrength({ skipFetch: true });
+}
+
+function applySectorRulePreset(preset = "default") {
+  const map = {
+    default: XIAOKE_SECTOR_RULE_DEFAULTS,
+    strict: {
+      coreRank: 8,
+      frontRank: 20,
+      previousFrontRank: 10,
+      repairRank: 15,
+      divergenceRank: 10,
+      watchRank: 15,
+      pullbackWarn: 10,
+      pullbackStop: 20,
+      breadthWarn: 55,
+      coreRateWarn: 45,
+      frontRateWarn: 55,
+      confirmCoreRate: 55,
+      candidateLimit: 12,
+      funnelLimit: 6
+    },
+    tolerant: {
+      coreRank: 12,
+      frontRank: 30,
+      previousFrontRank: 15,
+      repairRank: 22,
+      divergenceRank: 15,
+      watchRank: 25,
+      pullbackWarn: 20,
+      pullbackStop: 35,
+      breadthWarn: 38,
+      coreRateWarn: 25,
+      frontRateWarn: 35,
+      confirmCoreRate: 38,
+      candidateLimit: 24,
+      funnelLimit: 10
+    }
+  };
+  writeSectorRuleSettings(map[preset] || map.default);
+  showToast(preset === "strict" ? "已应用严格主线规则" : preset === "tolerant" ? "已应用宽松观察规则" : "已恢复默认主线规则");
+  if (xiaokeSectorMovementLabIsOpen()) openSectorMovementLab();
+  else if (state.view === "sectorStrength") renderSectorStrength({ skipFetch: true });
+}
+
+function xiaokeSectorRuleSettingsHtml() {
+  const rules = xiaokeSectorRuleSettings();
+  const defs = xiaokeSectorRuleFieldDefs();
+  const groups = uniqueClean(defs.map(item => item.group));
+  const fieldHtml = item => `<label class="sector-rule-field">
+    <span>${escapeHtml(item.title)}</span>
+    <div><input type="number" min="${escapeHtml(item.min)}" max="${escapeHtml(item.max)}" step="${escapeHtml(item.step)}" value="${escapeHtml(rules[item.key])}" onchange='updateSectorRuleSetting(${JSON.stringify(item.key)}, this.value)'><em>${escapeHtml(item.suffix)}</em></div>
+    <small>${escapeHtml(item.desc)}</small>
+  </label>`;
+  return `<section class="panel sector-rule-settings-panel" style="margin-top:12px">
+    <div class="metadata-head">
+      <div><div class="panel-title">主线规则参数</div><div class="date">这些参数会影响生命周期、失效红线、候选观察池和个股漏斗展示数量。参数版本 ${escapeHtml(XIAOKE_SECTOR_RULE_SETTINGS_VERSION)}，先用默认值，后续可按你的交易风格微调。</div></div>
+      <div class="review-actions"><span class="video-group-badge">${escapeHtml(XIAOKE_SECTOR_RULE_SETTINGS_VERSION)}</span><button class="small-btn" onclick="applySectorRulePreset('strict')">严格</button><button class="small-btn" onclick="applySectorRulePreset('tolerant')">宽松</button><button class="small-btn" onclick="resetSectorRuleSettings()">恢复默认</button></div>
+    </div>
+    <div class="sector-rule-settings-grid">${groups.map(group => `<article><h4>${escapeHtml(group)}</h4>${defs.filter(item => item.group === group).map(fieldHtml).join("")}</article>`).join("")}</div>
+    <div class="sector-rule-settings-note">当前核心口径：前${escapeHtml(rules.coreRank)}为主线核心，前${escapeHtml(rules.frontRank)}为前排跟踪；宽度低于${escapeHtml(rules.breadthWarn)}%亮黄灯；最佳排名回撤${escapeHtml(rules.pullbackWarn)}位黄灯、${escapeHtml(rules.pullbackStop)}位红线。</div>
+  </section>`;
+}
 
 function xiaokeSectorStrengthScore(row = {}) {
   const clamp = (value, min, max) => Math.max(min, Math.min(max, Number(value) || 0));
@@ -14438,16 +15581,94 @@ function xiaokeSectorStrengthScore(row = {}) {
 }
 
 function readSectorSnapshots() {
-  try { const rows = JSON.parse(localStorage.getItem(XIAOKE_SECTOR_SNAPSHOTS_KEY) || "[]"); return Array.isArray(rows) ? rows : []; }
-  catch { return []; }
+  try {
+    const raw = localStorage.getItem(XIAOKE_SECTOR_SNAPSHOTS_KEY) || "[]";
+    if (raw === xiaokeSectorSnapshotsRuntimeCacheRaw && Array.isArray(xiaokeSectorSnapshotsRuntimeCacheRows)) {
+      return xiaokeSectorSnapshotsRuntimeCacheRows;
+    }
+    const rows = JSON.parse(raw);
+    xiaokeSectorSnapshotsRuntimeCacheRaw = raw;
+    xiaokeSectorSnapshotsRuntimeCacheRows = Array.isArray(rows) ? rows : [];
+    return xiaokeSectorSnapshotsRuntimeCacheRows;
+  }
+  catch {
+    xiaokeSectorSnapshotsRuntimeCacheRaw = null;
+    xiaokeSectorSnapshotsRuntimeCacheRows = [];
+    return [];
+  }
+}
+
+function xiaokeSectorSnapshotFocusKeys() {
+  const keys = new Set();
+  try {
+    const config = typeof xiaokeSectorCompareConfig === "function" ? xiaokeSectorCompareConfig() : {};
+    (config.selected || []).forEach(key => keys.add(String(key || "").toUpperCase()));
+  } catch {}
+  const rows = window.xiaokeSectorMergedRowsCache || [];
+  rows.forEach(row => {
+    if (!row?.localMatched && !row?.localNames?.length) return;
+    [row.name, row.code, ...(row.localNames || [])].filter(Boolean).forEach(key => keys.add(String(key).toUpperCase()));
+  });
+  ["CPO", "CPO概念", "光通信模块", "PCB", "MLCC", "半导体材料", "半导体设备", "存储芯片", "高带宽内存", "HBM"].forEach(key => keys.add(key.toUpperCase()));
+  return keys;
+}
+
+function xiaokeTrimSectorSnapshotItems(items = [], baseLimit = 220) {
+  const focus = xiaokeSectorSnapshotFocusKeys();
+  const seen = new Set();
+  return (items || []).filter((item, index) => {
+    const key = item.name || item.code;
+    if (!key || seen.has(key)) return false;
+    const important = index < baseLimit
+      || item.localMatched
+      || focus.has(String(item.name || "").toUpperCase())
+      || focus.has(String(item.code || "").toUpperCase());
+    if (!important) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 360);
 }
 
 function saveSectorSnapshot(rows = []) {
   if (!rows.length) return;
   const date = todayString();
   const snapshots = readSectorSnapshots();
-  const snapshot = { date, at: new Date().toISOString(), items: rows.slice(0, 100).map((row, index) => ({ name: row.name, code: row.code, rank: index + 1, pct: row.pct, pct60: row.pct60, score: row.score, breadth: row.breadth, leader: row.leader })) };
-  localStorage.setItem(XIAOKE_SECTOR_SNAPSHOTS_KEY, JSON.stringify([snapshot, ...snapshots.filter(item => item.date !== date)].slice(0, 40)));
+  const snapshotItems = xiaokeTrimSectorSnapshotItems(rows.map((row, index) => ({ ...row, rank: row.rank || index + 1 })));
+  const snapshot = { date, at: new Date().toISOString(), quoteMode: xiaokeSectorQuoteMode(), formulaVersion: XIAOKE_SECTOR_MAINLINE_FORMULA_VERSION, items: snapshotItems.map(row => ({
+    name: row.name,
+    code: row.code,
+    rank: row.rank,
+    pct: row.pct,
+    pct60: row.pct60,
+    score: row.score,
+    breadth: row.breadth,
+    leader: row.leader,
+    leaderPct: row.leaderPct ?? null,
+    amount: row.amount ?? null,
+    turnoverRate: row.turnoverRate ?? null,
+    upCount: row.upCount ?? null,
+    downCount: row.downCount ?? null,
+    source: row.source,
+    sourceAt: row.sourceAt || "",
+    quoteMode: row.quoteMode || xiaokeSectorQuoteMode(),
+    localOnly: !!row.localOnly,
+    localMatched: !!row.localMatched,
+    fallbackSource: row.fallbackSource || "",
+    fallbackPct: row.fallbackPct ?? null,
+    sourceDiff: row.sourceDiff ?? null,
+    sourceDiffAbs: row.sourceDiffAbs ?? null,
+    sourceDiffLevel: row.sourceDiffLevel || "",
+    klineDate: row.klineDate || "",
+    dataBasis: row.dataBasis || (/^BK\d{4,6}$/i.test(row.code || "") ? "东方财富标准板块" : "本地样本"),
+    sampleNote: row.sampleNote || "",
+    localNames: row.localNames || [],
+    localStockCount: row.localStockCount || 0,
+    localQuoteStockCount: row.localQuoteStockCount || 0
+  })) };
+  localStorage.setItem(XIAOKE_SECTOR_SNAPSHOTS_KEY, JSON.stringify([snapshot, ...snapshots.filter(item => item.date !== date)].slice(0, 140)));
+  xiaokeSectorSnapshotsRuntimeCacheRaw = null;
+  xiaokeSectorSnapshotsRuntimeCacheRows = null;
+  if (typeof xiaokeMaybeAutoSaveSectorCloseReview === "function") xiaokeMaybeAutoSaveSectorCloseReview(snapshot);
 }
 
 function xiaokeSectorRole(row = {}, rank = 0) {
@@ -14469,7 +15690,7 @@ function xiaokeSectorRankDelta(name, rank) {
 }
 
 function sectorTrajectory(name, currentRank, row = {}) {
-  const history = readSectorSnapshots().filter(item => item.date !== todayString()).slice(0, 5);
+  const history = xiaokeSectorSnapshotsForRange().filter(item => item.date !== todayString()).slice(0, 12);
   const previous = history.map(snapshot => snapshot.items?.find(item => item.name === name)).filter(Boolean);
   const oldRank = previous[0]?.rank || null;
   const rankDelta = oldRank ? oldRank - currentRank : null;
@@ -14496,10 +15717,49 @@ function sectorSnapshotHistoryHtml() {
 }
 
 async function xiaokeFetchAllSectorRanking(force = false) {
-  const response = await fetch(`/api/sector-quotes${force ? `?t=${Date.now()}` : ""}`, { cache: "no-store" });
-  const data = await response.json().catch(() => ({}));
+  const { response, data } = await xiaokeFetchJsonWithTimeout(`/api/sector-quotes${force ? `?t=${Date.now()}` : ""}`, { cache: "no-store" }, 9000);
   if (!response.ok || !data.success) throw new Error(data.error || "板块行情获取失败");
-  return (data.items || []).map(row => ({ ...row, ...xiaokeSectorStrengthScore(row) })).sort((a,b) => b.score - a.score || Number(b.pct) - Number(a.pct));
+  const items = Array.isArray(data.items) ? [...data.items] : [];
+  try {
+    const existingNames = new Set(items.map(row => String(row.name || "").trim()).filter(Boolean));
+    const existingCodes = new Set(items.map(row => String(row.code || "").trim().toUpperCase()).filter(Boolean));
+    const localNames = uniqueClean(xiaokeCustomSectorRankingRows()
+      .map(row => row.name)
+      .filter(name => name && !existingNames.has(String(name).trim())))
+      .slice(0, 80);
+    if (localNames.length) {
+      const { response: namedResponse, data: namedData } = await xiaokeFetchJsonWithTimeout(`/api/sector-quotes?names=${encodeURIComponent(localNames.join(","))}&t=${Date.now()}`, { cache: "no-store" }, 7000);
+      if (namedResponse.ok && namedData.success && Array.isArray(namedData.items)) {
+        namedData.items.forEach(row => {
+          const code = String(row.code || "").trim().toUpperCase();
+          const name = String(row.name || row.query || "").trim();
+          if (!name || existingNames.has(name) || (code && existingCodes.has(code))) return;
+          items.push(row);
+          existingNames.add(name);
+          if (code) existingCodes.add(code);
+        });
+        if (namedData.calibrated) data.warning = [data.warning, `自定义/分组板块已用东方财富BK历史K线校准 ${namedData.calibrated} 个`].filter(Boolean).join("；");
+        if (namedData.source && /东方财富/.test(namedData.source) && !/东方财富/.test(data.source || "")) data.source = namedData.source;
+      }
+    }
+  } catch (error) {
+    data.warning = [data.warning, `自定义/分组板块校准失败：${error.message || error}`].filter(Boolean).join("；");
+  }
+  window.xiaokeSectorRankingMeta = {
+    source: data.source || "",
+    warning: data.warning || data.error || "",
+    cached: !!data.cached,
+    asOf: data.asOf || "",
+    quoteMode: data.quoteMode || xiaokeSectorQuoteMode()
+  };
+  return items.map(row => ({
+    ...row,
+    sourceAt: row.sourceAt || data.asOf || "",
+    quoteMode: row.quoteMode || data.quoteMode || xiaokeSectorQuoteMode(),
+    rankingSource: data.source || row.source || "",
+    sourceWarning: data.warning || "",
+    ...xiaokeSectorStrengthScore(row)
+  })).sort((a,b) => b.score - a.score || Number(b.pct) - Number(a.pct));
 }
 
 async function xiaokeAutoRefreshDailySectorSnapshot() {
@@ -14512,8 +15772,9 @@ function sectorCachedRankingHtml(errorMessage = "") {
   const snapshot = readSectorSnapshots()[0];
   if (!snapshot?.items?.length) return `<section class="panel"><div class="panel-title">板块榜暂不可用</div><p>${escapeHtml(errorMessage || "尚无成功快照")}</p><button class="small-btn" onclick="renderSectorStrength()">重新尝试</button></section>`;
   const rows = snapshot.items.slice(0, 40);
+  const breadthText = row => row.breadth === null || row.breadth === undefined || row.breadth === "" ? "-" : strategyNumber(row.breadth, 0, "%");
   return `<section class="review-head panel"><div><div class="panel-title">每日板块强弱</div><div class="date">实时接口暂不可用，正在展示 ${escapeHtml(snapshot.date)} 的最近成功快照。</div></div><div class="review-actions"><button class="small-btn" onclick="renderSectorStrength()">刷新今日榜</button><button class="small-btn" onclick="renderDashboard()">返回看板</button></div></section>
-    <section class="panel"><div class="strategy-cache-warning">${escapeHtml(errorMessage)}</div><div class="stock-table-wrap"><table class="stock-table sector-prof-table"><thead><tr><th>排名</th><th>板块</th><th>强度</th><th>当日</th><th>60日</th><th>宽度</th><th>领涨股</th></tr></thead><tbody>${rows.map(row => `<tr><td>${row.rank}</td><td><b>${escapeHtml(row.name)}</b></td><td>${row.score}</td><td class="${Number(row.pct)>=0?'up':'down'}">${strategyNumber(row.pct,2,'%')}</td><td class="${Number(row.pct60)>=0?'up':'down'}">${strategyNumber(row.pct60,2,'%')}</td><td>${row.breadth}%</td><td>${escapeHtml(row.leader || '-')}</td></tr>`).join("")}</tbody></table></div></section>`;
+    <section class="panel"><div class="strategy-cache-warning">${escapeHtml(errorMessage)}</div><div class="stock-table-wrap"><table class="stock-table sector-prof-table"><thead><tr><th>排名</th><th>板块</th><th>强度</th><th>当日</th><th>60日</th><th>宽度</th><th>领涨股</th></tr></thead><tbody>${rows.map(row => `<tr><td>${row.rank}</td><td><b>${escapeHtml(row.name)}</b></td><td>${row.score}</td><td class="${Number(row.pct)>=0?'up':'down'}">${strategyNumber(row.pct,2,'%')}</td><td class="${Number(row.pct60)>=0?'up':'down'}">${strategyNumber(row.pct60,2,'%')}</td><td>${breadthText(row)}</td><td>${escapeHtml(row.leader || '-')}</td></tr>`).join("")}</tbody></table></div></section>`;
 }
 
 renderSectorStrength = async function xiaokeProfessionalSectorStrength() {
@@ -14521,7 +15782,7 @@ renderSectorStrength = async function xiaokeProfessionalSectorStrength() {
   restoredRenderShell();
   const main = document.getElementById("main");
   if (!main) return;
-  main.innerHTML = `<section class="review-head panel"><div><div class="panel-title">每日板块强弱</div><div class="date">正在同步东方财富行业/概念板块，计算日强度、60日趋势、市场宽度和领涨股。</div></div><button class="small-btn" onclick="renderDashboard()">返回看板</button></section><section class="panel"><div class="strategy-running"><b>正在生成今日板块榜...</b><span>只做客观排序，不把排名直接等同于买卖信号。</span></div></section>`;
+  main.innerHTML = `<section class="review-head panel"><div><div class="panel-title">每日板块强弱</div><div class="date">正在同步东方财富行业/概念板块，计算日强度、60日趋势、市场宽度和领涨股。</div></div><button class="small-btn" onclick="renderDashboard()">返回看板</button></section><section class="panel"><div class="strategy-running"><b>正在刷新今日榜...</b><span>只做客观排序，不把排名直接等同于买卖信号。</span></div></section>`;
   try {
     const rows = await xiaokeFetchAllSectorRanking(true);
     saveSectorSnapshot(rows);
@@ -14533,16 +15794,5977 @@ renderSectorStrength = async function xiaokeProfessionalSectorStrength() {
     main.innerHTML = `
       <section class="review-head panel"><div><div class="panel-title">每日板块强弱</div><div class="date">强度分 = ${escapeHtml(scoreNote)}。数据源：${escapeHtml(sourceNote)}。排名用于发现主线和变化，不是买入建议。</div></div><div class="review-actions"><button class="small-btn" onclick="renderSectorStrength()">刷新今日榜</button><button class="small-btn" onclick="addCustomSectorBoard()">+自定义板块/ETF</button><button class="small-btn" onclick="openVideoGroupManager()">管理产业链</button><button class="small-btn" onclick="renderDashboard()">返回看板</button></div></section>
       <section class="sector-market-summary">${["主线","次主线","观察","偏弱"].map(role => { const group=topRows.filter((row,index)=>xiaokeSectorRole(row,index+1)===role); return `<div><span>${role}</span><b>${group.length}</b><small>${group.slice(0,3).map(row=>row.name).join("、") || "暂无"}</small></div>`; }).join("")}</section>
-      <section class="panel"><div class="metadata-head"><div><div class="panel-title">全市场板块强度榜</div><div class="date">共同步 ${rows.length} 个标准板块；显示前40名。</div></div><span class="video-group-badge">${todayString()} 快照已保存</span></div>
+      <section class="panel"><div class="metadata-head"><div><div class="panel-title">全市场板块强度榜</div><div class="date">共同步 ${rows.length} 个市场板块；显示前40名。</div></div><span class="video-group-badge">${todayString()} 快照已保存</span></div>
         <div class="stock-table-wrap"><table class="stock-table sector-prof-table"><thead><tr><th>排名</th><th>层级</th><th>阶段</th><th>板块</th><th>强度</th><th>当日</th><th>60日</th><th>上涨/下跌</th><th>宽度</th><th>领涨股</th><th>领涨幅</th><th>成交额</th></tr></thead><tbody>${topRows.map((row,index)=>{ const delta=xiaokeSectorRankDelta(row.name,index+1); const role=xiaokeSectorRole(row,index+1); const trajectory=sectorTrajectory(row.name,index+1,row); const breadthText=row.breadth===null||row.breadth===undefined?'-':`${row.breadth}%`; const advanceText=row.upCount===null||row.upCount===undefined||row.downCount===null||row.downCount===undefined?'-':`${row.upCount} / ${row.downCount}`; return `<tr><td><b>${index+1}</b> <span class="${delta.cls}">${delta.text}</span></td><td><span class="sector-role ${role==='主线'?'main':role==='次主线'?'secondary':role==='偏弱'?'weak':''}">${role}</span></td><td><span class="sector-phase phase-${escapeHtml(trajectory.phase)}">${escapeHtml(trajectory.phase)}</span><div class="date">${escapeHtml(trajectory.reason)}</div></td><td><b>${escapeHtml(row.name)}</b><div class="date">${escapeHtml(row.code)}</div></td><td><b>${row.score}</b></td><td class="${Number(row.pct)>=0?'up':'down'}">${strategyNumber(row.pct,2,'%')}</td><td>${strategyNumber(row.pct60,2,'%')}</td><td>${advanceText}</td><td>${breadthText}</td><td>${escapeHtml(row.leader || '-')}</td><td class="${Number(row.leaderPct)>=0?'up':'down'}">${strategyNumber(row.leaderPct,2,'%')}</td><td>${strategyNumber(Number(row.amount)/100000000,1,'亿')}</td></tr>`;}).join("")}</tbody></table></div></section>
       <section class="panel" style="margin-top:12px"><div class="panel-title">最近7次板块快照</div>${sectorSnapshotHistoryHtml()}</section>
-      <section class="panel" style="margin-top:12px"><div class="panel-title">我的产业链映射</div><div class="date" style="margin-bottom:10px">把你的关注分组映射到标准板块；点击打开细分个股。</div><div class="sector-rank-grid">${myGroups.map(row=>{ const quote=quoteMap.get(row.group.name); return `<article class="sector-rank-card"><div class="sector-rank-head"><b>${escapeHtml(row.group.name)}</b><span>${quote?.pct===undefined?'未匹配':strategyNumber(quote.pct,2,'%')}</span></div><p>${escapeHtml(xiaokeSectorBranchNames(row.group).slice(0,6).join('、'))}</p><div class="date">${escapeHtml(quote?.source || '本地产业链')}</div><button class="small-btn" onclick="openSectorDirectory([${row.index}])">打开细分</button></article>`;}).join("") || '<div class="date">暂无产业链分组。</div>'}</div></section>`;
+      <section class="panel" style="margin-top:12px"><div class="panel-title">我的产业链映射</div><div class="date" style="margin-bottom:10px">把你的关注分组映射到市场板块；点击打开细分个股。</div><div class="sector-rank-grid">${myGroups.map(row=>{ const quote=quoteMap.get(row.group.name); return `<article class="sector-rank-card"><div class="sector-rank-head"><b>${escapeHtml(row.group.name)}</b><span>${quote?.pct===undefined?'未匹配':strategyNumber(quote.pct,2,'%')}</span></div><p>${escapeHtml(xiaokeSectorBranchNames(row.group).slice(0,6).join('、'))}</p><div class="date">${escapeHtml(quote?.source || '本地产业链')}</div><button class="small-btn" onclick="openSectorDirectory([${row.index}])">打开细分</button></article>`;}).join("") || '<div class="date">暂无产业链分组。</div>'}</div></section>`;
   } catch (error) {
     main.innerHTML = sectorCachedRankingHtml(error.message);
   }
 };
 
+function xiaokeQuoteKeyFromCode(code = "") {
+  const raw = String(code || "").trim();
+  if (!/^\d{6}$/.test(raw)) return raw;
+  if (/^6/.test(raw)) return "sh" + raw;
+  if (/^[48]/.test(raw)) return "bj" + raw;
+  return "sz" + raw;
+}
+
+function xiaokeCommonSectorTemplates() {
+  return [
+    { name: "CPO", stocks: "中际旭创, 新易盛, 天孚通信, 光迅科技, 剑桥科技, 源杰科技, 联特科技" },
+    { name: "PCB", stocks: "沪电股份, 深南电路, 生益科技, 景旺电子, 胜宏科技, 世运电路" },
+    { name: "MLCC", stocks: "三环集团, 风华高科, 火炬电子, 洁美科技, 国瓷材料" },
+    { name: "小金属", stocks: "东方钽业, 云南锗业, 锡业股份, 厦门钨业, 洛阳钼业, 华锡有色" },
+    { name: "广告营销", stocks: "蓝色光标, 省广集团, 天龙集团, 宣亚国际, 因赛集团" },
+    { name: "玻纤", stocks: "中国巨石, 中材科技, 长海股份, 山东玻纤, 国际复材, 宏和科技" }
+  ];
+}
+
+function xiaokeSplitStockNames(text = "") {
+  return uniqueClean(String(text || "").split(/[、,，\s\n]+/).map(item => item.trim()).filter(Boolean));
+}
+
+function xiaokeStockItemsFromNames(names = [], sector = "") {
+  const watch = typeof flattenWatchlist === "function" ? flattenWatchlist() : [];
+  return uniqueClean(names).map(name => {
+    const local = watch.find(item => item.name === name || String(item.name || "").includes(name) || name.includes(item.name));
+    return {
+      ...(local || {}),
+      name,
+      quoteKey: local?.quoteKey || localQuoteAliasForName(name) || "",
+      sector: sector || local?.sector || local?.group || ""
+    };
+  });
+}
+
+function xiaokeCustomBoardStocks(row = {}) {
+  return xiaokeStockItemsFromNames(xiaokeSplitStockNames(row.stocks || row.children || ""), row.name);
+}
+
+function xiaokeSectorQuoteForStock(item = {}) {
+  const key = item.quoteKey || xiaokeQuoteKeyFromCode(item.code) || localQuoteAliasForName(item.name || "");
+  return key ? (state.indexQuotes[key] || state.indexQuotes[String(key).toLowerCase()] || null) : null;
+}
+
+function xiaokeLocalSectorRow(name, stocks = [], source = "本地细分板块", code = "") {
+  const quoteRows = (stocks || []).map(item => ({ item, quote: xiaokeSectorQuoteForStock(item) })).filter(row => row.quote);
+  const pctRows = quoteRows.map(row => ({ ...row, pct: Number(row.quote.pct) })).filter(row => Number.isFinite(row.pct));
+  const pct = pctRows.length ? pctRows.reduce((sum, row) => sum + row.pct, 0) / pctRows.length : null;
+  const upCount = pctRows.filter(row => row.pct > 0).length;
+  const downCount = pctRows.filter(row => row.pct < 0).length;
+  const leaderRow = pctRows.sort((a, b) => b.pct - a.pct)[0];
+  const scoreParts = xiaokeSectorStrengthScore({
+    pct: pct ?? 0,
+    pct60: null,
+    upCount,
+    downCount,
+    leaderPct: leaderRow?.pct ?? pct ?? 0
+  });
+  const stockBonus = Math.min(18, Math.max(0, (stocks || []).length * 2));
+  return {
+    name,
+    code,
+    pct,
+    pct60: null,
+    upCount,
+    downCount,
+    breadth: scoreParts.breadth,
+    score: Math.max(1, Math.min(100, Math.round(scoreParts.score + stockBonus))),
+    leader: leaderRow?.item?.name || (stocks || [])[0]?.name || "",
+    leaderPct: leaderRow?.pct ?? null,
+    amount: 0,
+    source,
+    stockCount: (stocks || []).length,
+    quoteStockCount: pctRows.length,
+    scoreMode: "本地细分：成分股平均涨跌 + 宽度 + 领涨股 + 成分数量",
+    localOnly: true
+  };
+}
+
+function xiaokeWatchGroupSectorRows() {
+  const rows = [];
+  const groups = typeof readWatchGroups === "function" ? readWatchGroups() : [];
+  const visit = (group, chain = []) => {
+    if (!group || /指数|全部/.test(group.name || "")) return;
+    const stocks = typeof groupStockItems === "function" ? groupStockItems(group) : (group.items || []);
+    if (stocks.length) {
+      const groupChain = chain.concat(group.name).join(" / ");
+      const localRow = xiaokeLocalSectorRow(group.name, stocks, chain.length ? `管理分组产业链：${chain.join(" / ")}` : "管理分组产业链", `GROUP-${rows.length + 1}`);
+      rows.push({ ...localRow, groupChain });
+    }
+    (group.children || []).forEach(child => visit(child, chain.concat(group.name)));
+  };
+  groups.forEach(group => visit(group, []));
+  const seen = new Set();
+  return rows.filter(row => {
+    const key = row.groupChain || row.name;
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 80);
+}
+
+function xiaokeCustomSectorRankingRows() {
+  const customRows = restoredCustomSectorBoards().map(row => {
+    const stocks = xiaokeCustomBoardStocks(row);
+    const localRow = xiaokeLocalSectorRow(row.name, stocks, row.source || "自定义细分板块", `CUSTOM-${row.id || row.name}`);
+    const manualPct = Number(String(row.pct || "").replace("%", ""));
+    if (Number.isFinite(manualPct) && (localRow.pct === null || localRow.pct === undefined)) localRow.pct = manualPct;
+    localRow.id = row.id;
+    return localRow;
+  });
+  return [...customRows, ...xiaokeWatchGroupSectorRows()];
+}
+
+function xiaokeSectorNameKey(name = "") {
+  return String(name || "").replace(/概念|板块|指数|ETF|产业链|\s/g, "").toLowerCase();
+}
+
+function xiaokeSectorAliasTokens(name = "") {
+  const text = String(name || "").toUpperCase();
+  const tokens = [];
+  ["CPO", "PCB", "MLCC", "HBM", "CPU", "GPU", "EDA", "IP"].forEach(token => {
+    if (text.includes(token)) tokens.push(token.toLowerCase());
+  });
+  return tokens;
+}
+
+function xiaokeSectorMappingKey(name = "") {
+  return xiaokeSectorNameKey(name).toUpperCase();
+}
+
+function xiaokeReadSectorMappingRegistry() {
+  let manual = [];
+  try {
+    const data = JSON.parse(localStorage.getItem(XIAOKE_SECTOR_MAPPING_REGISTRY_KEY) || "[]");
+    manual = Array.isArray(data) ? data : [];
+  } catch {
+    manual = [];
+  }
+  const merged = new Map();
+  XIAOKE_SECTOR_DEFAULT_MAPPINGS.forEach(item => merged.set(xiaokeSectorMappingKey(item.alias), { ...item, locked: item.confidence >= 80, lockedDefault: true }));
+  manual.forEach(item => {
+    const key = xiaokeSectorMappingKey(item.alias || item.name || item.matchName || "");
+    if (key) merged.set(key, { ...merged.get(key), ...item, lockedDefault: false });
+  });
+  return Array.from(merged.values()).filter(item => item.alias);
+}
+
+function xiaokeSectorMappingLocked(item = {}) {
+  return item.locked === true || /锁定/.test(item.status || "");
+}
+
+function xiaokeSectorMappingForName(name = "") {
+  const target = xiaokeSectorMappingKey(name);
+  if (!target) return null;
+  return xiaokeReadSectorMappingRegistry().find(item => {
+    const alias = xiaokeSectorMappingKey(item.alias);
+    const matchName = xiaokeSectorMappingKey(item.matchName);
+    return target === alias || target === matchName || (alias && target.includes(alias)) || (matchName && target.includes(matchName));
+  }) || null;
+}
+
+function xiaokeFindMappedMarketSector(localRow = {}, marketRows = []) {
+  const mapping = xiaokeSectorMappingForName(localRow.name || localRow.groupChain || "");
+  if (!mapping || !mapping.code && !mapping.matchName) return null;
+  const code = String(mapping.code || "").trim().toUpperCase();
+  if (code) {
+    const byCode = marketRows.find(row => String(row.code || "").trim().toUpperCase() === code);
+    if (byCode) return { ...byCode, mappingAlias: mapping.alias, mappingConfidence: mapping.confidence, mappingStatus: mapping.status, mappingNote: mapping.note };
+  }
+  const matchKey = xiaokeSectorNameKey(mapping.matchName || "");
+  if (matchKey) {
+    const byName = marketRows.find(row => xiaokeSectorNameKey(row.name) === matchKey);
+    if (byName) return { ...byName, mappingAlias: mapping.alias, mappingConfidence: mapping.confidence, mappingStatus: mapping.status, mappingNote: mapping.note };
+  }
+  return null;
+}
+
+function xiaokeFindStandardSectorMatch(localRow = {}, marketRows = []) {
+  const localKey = xiaokeSectorNameKey(localRow.name || "");
+  const code = String(localRow.code || "").trim().toUpperCase();
+  if (/^BK\d{4,6}$/.test(code)) {
+    const byCode = marketRows.find(row => String(row.code || "").toUpperCase() === code);
+    if (byCode) return byCode;
+  }
+  const mapped = xiaokeFindMappedMarketSector(localRow, marketRows);
+  if (mapped) return mapped;
+  if (!localKey) return null;
+  const exact = marketRows.find(row => xiaokeSectorNameKey(row.name) === localKey);
+  if (exact) return exact;
+  const tokens = xiaokeSectorAliasTokens(localRow.name);
+  if (tokens.length) {
+    const tokenMatch = marketRows.find(row => {
+      const key = xiaokeSectorNameKey(row.name);
+      return tokens.some(token => key === token || key.includes(token));
+    });
+    if (tokenMatch) return tokenMatch;
+  }
+  const candidates = marketRows
+    .map(row => {
+      const key = xiaokeSectorNameKey(row.name);
+      if (!key || key.length < 3) return null;
+      if (localKey.includes(key)) return { row, score: 80 + key.length };
+      if (key.includes(localKey) && localKey.length >= 3) return { row, score: 70 + localKey.length };
+      return null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.score - a.score);
+  return candidates[0]?.row || null;
+}
+
+function xiaokeAttachLocalSectorSample(standard = {}, local = {}) {
+  const localNames = uniqueClean([...(standard.localNames || []), local.name].filter(Boolean));
+  const localChains = uniqueClean([...(standard.localGroupChains || []), local.groupChain].filter(Boolean));
+  const stockCount = Number(standard.localStockCount || 0) + Number(local.stockCount || 0);
+  const quoteCount = Number(standard.localQuoteStockCount || 0) + Number(local.quoteStockCount || 0);
+  return {
+    ...standard,
+    source: uniqueClean([standard.source || "东方财富标准板块", local.source].filter(Boolean)).join(" + "),
+    localOnly: false,
+    localMatched: true,
+    localScore: Math.max(Number(standard.localScore || 0), Number(local.score || 0)),
+    localNames,
+    localGroupChains: localChains,
+    localStockCount: stockCount,
+    localQuoteStockCount: quoteCount,
+    dataBasis: "东方财富标准板块",
+    sampleNote: stockCount ? `本地样本 ${quoteCount}/${stockCount} 只，仅辅助盯盘` : "本地样本仅辅助盯盘"
+  };
+}
+
+function xiaokeMarketSectorDataBasis(row = {}) {
+  const source = String(row.source || "");
+  if (/^BK\d{4,6}$/i.test(row.code || "") && /东方财富/.test(source)) return "东方财富标准板块";
+  if (/新浪/.test(source)) return "公开板块行情";
+  return "市场板块行情";
+}
+
+function xiaokeMergeSectorRankingRows(baseRows = []) {
+  const merged = new Map();
+  const marketRows = (baseRows || []).map(row => ({ ...row, localOnly: false, dataBasis: xiaokeMarketSectorDataBasis(row) }));
+  marketRows.forEach(row => {
+    merged.set(xiaokeSectorNameKey(row.name), row);
+  });
+  xiaokeCustomSectorRankingRows().forEach(row => {
+    const key = xiaokeSectorNameKey(row.name);
+    const standard = xiaokeFindStandardSectorMatch(row, marketRows);
+    const standardKey = standard ? xiaokeSectorNameKey(standard.name) : "";
+    const existing = merged.get(key) || (standardKey ? merged.get(standardKey) : null);
+    if (existing) {
+      const attached = xiaokeAttachLocalSectorSample(existing, row);
+      merged.set(xiaokeSectorNameKey(existing.name), attached);
+      if (key !== xiaokeSectorNameKey(existing.name)) merged.delete(key);
+    } else if (standard) {
+      merged.set(standardKey, xiaokeAttachLocalSectorSample(standard, row));
+    } else {
+      merged.set(key, { ...row, dataBasis: "本地样本", sampleNote: "未匹配东方财富标准板块，暂不作为主线核心依据" });
+    }
+  });
+  return Array.from(merged.values())
+    .sort((a, b) => Number(b.score || 0) - Number(a.score || 0) || Number(b.pct || -999) - Number(a.pct || -999))
+    .map((row, index) => ({ ...row, rank: index + 1 }));
+}
+
+const XIAOKE_SECTOR_COMPARE_CONFIG_KEY = "xiaoke_sector_compare_config_v1";
+
+function xiaokeSectorCompareConfig() {
+  try {
+    const data = JSON.parse(localStorage.getItem(XIAOKE_SECTOR_COMPARE_CONFIG_KEY) || "{}");
+    return {
+      remote: data.remote !== false,
+      custom: data.custom !== false,
+      groups: data.groups !== false,
+      selected: Array.isArray(data.selected) ? data.selected : [],
+      hidden: Array.isArray(data.hidden) ? data.hidden : []
+    };
+  } catch {
+    return { remote: true, custom: true, groups: true, selected: [], hidden: [] };
+  }
+}
+
+function saveSectorCompareConfig(config = {}) {
+  localStorage.setItem(XIAOKE_SECTOR_COMPARE_CONFIG_KEY, JSON.stringify({ ...xiaokeSectorCompareConfig(), ...config }));
+}
+
+function xiaokeSectorRowSourceType(row = {}) {
+  if (/管理分组产业链/.test(row.source || "")) return "groups";
+  if (row.localOnly || /^CUSTOM-/i.test(row.code || "") || /自定义|常见细分/.test(row.source || "")) return "custom";
+  return "remote";
+}
+
+function xiaokeSectorIsLocalSample(row = {}) {
+  return !!row.localOnly || row.dataBasis === "本地样本" || xiaokeSectorRowSourceType(row) !== "remote";
+}
+
+function xiaokeSectorCompareKey(row = {}) {
+  return row.groupChain || row.name || row.code || "";
+}
+
+function xiaokeSectorSourceLabel(row = {}) {
+  const type = xiaokeSectorRowSourceType(row);
+  if (type === "remote") return "";
+  if (type === "custom") return "细分";
+  return "产业链";
+}
+
+function xiaokeSectorCompareStatus(row = {}) {
+  if (xiaokeIsStandardSector(row)) return { label: "东方财富匹配", cls: "standard" };
+  if (row.localMatched) return { label: "已并入标准板块", cls: "standard" };
+  if (!xiaokeSectorIsLocalSample(row)) return { label: /新浪/.test(row.source || "") ? "公开行情板块" : "市场板块行情", cls: "standard" };
+  return { label: "未匹配样本", cls: "sample" };
+}
+
+function xiaokeSectorFullLabel(row = {}) {
+  return [xiaokeSectorSourceLabel(row), row.name, row.groupChain || row.code || row.source].filter(Boolean).join(" / ");
+}
+
+function xiaokeSectorSelectedLabels(keys = [], rows = []) {
+  return keys.map(key => {
+    const row = rows.find(item => xiaokeSectorCompareKey(item) === key || item.name === key || item.code === key);
+    const source = row ? xiaokeSectorSourceLabel(row) : "";
+    return row ? `${source ? `${source}:` : ""}${row.name}` : key;
+  });
+}
+
+function xiaokeSectorCompareSelectedRows(rows = []) {
+  const selected = new Set((xiaokeSectorCompareConfig().selected || []).map(key => String(key || "")));
+  if (!selected.size) return [];
+  return (rows || []).filter(row => selected.has(xiaokeSectorCompareKey(row)) || selected.has(row.name) || selected.has(row.code));
+}
+
+function xiaokeSectorNameGuideHtml() {
+  return `<div class="strategy-cache-ok" style="margin-top:10px">
+    <b>命名说明：</b>
+    <span style="margin-left:8px">不带前缀的是市场板块；细分 = 你自己维护的 CPO/PCB/MLCC 等细分板块；产业链 = 从管理分组树同步来的层级板块。</span>
+    <span style="display:block;margin-top:5px">题材股一般指“由某个市场热点、概念、政策或事件驱动的一组股票”，例如 AI应用、机器人、商业航天，不等于行业基本面最强，只是主题分类。</span>
+  </div>`;
+}
+
+function toggleSectorCompareSource(type) {
+  const config = xiaokeSectorCompareConfig();
+  config[type] = !config[type];
+  saveSectorCompareConfig(config);
+  xiaokeRefreshSectorCompareOnly(true);
+}
+
+function enableAllSectorCompareSources() {
+  saveSectorCompareConfig({ remote: true, custom: true, groups: true });
+  xiaokeRefreshSectorCompareOnly(true);
+}
+
+function toggleSectorCompareBoard(key) {
+  const config = xiaokeSectorCompareConfig();
+  const value = String(key || "");
+  if (!value) return;
+  config.selected = config.selected.includes(value) ? config.selected.filter(item => item !== value) : [...config.selected, value];
+  saveSectorCompareConfig(config);
+  xiaokeRefreshSectorCompareOnly(true);
+}
+
+function clearSectorCompareSelection() {
+  saveSectorCompareConfig({ selected: [] });
+  xiaokeRefreshSectorCompareOnly(true);
+}
+
+function xiaokeSectorHiddenKeySet(config = xiaokeSectorCompareConfig()) {
+  return new Set((config.hidden || []).map(item => String(item || "")));
+}
+
+function xiaokeSectorIsHidden(row = {}, hidden = xiaokeSectorHiddenKeySet()) {
+  return [xiaokeSectorCompareKey(row), row.name, row.code, row.groupChain].filter(Boolean).some(key => hidden.has(String(key)));
+}
+
+function hideSectorCompareBoard(key) {
+  const value = String(key || "");
+  if (!value) return;
+  const config = xiaokeSectorCompareConfig();
+  const hidden = [...xiaokeSectorHiddenKeySet(config), value];
+  saveSectorCompareConfig({
+    hidden,
+    selected: (config.selected || []).filter(item => String(item) !== value)
+  });
+  xiaokeRefreshSectorCompareOnly(false);
+}
+
+function restoreHiddenSectorCompareBoards() {
+  saveSectorCompareConfig({ hidden: [] });
+  xiaokeRefreshSectorCompareOnly(false);
+  showToast("已恢复隐藏的板块样本");
+}
+
+function hideUnmatchedSectorSamples() {
+  const allRows = window.xiaokeSectorMergedRowsCache || [];
+  const unmatched = allRows
+    .filter(row => xiaokeSectorIsLocalSample(row) && !row.localMatched)
+    .map(row => xiaokeSectorCompareKey(row))
+    .filter(Boolean);
+  if (!unmatched.length) return showToast("当前没有未匹配东方财富的本地样本");
+  const config = xiaokeSectorCompareConfig();
+  const hidden = uniqueClean([...(config.hidden || []), ...unmatched]);
+  const hiddenSet = new Set(hidden);
+  saveSectorCompareConfig({
+    hidden,
+    selected: (config.selected || []).filter(key => !hiddenSet.has(String(key)))
+  });
+  xiaokeRefreshSectorCompareOnly(false);
+  showToast(`已隐藏 ${unmatched.length} 个未匹配样本，主线判断只看东方财富标准板块`);
+}
+
+function editSectorCompareBoard(key) {
+  const value = String(key || "");
+  const allRows = window.xiaokeSectorMergedRowsCache || [];
+  const row = allRows.find(item => [xiaokeSectorCompareKey(item), item.name, item.code, item.groupChain].filter(Boolean).some(itemKey => String(itemKey) === value));
+  if (!row) return showToast("没有找到这个板块");
+  const type = xiaokeSectorRowSourceType(row);
+  if (type === "remote" && xiaokeIsStandardSector(row)) {
+    return showToast("东方财富标准板块不编辑成分；可以隐藏，或点归因看成分股");
+  }
+  if (type === "groups") {
+    showToast("产业链来自管理分组，请到管理分组里增删");
+    if (typeof openVideoGroupManager === "function") openVideoGroupManager();
+    return;
+  }
+  if (row.id) {
+    editCustomSectorBoard(row.id);
+    return;
+  }
+  const name = prompt("新增/修正细分板块名称", row.name || "");
+  if (!name) return;
+  const stocks = prompt("成分股，逗号或顿号分隔", row.stocks || row.children || "");
+  const rows = restoredCustomSectorBoards();
+  rows.push({ id: Date.now(), name: name.trim(), stocks: stocks || "", children: stocks || "", pct: "", source: "自定义细分板块" });
+  saveRestoredCustomSectorBoards(rows);
+  renderSectorStrength({ skipFetch: true, scrollToSelected: true });
+}
+
+function xiaokeFilterSectorRowsForCompare(rows = []) {
+  const config = xiaokeSectorCompareConfig();
+  const hidden = xiaokeSectorHiddenKeySet(config);
+  const visibleRows = rows.filter(row => !xiaokeSectorIsHidden(row, hidden));
+  const sourceFiltered = visibleRows.filter(row => config[xiaokeSectorRowSourceType(row)] !== false);
+  if (!(config.selected || []).length) return sourceFiltered;
+  const selected = new Set(config.selected);
+  return sourceFiltered.filter(row => selected.has(xiaokeSectorCompareKey(row)) || selected.has(row.name) || selected.has(row.code));
+}
+
+function xiaokeSelectedSectorRows(rows = [], allRows = rows) {
+  const config = xiaokeSectorCompareConfig();
+  const selected = config.selected || [];
+  if (!selected.length) return rows;
+  const sourceRows = allRows.length ? allRows : rows;
+  return selected.map(key => {
+    const matched = sourceRows.find(row => xiaokeSectorCompareKey(row) === key || row.name === key || row.code === key)
+      || rows.find(row => xiaokeSectorCompareKey(row) === key || row.name === key || row.code === key);
+    if (matched) return matched;
+    return {
+      name: key,
+      code: "",
+      source: "未匹配到行情",
+      score: "-",
+      pct: null,
+      pct60: null,
+      breadth: null,
+      upCount: null,
+      downCount: null,
+      leader: "-",
+      missingQuote: true
+    };
+  }).sort((a, b) => Number(b.score || -999) - Number(a.score || -999)).map((row, index) => ({ ...row, rank: index + 1 }));
+}
+
+function xiaokeRefreshSectorCompareOnly(scroll = false) {
+  const allRows = window.xiaokeSectorMergedRowsCache || [];
+  if (!allRows.length) return renderSectorStrength({ skipFetch: true, scrollToSelected: scroll });
+  const rows = xiaokeFilterSectorRowsForCompare(allRows).map((row, index) => ({ ...row, rank: index + 1 }));
+  const pool = document.getElementById("sectorComparePool");
+  const selectedPanel = document.getElementById("sectorSelectedCompareData");
+  if (pool) pool.outerHTML = xiaokeSectorComparePoolHtml(allRows);
+  if (selectedPanel) selectedPanel.outerHTML = xiaokeSelectedSectorCompareHtml(rows, allRows);
+  if (scroll) setTimeout(() => scrollToSectorSection("sectorSelectedCompareData"), 30);
+}
+
+function xiaokeSectorComparePoolHtml(rows = []) {
+  const config = xiaokeSectorCompareConfig();
+  const hidden = xiaokeSectorHiddenKeySet(config);
+  const visibleRows = rows.filter(row => !xiaokeSectorIsHidden(row, hidden));
+  const candidates = visibleRows.filter(row => config[xiaokeSectorRowSourceType(row)] !== false).slice(0, 96);
+  const selected = new Set(config.selected || []);
+  const selectedLabels = xiaokeSectorSelectedLabels(config.selected || [], rows);
+  const hiddenCount = (config.hidden || []).length;
+  const allSourcesOn = config.remote !== false && config.custom !== false && config.groups !== false;
+  const sourceButtons = [
+    `<button class="${allSourcesOn ? "small-btn primary" : "small-btn"}" onclick="enableAllSectorCompareSources()">全部</button>`,
+    ["remote", "市场板块"],
+    ["custom", "我的细分板块"],
+    ["groups", "管理分组产业链"]
+  ].map(item => Array.isArray(item) ? `<button class="${config[item[0]] !== false ? "small-btn primary" : "small-btn"}" onclick="toggleSectorCompareSource('${item[0]}')">${item[1]}</button>` : item).join("");
+  return `<section id="sectorComparePool" class="panel" style="margin-top:12px;border-color:rgba(34,195,214,.55);box-shadow:0 0 0 1px rgba(34,195,214,.12) inset;background:linear-gradient(180deg,rgba(34,195,214,.10),rgba(18,24,31,.88))">
+    <div class="metadata-head">
+      <div>
+        <div class="panel-title"><span style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:5px;background:rgba(34,195,214,.18);border:1px solid rgba(34,195,214,.45);color:#c8fbff;margin-right:8px">蓝色关键区</span>板块对比池</div>
+        <div class="date">这里只决定“哪些板块进入强弱比较”。<b style="color:#24e6a7">全部 = 市场板块 + 我的细分板块 + 管理分组产业链三类汇总</b>；亮绿色 = 已选中，灰色 = 未选。未选择具体板块时，按已开启来源全部参与。</div>
+        ${xiaokeSectorNameGuideHtml()}
+      </div>
+      <div class="review-actions sector-head-actions">${sourceButtons}<button class="small-btn" onclick="hideUnmatchedSectorSamples()">隐藏未匹配样本</button>${hiddenCount ? `<button class="small-btn" onclick="restoreHiddenSectorCompareBoards()">恢复隐藏(${hiddenCount})</button>` : ""}<button class="small-btn" onclick="clearSectorCompareSelection()">清空精选</button></div>
+    </div>
+    <div class="sector-compare-chip-grid">
+      ${candidates.map(row => {
+        const key = xiaokeSectorCompareKey(row);
+        const active = selected.has(key) || selected.has(row.name) || selected.has(row.code);
+        const source = xiaokeSectorSourceLabel(row);
+        const title = xiaokeSectorFullLabel(row);
+        const status = xiaokeSectorCompareStatus(row);
+        const pct = Number(row.pct);
+        return `<article class="sector-compare-chip ${active ? "active" : ""} ${escapeHtml(status.cls)}" title="${escapeHtml(title)}">
+          <button class="sector-compare-main" onclick='toggleSectorCompareBoard(${JSON.stringify(key)})'>
+            <span>${escapeHtml(source || "市场")}</span>
+            <b>${escapeHtml(row.name)}</b>
+            <small>${escapeHtml(status.label)} · 第${escapeHtml(row.rank || "-")} · ${Number.isFinite(pct) ? xiaokeSectorSignedPct(pct, 2) : "暂无涨跌"}</small>
+          </button>
+          <div class="sector-compare-actions">
+            <button onclick='editSectorCompareBoard(${JSON.stringify(key)})'>编辑</button>
+            <button onclick='hideSectorCompareBoard(${JSON.stringify(key)})'>隐藏</button>
+          </div>
+        </article>`;
+      }).join("")}
+    </div>
+    <div class="date" style="margin-top:8px">当前精选：${selected.size ? selectedLabels.map(escapeHtml).join("、") : "未限定，使用已开启来源全部板块"}。</div>
+    <div class="strategy-cache-ok" style="margin-top:10px"><b>看数据的位置：</b>${selected.size ? "你已点亮精选板块，下面会出现“已选板块单独对比数据”，只看这些板块。" : "还没点亮具体板块，所以“板块强度榜”和“轨迹规律”会按已开启来源全部比较。"}</div>
+  </section>`;
+}
+
+function xiaokeSelectedSectorCompareHtml(rows = [], allRows = rows) {
+  const config = xiaokeSectorCompareConfig();
+  const selectedCount = (config.selected || []).length;
+  if (!selectedCount) {
+    return `<section id="sectorSelectedCompareData" class="panel" style="margin-top:12px;border-color:rgba(34,195,214,.35);background:rgba(34,195,214,.045)">
+      <div class="metadata-head">
+        <div>
+          <div class="panel-title">已选板块单独对比数据</div>
+          <div class="date">你还没有点亮具体板块。当前是“全量模式”：下面的板块强度榜，就是所有已开启来源的综合对比。</div>
+        </div>
+        <button class="small-btn" onclick="scrollToSectorSection('sectorComparePool')">去点亮板块</button>
+      </div>
+    </section>`;
+  }
+  const selectedRows = xiaokeSelectedSectorRows(rows, allRows).slice(0, 80);
+  return `<section id="sectorSelectedCompareData" class="panel" style="margin-top:12px;border-color:rgba(34,195,214,.62);box-shadow:0 0 0 1px rgba(34,195,214,.16) inset;background:linear-gradient(180deg,rgba(34,195,214,.12),rgba(18,24,31,.9))">
+    <div class="metadata-head">
+      <div>
+        <div class="panel-title"><span style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:5px;background:rgba(34,195,214,.18);border:1px solid rgba(34,195,214,.45);color:#c8fbff;margin-right:8px">蓝色数据区</span>已选板块单独对比数据</div>
+        <div class="date">这里只显示你点亮的板块。每张卡片就是一个板块：先看强度和涨跌，再点“看归因”或“历史明细”。</div>
+      </div>
+      <div class="review-actions"><button class="small-btn" onclick="clearSectorCompareSelection()">退出精选模式</button><button class="small-btn" onclick="openSectorMovementLab()">看轨迹规律</button></div>
+    </div>
+    <div class="sector-rank-grid">
+      ${selectedRows.map((row, index) => {
+          const rank = row.rank || index + 1;
+          const trajectory = sectorTrajectory(row.name, rank, row);
+          const breadthText = row.breadth === null || row.breadth === undefined ? "-" : `${row.breadth}%`;
+          const advanceText = row.upCount === null || row.upCount === undefined || row.downCount === null || row.downCount === undefined ? "-" : `${row.upCount} / ${row.downCount}`;
+          const payload = { name: row.name, code: row.code || "", source: row.source || "", groupChain: row.groupChain || "" };
+          return `<article class="sector-rank-card" style="border-color:${row.missingQuote ? "rgba(245,166,35,.55)" : "rgba(34,195,214,.45)"}">
+            <div class="sector-rank-head">
+              <b>${rank}. ${escapeHtml(row.name)}</b>
+              <span class="${Number(row.pct) >= 0 ? "up" : "down"}">${Number.isFinite(Number(row.pct)) ? strategyNumber(row.pct, 2, "%") : "-"}</span>
+            </div>
+            <div class="date">${escapeHtml(row.groupChain || row.code || row.source || "精选板块")}</div>
+            <div style="display:grid;grid-template-columns:repeat(3,minmax(80px,1fr));gap:8px;margin:10px 0">
+              <div class="mini-metric"><b>${row.score ?? "-"}</b><span>强度</span></div>
+              <div class="mini-metric"><b>${Number.isFinite(Number(row.pct60)) ? strategyNumber(row.pct60, 2, "%") : "-"}</b><span>60日</span></div>
+              <div class="mini-metric"><b>${breadthText}</b><span>宽度</span></div>
+            </div>
+            <p>${row.missingQuote ? `<span class="sector-phase phase-新观察">未匹配行情</span> 请检查来源开关，或在“管理分组/细分板块”里补代码。` : `<span class="sector-phase phase-${escapeHtml(trajectory.phase)}">${escapeHtml(trajectory.phase)}</span> ${escapeHtml(trajectory.reason || "")}`}</p>
+            <p class="date">上涨/下跌：${escapeHtml(advanceText)}；领涨股：${escapeHtml(row.leader || "-")} ${Number.isFinite(Number(row.leaderPct)) ? strategyNumber(row.leaderPct, 2, "%") : ""}</p>
+            <div class="table-actions">
+              <button class="small-btn primary" onclick='openSectorBoardDetail(${JSON.stringify(payload)})'>看归因</button>
+              <button class="small-btn" onclick='openSectorBoardHistory(${JSON.stringify(payload)})'>历史明细</button>
+            </div>
+          </article>`;
+        }).join("") || `<div class="date">这些精选板块暂时没有匹配到已开启来源的数据。可以打开来源开关，或清空精选重新选择。</div>`}
+    </div>
+  </section>`;
+}
+
+function openSectorBoardHistory(row = {}) {
+  const name = row.name || row.query || "板块";
+  const snapshots = readSectorSnapshots();
+  const history = snapshots.map((snapshot, index) => {
+    const item = (snapshot.items || []).find(entry => entry.name === name);
+    if (!item) return null;
+    const previous = snapshots[index + 1];
+    const old = previous?.items?.find(entry => entry.name === name);
+    const delta = old ? Number(old.rank) - Number(item.rank) : null;
+    return { snapshot, item, delta };
+  }).filter(Boolean);
+  state.view = "sectorStrength";
+  restoredRenderShell();
+  const payload = { name, code: row.code || "", source: row.source || "", groupChain: row.groupChain || "" };
+  const rows = history.map(({ snapshot, item, delta }) => {
+    const deltaText = delta === null ? "新" : delta > 0 ? `升${delta}` : delta < 0 ? `降${Math.abs(delta)}` : "持平";
+    return `<tr>
+      <td><b>${escapeHtml(snapshot.date)}</b></td>
+      <td>第${item.rank}</td>
+      <td class="${delta === null || delta >= 0 ? "up" : "down"}">${escapeHtml(deltaText)}</td>
+      <td><b>${item.score ?? "-"}</b></td>
+      <td class="${Number(item.pct) >= 0 ? "up" : "down"}">${Number.isFinite(Number(item.pct)) ? strategyNumber(item.pct, 2, "%") : "-"}</td>
+      <td>${Number.isFinite(Number(item.pct60)) ? strategyNumber(item.pct60, 2, "%") : "-"}</td>
+      <td>${item.breadth ?? "-"}</td>
+      <td>${escapeHtml(item.leader || "-")}</td>
+      <td><button class="small-btn" onclick='openSectorSnapshot(${JSON.stringify(snapshot.date)})'>当天全表</button></td>
+    </tr>`;
+  }).join("");
+  document.getElementById("main").innerHTML = `<section class="review-head panel">
+    <div><div class="panel-title">${escapeHtml(name)} 历史明细</div><div class="date">这里专门看这个板块在每日快照里的排名、变化和强弱数据。</div></div>
+    <div class="review-actions"><button class="small-btn primary" onclick='openSectorBoardDetail(${JSON.stringify(payload)})'>看归因</button><button class="small-btn" onclick="renderSectorStrength({ skipFetch: true, scrollToSelected: true })">返回已选对比</button></div>
+  </section>
+  <section class="panel">
+    <div class="stock-table-wrap"><table class="stock-table sector-prof-table"><thead><tr><th>日期</th><th>排名</th><th>变化</th><th>强度</th><th>当日</th><th>60日</th><th>宽度</th><th>领涨股</th><th>操作</th></tr></thead><tbody>${rows || `<tr><td colspan="9"><div class="date">暂无这个板块的历史快照。可以先回填近3月东方财富，或等待每日快照保存。</div></td></tr>`}</tbody></table></div>
+  </section>`;
+}
+
+function scrollToSectorSection(id) {
+  const target = document.getElementById(id);
+  if (!target) return showToast("这个区域还没加载出来，请先刷新板块强弱");
+  target.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function xiaokeSectorQuickNavHtml() {
+  const snapshots = readSectorSnapshots();
+  const meta = readSectorBackfillMeta();
+  const navCard = (color, title, desc, action, actionText) => `<button onclick="${action}" style="text-align:left;border:1px solid ${color};background:linear-gradient(180deg,${color}18,rgba(18,24,31,.86));color:#eef4ff;border-radius:8px;padding:9px 10px;min-height:66px;cursor:pointer">
+    <span style="display:inline-flex;height:20px;align-items:center;padding:0 6px;border-radius:5px;background:${color}2b;border:1px solid ${color};font-size:11px;font-weight:900">${escapeHtml(actionText)}</span>
+    <b style="display:block;margin:6px 0 3px;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(title)}</b>
+    <small style="display:block;color:#aeb6c6;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(desc)}</small>
+  </button>`;
+  return `<section class="panel" style="margin-top:12px;border-color:rgba(255,255,255,.12)">
+    <div class="metadata-head"><div><div class="panel-title">关键操作导航</div><div class="date">这是快速入口，主线判断优先看“轨迹规律”。回填近3月走东方财富接口，不需要打开国信 QMT。</div></div></div>
+    <div style="display:grid;grid-template-columns:repeat(4,minmax(160px,1fr));gap:8px">
+      ${navCard("#19c98b", "查看轨迹规律", "主线、启动、退潮和健康度集中在这里。", "openSectorMovementLab()", "重点")}
+      ${navCard("#f5a623", "回填近3月东方财富", `本地快照 ${snapshots.length} 条；${meta.snapshotCount ? `上次 ${meta.snapshotCount} 天` : "不需要 QMT"}`, "backfillSectorHistorySnapshots(90)", "取历史")}
+      ${navCard("#22c3d6", "板块对比池", "选择市场板块、细分板块或管理分组。", "scrollToSectorSection('sectorComparePool')", "去选择")}
+      ${navCard("#8d5cf6", "查看回填详细数据", "看每个交易日的快照、前5名和完整明细，对比数据都在这里。", "openSectorBackfillDetail()", "看明细")}
+    </div>
+  </section>`;
+}
+
+addCustomSectorBoard = function xiaokeAddCustomSectorBoardV2() {
+  const name = prompt("板块名称，例如：玻纤 / CPO / PCB / MLCC / 小金属 / 广告营销");
+  if (!name) return;
+  const stocks = prompt("输入成分股，逗号或顿号分隔。例如：中国巨石, 中材科技, 长海股份", "");
+  const pct = prompt("今日涨跌幅，可留空。例如：+2.35", "");
+  const rows = restoredCustomSectorBoards();
+  rows.push({ id: Date.now(), name: name.trim(), pct, stocks: stocks || "", children: stocks || "", source: "自定义板块", note: "" });
+  saveRestoredCustomSectorBoards(rows);
+  renderSectorStrength();
+};
+
+editCustomSectorBoard = function xiaokeEditCustomSectorBoardV2(id) {
+  const rows = restoredCustomSectorBoards();
+  const row = rows.find(item => String(item.id) === String(id));
+  if (!row) return;
+  row.name = prompt("板块名称", row.name) || row.name;
+  row.stocks = prompt("成分股，逗号或顿号分隔", row.stocks || row.children || "") ?? (row.stocks || "");
+  row.children = row.stocks;
+  row.pct = prompt("今日涨跌幅", row.pct || "") ?? row.pct;
+  row.source = prompt("来源", row.source || "自定义板块") || row.source;
+  saveRestoredCustomSectorBoards(rows);
+  renderSectorStrength();
+};
+
+function installCommonSectorTemplates() {
+  const rows = restoredCustomSectorBoards();
+  const names = new Set(rows.map(row => row.name));
+  xiaokeCommonSectorTemplates().forEach(template => {
+    if (!names.has(template.name)) rows.push({ id: Date.now() + Math.random(), name: template.name, stocks: template.stocks, children: template.stocks, pct: "", source: "常见细分模板" });
+  });
+  saveRestoredCustomSectorBoards(rows);
+  showToast("已补充 CPO / PCB / MLCC / 小金属 / 广告营销 / 玻纤 等细分板块");
+  renderSectorStrength();
+}
+
+function importCustomSectorBoards() {
+  const target = document.getElementById("sectorStrengthImportPanel") || document.getElementById("sectorStrengthSectorFile");
+  if (target) {
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    showToast("可以在这里选择 Excel/PDF/图片，或粘贴产业链文字自动识别");
+    return;
+  }
+  renderSectorStrength();
+}
+
+function xiaokeCustomSectorFieldId(id, field) {
+  return `customSector_${String(id || "new").replace(/[^a-zA-Z0-9_-]/g, "_")}_${field}`;
+}
+
+function saveCustomSectorBoardFromForm(id = "new") {
+  const name = document.getElementById(xiaokeCustomSectorFieldId(id, "name"))?.value?.trim() || "";
+  const stocks = document.getElementById(xiaokeCustomSectorFieldId(id, "stocks"))?.value?.trim() || "";
+  const source = document.getElementById(xiaokeCustomSectorFieldId(id, "source"))?.value?.trim() || "自定义细分板块";
+  const pct = document.getElementById(xiaokeCustomSectorFieldId(id, "pct"))?.value?.trim() || "";
+  if (!name) return showToast("请先填写板块名称");
+  const rows = restoredCustomSectorBoards();
+  if (String(id) === "new") {
+    rows.push({ id: Date.now(), name, stocks, children: stocks, pct, source });
+  } else {
+    const row = rows.find(item => String(item.id) === String(id));
+    if (!row) return showToast("没有找到这个板块");
+    row.name = name;
+    row.stocks = stocks;
+    row.children = stocks;
+    row.pct = pct;
+    row.source = source;
+  }
+  saveRestoredCustomSectorBoards(rows);
+  showToast("细分板块已保存，并纳入整体对比");
+  renderSectorStrength();
+}
+
+function deleteCustomSectorBoard(id) {
+  if (!confirm("删除这个自定义细分板块？管理分组里的产业链不会受影响。")) return;
+  saveRestoredCustomSectorBoards(restoredCustomSectorBoards().filter(row => String(row.id) !== String(id)));
+  renderSectorStrength();
+}
+
+function syncWatchGroupsToSectorStrength() {
+  showToast("管理分组产业链已自动纳入板块强弱和轨迹对比");
+  renderSectorStrength();
+}
+
+function xiaokeCustomSectorEditorHtml(customBoards = [], syncedGroups = []) {
+  const newId = "new";
+  const card = row => {
+    const id = row.id;
+    const stocks = row.stocks || row.children || "";
+    return `<article class="sector-rank-card">
+      <div class="sector-rank-head"><b>${escapeHtml(row.name || "未命名板块")}</b><span>${xiaokeSplitStockNames(stocks).length}只</span></div>
+      <label class="date">板块名称<input id="${xiaokeCustomSectorFieldId(id, "name")}" class="modal-select" value="${escapeHtml(row.name || "")}"></label>
+      <label class="date">成分股<textarea id="${xiaokeCustomSectorFieldId(id, "stocks")}" class="strategy-textarea" style="min-height:82px">${escapeHtml(stocks)}</textarea></label>
+      <label class="date">来源<input id="${xiaokeCustomSectorFieldId(id, "source")}" class="modal-select" value="${escapeHtml(row.source || "自定义细分板块")}"></label>
+      <label class="date">手动涨跌幅，可留空<input id="${xiaokeCustomSectorFieldId(id, "pct")}" class="modal-select" value="${escapeHtml(row.pct || "")}"></label>
+      <div class="review-actions" style="justify-content:flex-start;margin-top:8px">
+        <button class="small-btn primary" onclick="saveCustomSectorBoardFromForm(${JSON.stringify(id)})">保存</button>
+        <button class="small-btn" onclick='openSectorBoardDetail(${JSON.stringify({ name: row.name, source: row.source || "自定义细分板块" })})'>看归因</button>
+        <button class="small-btn danger-btn" onclick="deleteCustomSectorBoard(${JSON.stringify(id)})">删除</button>
+      </div>
+    </article>`;
+  };
+  return `<section class="panel" style="margin-top:12px">
+    <details open>
+    <summary style="cursor:pointer;font-weight:900;color:#dce6f5">
+      <span style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:5px;background:rgba(25,201,139,.16);border:1px solid rgba(25,201,139,.38);color:#a8f5d4;margin-right:6px">绿色新增</span>
+      <span style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:5px;background:rgba(245,166,35,.16);border:1px solid rgba(245,166,35,.38);color:#ffd07a;margin-right:6px">金色导入</span>
+      <span style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:5px;background:rgba(60,130,246,.16);border:1px solid rgba(60,130,246,.38);color:#a9c8ff;margin-right:6px">蓝色同步</span>
+      板块池管理
+    </summary>
+    <div class="metadata-head">
+      <div>
+        <div class="panel-title">我的细分板块 / 自定义股票池</div>
+        <div class="date">自定义细分和管理分组产业链都会纳入上方整体板块强度榜、历史快照和轨迹规律。东方财富没有的 CPO、PCB、MLCC、玻纤等，可以在这里维护。</div>
+      </div>
+      <div class="review-actions">
+        <button class="small-btn" style="border-color:rgba(25,201,139,.45);color:#a8f5d4" onclick="installCommonSectorTemplates()">补常见细分</button>
+        <button class="small-btn" style="border-color:rgba(60,130,246,.45);color:#a9c8ff" onclick="syncWatchGroupsToSectorStrength()">同步管理分组</button>
+        <button class="small-btn" style="border-color:rgba(245,166,35,.45);color:#ffd07a" onclick="importCustomSectorBoards()">导入图片/PDF/表格</button>
+      </div>
+    </div>
+    <div class="sector-rank-grid">
+      <article class="sector-rank-card" style="border-color:rgba(25,201,139,.45);box-shadow:inset 3px 0 0 rgba(25,201,139,.75)">
+        <div class="sector-rank-head"><b>新增细分板块</b><span>直接编辑</span></div>
+        <label class="date">板块名称<input id="${xiaokeCustomSectorFieldId(newId, "name")}" class="modal-select" placeholder="例如：玻纤 / CPO / PCB"></label>
+        <label class="date">成分股<textarea id="${xiaokeCustomSectorFieldId(newId, "stocks")}" class="strategy-textarea" style="min-height:82px" placeholder="例如：中国巨石, 中材科技, 长海股份"></textarea></label>
+        <label class="date">来源<input id="${xiaokeCustomSectorFieldId(newId, "source")}" class="modal-select" value="自定义细分板块"></label>
+        <label class="date">手动涨跌幅，可留空<input id="${xiaokeCustomSectorFieldId(newId, "pct")}" class="modal-select" placeholder="+2.35"></label>
+        <button class="small-btn primary" onclick="saveCustomSectorBoardFromForm('new')">新增并纳入对比</button>
+      </article>
+      ${customBoards.map(card).join("")}
+    </div>
+    <section id="sectorStrengthImportPanel" style="margin-top:12px;border:1px solid rgba(245,166,35,.35);border-radius:8px;padding:10px;background:rgba(245,166,35,.045)">${sectorImportPanelHtml("sectorStrength")}</section>
+    <section class="panel" style="margin-top:12px;border-color:rgba(141,92,246,.35);background:rgba(141,92,246,.045)">
+      <div class="metadata-head"><div><div class="panel-title"><span style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:5px;background:rgba(141,92,246,.18);border:1px solid rgba(141,92,246,.45);color:#e5d8ff;margin-right:8px">紫色同步区</span>已同步的管理分组产业链</div><div class="date">这些来自“管理分组”，不用重复导入；新增或修改管理分组后刷新板块强弱即可自动进入对比。</div></div><button class="small-btn" onclick="openVideoGroupManager()">去管理分组</button></div>
+      <div class="sector-rank-grid">${syncedGroups.slice(0, 18).map(row => `<article class="sector-rank-card"><div class="sector-rank-head"><b>${escapeHtml(row.name)}</b><span>${escapeHtml(row.source)}</span></div><p>${escapeHtml([row.leader, row.upCount != null ? `上涨${row.upCount}` : "", row.downCount != null ? `下跌${row.downCount}` : ""].filter(Boolean).join(" · ") || "管理分组产业链")}</p><button class="small-btn" onclick='openSectorBoardDetail(${JSON.stringify({ name: row.name, source: row.source })})'>看归因</button></article>`).join("") || '<div class="date">管理分组里暂无可同步产业链。</div>'}</div>
+    </section>
+    </details>
+  </section>`;
+}
+
+function xiaokeLocalSectorStocks(name = "", hint = "") {
+  const key = String(name || "").replace(/概念|板块|指数|ETF/g, "");
+  const custom = restoredCustomSectorBoards().filter(row => row.name === name || row.name.includes(key) || key.includes(row.name)).flatMap(xiaokeCustomBoardStocks);
+  const groups = [];
+  if (typeof readWatchGroups === "function" && typeof walkWatchGroups === "function") {
+    const hintText = String(hint || "");
+    walkWatchGroups(readWatchGroups(), (group, path, parents) => {
+      const chain = parents.concat(group.name).join(" / ");
+      const haystack = [group.name, chain, hintText].join(" ");
+      const matched = group.name === name
+        || chain === name
+        || haystack.includes(key)
+        || (hintText && chain.includes(hintText.replace(/^管理分组产业链[:：]?/, "")))
+        || (key && key.includes(String(group.name || "").replace(/概念|板块|指数|ETF/g, "")));
+      if (!matched) return;
+      groups.push(...groupStockItems(group).map(item => ({ ...item, source: `管理分组：${chain}` })));
+    });
+  }
+  const watchMatches = (typeof flattenWatchlist === "function" ? flattenWatchlist() : [])
+    .filter(item => [item.sector, item.group, item.groupChain, item.desc, item.name].some(value => String(value || "").includes(key)));
+  const seen = new Set();
+  return [...custom, ...groups, ...watchMatches].filter(item => {
+    const id = item.quoteKey || item.name;
+    if (!id || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
+function xiaokeStockRowsHtml(items = []) {
+  if (!items.length) return `<div class="empty-state"><b>没有成分股</b><p>可以点“导入板块”手动维护这个细分方向的股票池。</p></div>`;
+  return `<div class="stock-table-wrap"><table class="stock-table sector-prof-table"><thead><tr><th>序号</th><th>股票</th><th>代码</th><th>涨跌幅</th><th>成交额</th><th>来源/备注</th><th>操作</th></tr></thead><tbody>${items.map((item, index) => {
+    const quote = item.quoteKey ? (state.indexQuotes[item.quoteKey] || state.indexQuotes[item.name] || item) : item;
+    const pct = Number(item.pct ?? quote.pct);
+    return `<tr><td>${index + 1}</td><td><b>${escapeHtml(item.name || "-")}</b></td><td>${escapeHtml(item.quoteKey || xiaokeQuoteKeyFromCode(item.code) || item.code || "-")}</td><td class="${Number.isFinite(pct) && pct >= 0 ? "up" : "down"}">${Number.isFinite(pct) ? strategyNumber(pct, 2, "%") : "-"}</td><td>${item.amount ? strategyNumber(Number(item.amount) / 100000000, 1, "亿") : "-"}</td><td>${escapeHtml(item.source || item.sector || "")}</td><td><button class="small-btn" onclick='openStockProfileEditor(${JSON.stringify({ name: item.name || "", key: item.quoteKey || xiaokeQuoteKeyFromCode(item.code) || "", sector: item.sector || "" })})'>档案</button></td></tr>`;
+  }).join("")}</tbody></table></div>`;
+}
+
+function xiaokeCompactStockListHtml(rows = [], mode = "driver") {
+  if (!rows.length) return `<div class="date">暂无可显示股票。</div>`;
+  return `<div class="sector-mini-stock-list">${rows.map(item => {
+    const pct = Number(item.pctNumber ?? item.pct);
+    const amount = Number(item.amountNumber ?? item.amount);
+    const net = Number(item.netNumber ?? item.mainNetInflow);
+    const note = mode === "active"
+      ? `成交 ${xiaokeSectorMoneyText(amount)}`
+      : Number.isFinite(net) && net !== 0 ? `净流 ${xiaokeSectorMoneyText(net)}` : (item.source || item.sector || "");
+    return `<button onclick='openStockProfileEditor(${JSON.stringify({ name: item.name || "", key: item.quoteKey || xiaokeQuoteKeyFromCode(item.code) || "", sector: item.sector || "" })})'>
+      <b>${escapeHtml(item.name || "-")}</b>
+      <span class="${Number.isFinite(pct) && pct >= 0 ? "up" : "down"}">${escapeHtml(xiaokeSectorSignedPct(pct, 2))}</span>
+      <em>${escapeHtml(note || "-")}</em>
+    </button>`;
+  }).join("")}</div>`;
+}
+
+function xiaokeSectorMoneyText(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number === 0) return "-";
+  return strategyNumber(number / 100000000, 2, "亿");
+}
+
+function xiaokeSectorAmountWeight(value) {
+  const number = Math.max(0, Number(value) || 0);
+  return number > 0 ? Math.log10(number / 1000000 + 1) : 0;
+}
+
+function xiaokeSectorAttributionStats(remote = []) {
+  const quoted = (remote || []).map((item, index) => ({
+    ...item,
+    index,
+    pctNumber: Number(item.pct),
+    amountNumber: Number(item.amount),
+    netNumber: Number(item.mainNetInflow)
+  })).filter(item => Number.isFinite(item.pctNumber));
+  const up = quoted.filter(item => item.pctNumber > 0);
+  const down = quoted.filter(item => item.pctNumber < 0);
+  const flatCount = Math.max(0, (remote || []).length - up.length - down.length);
+  const amountLeaders = quoted.slice().filter(item => Number.isFinite(item.amountNumber)).sort((a, b) => b.amountNumber - a.amountNumber).slice(0, 12);
+  const amountLeaderCodes = new Set(amountLeaders.map(item => item.code || item.name));
+  const allDriverRows = up.map(item => {
+    const amountWeight = xiaokeSectorAmountWeight(item.amountNumber);
+    const netWeight = item.netNumber > 0 ? xiaokeSectorAmountWeight(item.netNumber) : 0;
+    return { ...item, driverScore: item.pctNumber * Math.max(1, amountWeight) + netWeight };
+  }).sort((a, b) => b.driverScore - a.driverScore || b.pctNumber - a.pctNumber);
+  const driverTotal = allDriverRows.reduce((sum, item) => sum + Math.max(0, Number(item.driverScore) || 0), 0);
+  const top1Share = driverTotal > 0 ? Math.round(Math.max(0, Number(allDriverRows[0]?.driverScore) || 0) / driverTotal * 100) : null;
+  const top3Share = driverTotal > 0 ? Math.round(allDriverRows.slice(0, 3).reduce((sum, item) => sum + Math.max(0, Number(item.driverScore) || 0), 0) / driverTotal * 100) : null;
+  const concentration = {
+    top1Share,
+    top3Share,
+    label: top3Share === null ? "暂无" : top1Share >= 55 ? "单点过重" : top3Share >= 70 ? "龙头集中" : top3Share >= 45 ? "适度集中" : "扩散较好",
+    cls: top3Share === null ? "neutral" : top1Share >= 55 ? "warn" : top3Share >= 70 ? "diverge" : top3Share >= 45 ? "healthy" : "strong"
+  };
+  const driverRows = allDriverRows.slice(0, 10);
+  const dragRows = down.map(item => {
+    const amountWeight = xiaokeSectorAmountWeight(item.amountNumber);
+    const netWeight = item.netNumber < 0 ? xiaokeSectorAmountWeight(Math.abs(item.netNumber)) : 0;
+    return { ...item, dragScore: Math.abs(item.pctNumber) * Math.max(1, amountWeight) + netWeight };
+  }).sort((a, b) => b.dragScore - a.dragScore || a.pctNumber - b.pctNumber).slice(0, 10);
+  const netInflowRows = quoted.slice().filter(item => Number.isFinite(item.netNumber)).sort((a, b) => b.netNumber - a.netNumber).slice(0, 8);
+  const medianPct = quoted.length ? quoted.slice().sort((a, b) => a.pctNumber - b.pctNumber)[Math.floor(quoted.length / 2)].pctNumber : null;
+  return {
+    quoted,
+    upCount: up.length,
+    downCount: down.length,
+    flatCount,
+    upRate: quoted.length ? Math.round(up.length / quoted.length * 100) : null,
+    medianPct,
+    leader: driverRows[0] || up.slice().sort((a, b) => b.pctNumber - a.pctNumber)[0] || null,
+    laggard: dragRows[0] || down.slice().sort((a, b) => a.pctNumber - b.pctNumber)[0] || null,
+    driverRows,
+    dragRows,
+    amountLeaders,
+    amountLeaderCodes,
+    concentration,
+    netInflowRows,
+    netInflowTotal: quoted.reduce((sum, item) => Number.isFinite(item.netNumber) ? sum + item.netNumber : sum, 0)
+  };
+}
+
+function readSectorAttributionSnapshots() {
+  try {
+    const rows = JSON.parse(localStorage.getItem(XIAOKE_SECTOR_ATTRIBUTION_SNAPSHOTS_KEY) || "[]");
+    return Array.isArray(rows)
+      ? rows.filter(item => item && (item.code || item.name) && item.date)
+        .sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.at || "").localeCompare(String(a.at || "")))
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeSectorAttributionSnapshots(rows = []) {
+  const cleanRows = (rows || []).filter(item => item && (item.code || item.name) && item.date).slice(0, 360);
+  localStorage.setItem(XIAOKE_SECTOR_ATTRIBUTION_SNAPSHOTS_KEY, JSON.stringify(cleanRows));
+  return cleanRows;
+}
+
+function xiaokeAttributionStockSnapshot(item = {}) {
+  if (!item) return null;
+  return {
+    name: item.name || "",
+    code: item.code || "",
+    pct: Number.isFinite(Number(item.pctNumber ?? item.pct)) ? Number(item.pctNumber ?? item.pct) : null,
+    amount: Number.isFinite(Number(item.amountNumber ?? item.amount)) ? Number(item.amountNumber ?? item.amount) : null,
+    mainNetInflow: Number.isFinite(Number(item.netNumber ?? item.mainNetInflow)) ? Number(item.netNumber ?? item.mainNetInflow) : null
+  };
+}
+
+function saveSectorAttributionSnapshot(row = {}, remote = [], local = [], analysis = null) {
+  const stats = xiaokeSectorAttributionStats(remote);
+  if (!stats.quoted.length) return null;
+  const current = analysis?.current || row;
+  const code = String(row.code || current.code || "").trim().toUpperCase();
+  const name = row.name || analysis?.name || current.name || "";
+  const date = todayString();
+  const key = code || name;
+  if (!key || !name) return null;
+  const snapshot = {
+    id: `${date}_${key}`,
+    date,
+    at: new Date().toISOString(),
+    name,
+    code,
+    source: row.source || current.source || "东方财富板块成分",
+    bucket: analysis?.bucket || "",
+    rank: analysis?.currentRank || row.rank || current.rank || null,
+    motionScore: analysis?.motionScore ?? null,
+    top10Count: analysis?.top10Count ?? null,
+    top25Count: analysis?.top25Count ?? null,
+    pct: Number.isFinite(Number(current.pct ?? row.pct)) ? Number(current.pct ?? row.pct) : null,
+    pct60: Number.isFinite(Number(current.pct60 ?? row.pct60)) ? Number(current.pct60 ?? row.pct60) : null,
+    remoteCount: remote.length,
+    localCount: local.length,
+    upCount: stats.upCount,
+    downCount: stats.downCount,
+    flatCount: stats.flatCount,
+    upRate: stats.upRate,
+    medianPct: Number.isFinite(Number(stats.medianPct)) ? Number(stats.medianPct) : null,
+    netInflowTotal: Number.isFinite(Number(stats.netInflowTotal)) ? Number(stats.netInflowTotal) : null,
+    concentration: stats.concentration || null,
+    leader: xiaokeAttributionStockSnapshot(stats.leader),
+    laggard: xiaokeAttributionStockSnapshot(stats.laggard),
+    drivers: stats.driverRows.slice(0, 8).map(xiaokeAttributionStockSnapshot).filter(Boolean),
+    drags: stats.dragRows.slice(0, 8).map(xiaokeAttributionStockSnapshot).filter(Boolean),
+    active: stats.amountLeaders.slice(0, 8).map(xiaokeAttributionStockSnapshot).filter(Boolean)
+  };
+  const rows = readSectorAttributionSnapshots();
+  const nextRows = [snapshot, ...rows.filter(item => !(item.date === date && ((code && item.code === code) || (!code && item.name === name))))];
+  return writeSectorAttributionSnapshots(nextRows)[0];
+}
+
+function xiaokeAttributionSnapshotMatches(snapshot = {}, row = {}) {
+  const code = String(row.code || row.current?.code || "").trim().toUpperCase();
+  const name = String(row.name || row.current?.name || "").trim();
+  return Boolean((code && String(snapshot.code || "").toUpperCase() === code) || (name && snapshot.name === name));
+}
+
+function xiaokeSnapshotNames(rows = [], limit = 3) {
+  return (rows || []).slice(0, limit).map(item => item?.name).filter(Boolean);
+}
+
+function xiaokeClampNumber(value, min, max) {
+  return Math.max(min, Math.min(max, Number(value) || 0));
+}
+
+function xiaokePreviousAttributionSnapshot(snapshot = {}, rows = readSectorAttributionSnapshots()) {
+  const key = String(snapshot.code || snapshot.name || "").toUpperCase();
+  if (!key || !snapshot.date) return null;
+  return (rows || []).find(item => {
+    const itemKey = String(item.code || item.name || "").toUpperCase();
+    return itemKey === key && item.id !== snapshot.id && String(item.date || "") < String(snapshot.date || "");
+  }) || (rows || []).find(item => {
+    const itemKey = String(item.code || item.name || "").toUpperCase();
+    return itemKey === key && item.id !== snapshot.id;
+  }) || null;
+}
+
+function xiaokeSectorAttributionHealth(latest = {}, previous = null) {
+  if (!latest) return { score: 0, label: "暂无评分", cls: "neutral", reasons: ["缺少归因快照"], widthDelta: null, keptDrivers: [], newDrivers: [] };
+  const reasons = [];
+  let score = 50;
+  const rank = Number(latest.rank);
+  if (Number.isFinite(rank)) {
+    if (rank <= 3) { score += 12; reasons.push("排名前3"); }
+    else if (rank <= 10) { score += 8; reasons.push("前10主线区"); }
+    else if (rank <= 25) { score += 3; reasons.push("前25跟随区"); }
+    else { score -= 10; reasons.push("排名偏后"); }
+  }
+  const bucket = String(latest.bucket || "");
+  if (bucket.includes("主线")) score += 10;
+  else if (bucket.includes("次主线")) score += 5;
+  else if (bucket.includes("退潮")) score -= 18;
+  const upRate = Number(latest.upRate);
+  if (Number.isFinite(upRate)) {
+    if (upRate >= 80) { score += 16; reasons.push(`宽度${upRate}%强扩散`); }
+    else if (upRate >= 65) { score += 10; reasons.push(`宽度${upRate}%健康`); }
+    else if (upRate >= 50) { score += 3; reasons.push(`宽度${upRate}%一般`); }
+    else { score -= 12; reasons.push(`宽度${upRate}%偏弱`); }
+  }
+  const widthDelta = previous && Number.isFinite(Number(latest.upRate)) && Number.isFinite(Number(previous.upRate))
+    ? Number(latest.upRate) - Number(previous.upRate)
+    : null;
+  if (widthDelta !== null) {
+    if (widthDelta >= 15) { score += 15; reasons.push(`宽度扩散${widthDelta}%`); }
+    else if (widthDelta >= 5) { score += 8; reasons.push(`宽度扩散${widthDelta}%`); }
+    else if (widthDelta <= -15) { score -= 18; reasons.push(`宽度收缩${Math.abs(widthDelta)}%`); }
+    else if (widthDelta <= -5) { score -= 10; reasons.push(`宽度收缩${Math.abs(widthDelta)}%`); }
+    else reasons.push("宽度基本持平");
+  } else {
+    reasons.push("首次归因基线");
+  }
+  const driverNames = xiaokeSnapshotNames(latest.drivers || [], 8);
+  const previousDriverNames = new Set(xiaokeSnapshotNames(previous?.drivers || [], 8));
+  const keptDrivers = driverNames.filter(name => previousDriverNames.has(name));
+  const newDrivers = driverNames.filter(name => !previousDriverNames.has(name));
+  if (previous && keptDrivers.length >= 2) { score += 10; reasons.push(`贡献延续${keptDrivers.length}只`); }
+  else if (previous && keptDrivers.length === 1) { score += 5; reasons.push("贡献有延续"); }
+  if (previous && newDrivers.length >= 3 && (widthDelta === null || widthDelta >= 0)) { score += 5; reasons.push("贡献股轮动扩散"); }
+  if (previous && newDrivers.length >= 3 && widthDelta !== null && widthDelta < 0) { score -= 4; reasons.push("收缩中轮动"); }
+  const top1Share = Number(latest.concentration?.top1Share);
+  const top3Share = Number(latest.concentration?.top3Share);
+  if (Number.isFinite(top1Share) && top1Share >= 55) {
+    score -= 8;
+    reasons.push("贡献单点过重");
+  } else if (Number.isFinite(top3Share) && top3Share <= 45 && Number.isFinite(upRate) && upRate >= 60) {
+    score += 5;
+    reasons.push("贡献扩散较好");
+  }
+  const downCount = Number(latest.downCount);
+  const prevDown = Number(previous?.downCount);
+  if (Number.isFinite(downCount) && Number.isFinite(prevDown)) {
+    if (downCount - prevDown >= 5) { score -= 10; reasons.push("下跌家数扩大"); }
+    else if (downCount < prevDown) { score += 4; reasons.push("下跌家数减少"); }
+  }
+  if ((latest.drags || []).length >= 4 && Number.isFinite(upRate) && upRate < 60) {
+    score -= 6;
+    reasons.push("拖累股偏多");
+  }
+  const finalScore = Math.round(xiaokeClampNumber(score, 0, 100));
+  let label = "正常分歧";
+  let cls = "neutral";
+  if (finalScore >= 82 && (widthDelta === null || widthDelta >= 5)) { label = "强扩散"; cls = "strong"; }
+  else if (finalScore >= 72) { label = "健康轮动"; cls = "healthy"; }
+  else if (finalScore >= 58) { label = "正常分歧"; cls = "neutral"; }
+  else if (finalScore >= 42) { label = "分歧加大"; cls = "diverge"; }
+  else { label = "退潮预警"; cls = "warn"; }
+  return { score: finalScore, label, cls, reasons: reasons.slice(0, 5), widthDelta, keptDrivers, newDrivers };
+}
+
+function xiaokeSectorHealthBadgeHtml(health = {}) {
+  return `<span class="sector-health-badge ${escapeHtml(health.cls || "neutral")}">${escapeHtml(health.label || "暂无评分")} · ${escapeHtml(health.score ?? "-")}</span>`;
+}
+
+function xiaokeSectorLiveAttributionHealth(stats = {}, context = {}) {
+  if (!stats || !Array.isArray(stats.quoted) || !stats.quoted.length) {
+    return { score: 0, label: "待归因", cls: "neutral", reasons: ["成分接口未返回有效涨跌"], widthDelta: null, keptDrivers: [], newDrivers: [] };
+  }
+  return xiaokeSectorAttributionHealth({
+    rank: context.currentRank || context.rank || null,
+    pct: context.pct ?? context.current?.pct ?? null,
+    upRate: stats.upRate,
+    upCount: stats.upCount,
+    downCount: stats.downCount,
+    concentration: stats.concentration,
+    drivers: stats.driverRows.slice(0, 8).map(xiaokeAttributionStockSnapshot).filter(Boolean),
+    drags: stats.dragRows.slice(0, 8).map(xiaokeAttributionStockSnapshot).filter(Boolean)
+  }, null);
+}
+
+function xiaokeSectorAttributionHistoryHtml(row = {}, currentSnapshot = null) {
+  const rows = readSectorAttributionSnapshots().filter(item => xiaokeAttributionSnapshotMatches(item, row));
+  const latest = currentSnapshot || rows[0] || null;
+  const previous = rows.find(item => latest && item.id !== latest.id && item.date < latest.date) || rows.find(item => latest && item.id !== latest.id) || null;
+  if (!latest) {
+    return `<section class="panel sector-attribution-history" style="margin-top:12px"><div class="metadata-head"><div><div class="panel-title">归因快照</div><div class="date">暂无归因快照；打开标准板块归因后会自动保存。</div></div></div></section>`;
+  }
+  const widthDelta = previous && Number.isFinite(Number(latest.upRate)) && Number.isFinite(Number(previous.upRate))
+    ? Number(latest.upRate) - Number(previous.upRate)
+    : null;
+  const driverNames = xiaokeSnapshotNames(latest.drivers, 5);
+  const previousDrivers = new Set(xiaokeSnapshotNames(previous?.drivers || [], 8));
+  const newDrivers = driverNames.filter(name => !previousDrivers.has(name));
+  const keptDrivers = driverNames.filter(name => previousDrivers.has(name));
+  const health = xiaokeSectorAttributionHealth(latest, previous);
+  const badge = `${health.label} · ${health.score}`;
+  return `<section class="panel sector-attribution-history" style="margin-top:12px">
+    <div class="metadata-head"><div><div class="panel-title">每日归因快照</div><div class="date">这个板块的归因结果已保存，后续可对比主线是扩散、轮动还是收缩。</div></div><span class="video-group-badge">${escapeHtml(badge)}</span></div>
+    <div class="sector-attribution-history-grid">
+      <article class="health-${escapeHtml(health.cls)}"><span>主线健康度</span><b>${escapeHtml(health.score)}</b><small>${escapeHtml([health.label, ...health.reasons.slice(0, 2)].join(" · "))}</small></article>
+      <article><span>最新日期</span><b>${escapeHtml(latest.date)}</b><small>${escapeHtml(latest.bucket || "归因记录")}</small></article>
+      <article><span>宽度变化</span><b class="${widthDelta === null || widthDelta >= 0 ? "up" : "down"}">${escapeHtml(widthDelta === null ? "-" : `${widthDelta > 0 ? "+" : ""}${widthDelta}%`)}</b><small>${escapeHtml(previous ? `${previous.date} 对比` : "暂无前次")}</small></article>
+      <article><span>核心贡献</span><b>${escapeHtml(driverNames.slice(0, 3).join("、") || "-")}</b><small>${escapeHtml(keptDrivers.length ? `延续：${keptDrivers.join("、")}` : newDrivers.length ? `新贡献：${newDrivers.join("、")}` : "暂无变化")}</small></article>
+      <article><span>贡献集中度</span><b>${escapeHtml(latest.concentration?.top3Share == null ? "-" : latest.concentration.top3Share + "%")}</b><small>${escapeHtml(latest.concentration?.label || "暂无")}</small></article>
+      <article><span>拖累分歧</span><b>${escapeHtml(xiaokeSnapshotNames(latest.drags, 3).join("、") || "-")}</b><small>观察是否扩大到更多成分股</small></article>
+    </div>
+    <div class="stock-table-wrap" style="margin-top:10px"><table class="stock-table sector-prof-table"><thead><tr><th>日期</th><th>健康度</th><th>位置</th><th>宽度</th><th>集中度</th><th>核心贡献</th><th>拖累</th><th>活跃成分</th></tr></thead><tbody>${rows.slice(0, 8).map(item => { const prev = xiaokePreviousAttributionSnapshot(item, rows); const itemHealth = xiaokeSectorAttributionHealth(item, prev); return `<tr><td><b>${escapeHtml(item.date)}</b></td><td>${xiaokeSectorHealthBadgeHtml(itemHealth)}</td><td>${escapeHtml(item.rank ? `第${item.rank}` : "-")}<div class="date">${escapeHtml(item.bucket || "")}</div></td><td>${escapeHtml(item.upRate == null ? "-" : item.upRate + "%")}<div class="date">涨${item.upCount}/跌${item.downCount}</div></td><td>${escapeHtml(item.concentration?.top3Share == null ? "-" : item.concentration.top3Share + "%")}<div class="date">${escapeHtml(item.concentration?.label || "")}</div></td><td>${escapeHtml(xiaokeSnapshotNames(item.drivers, 3).join("、") || "-")}</td><td>${escapeHtml(xiaokeSnapshotNames(item.drags, 3).join("、") || "-")}</td><td>${escapeHtml(xiaokeSnapshotNames(item.active, 3).join("、") || "-")}</td></tr>`; }).join("")}</tbody></table></div>
+  </section>`;
+}
+
+function xiaokeFindSectorAnalysisRow(row = {}, name = "") {
+  const code = String(row.code || row.current?.code || "").trim().toUpperCase();
+  const targetName = String(name || row.name || row.current?.name || "").trim();
+  const currentRows = (window.xiaokeSectorMergedRowsCache || []).length
+    ? window.xiaokeSectorMergedRowsCache
+    : (readSectorSnapshots()[0]?.items || []);
+  const analysisRows = typeof xiaokeSectorAnalysisRows === "function" ? xiaokeSectorAnalysisRows(currentRows) : [];
+  return analysisRows.find(item => {
+    const current = item.current || {};
+    const itemCode = String(item.code || current.code || "").trim().toUpperCase();
+    if (code && itemCode === code) return true;
+    if (targetName && (item.name === targetName || current.name === targetName)) return true;
+    const localNames = current.localNames || item.localNames || [];
+    return targetName && Array.isArray(localNames) && localNames.includes(targetName);
+  }) || null;
+}
+
+function xiaokeSectorAttributionReason(item = {}, stats = {}) {
+  const reasons = [];
+  if (item.pctNumber >= 9.8) reasons.push("接近/达到涨停强度");
+  else if (item.pctNumber >= 5) reasons.push("涨幅靠前");
+  if (stats.amountLeaderCodes?.has(item.code || item.name)) reasons.push("成交活跃");
+  if (Number(item.netNumber) > 0) reasons.push("主力净流入");
+  return reasons.join("、") || "涨幅贡献";
+}
+
+function xiaokeSectorAttributionRowsHtml(rows = [], stats = {}, mode = "driver") {
+  if (!rows.length) return `<div class="empty-state"><b>暂无可排序股票</b><p>东方财富成分股没有返回有效涨跌或成交字段。</p></div>`;
+  const reasonHead = mode === "drag" ? "拖累点" : mode === "active" ? "活跃点" : "贡献点";
+  return `<div class="stock-table-wrap"><table class="stock-table sector-prof-table"><thead><tr><th>股票</th><th>涨跌幅</th><th>成交额</th><th>主力净流入</th><th>${reasonHead}</th><th>操作</th></tr></thead><tbody>${rows.map(item => {
+    const pctClass = item.pctNumber >= 0 ? "up" : "down";
+    const reason = mode === "drag"
+      ? [item.pctNumber <= -5 ? "跌幅较深" : "下跌拖累", stats.amountLeaderCodes?.has(item.code || item.name) ? "成交活跃" : "", Number(item.netNumber) < 0 ? "主力净流出" : ""].filter(Boolean).join("、")
+      : mode === "active"
+      ? [item.pctNumber >= 0 ? "上涨活跃" : "下跌活跃", "成交额靠前", Number(item.netNumber) > 0 ? "主力净流入" : Number(item.netNumber) < 0 ? "主力净流出" : ""].filter(Boolean).join("、")
+      : xiaokeSectorAttributionReason(item, stats);
+    return `<tr>
+      <td><b>${escapeHtml(item.name || "-")}</b><div class="date">${escapeHtml(item.code || item.quoteKey || "")}</div></td>
+      <td class="${pctClass}">${escapeHtml(xiaokeSectorSignedPct(item.pctNumber, 2))}</td>
+      <td>${escapeHtml(xiaokeSectorMoneyText(item.amountNumber))}</td>
+      <td class="${Number(item.netNumber) >= 0 ? "up" : "down"}">${escapeHtml(xiaokeSectorMoneyText(item.netNumber))}</td>
+      <td>${escapeHtml(reason || "-")}</td>
+      <td><button class="small-btn" onclick='openStockProfileEditor(${JSON.stringify({ name: item.name || "", key: item.quoteKey || xiaokeQuoteKeyFromCode(item.code) || "", sector: item.sector || "" })})'>档案</button></td>
+    </tr>`;
+  }).join("")}</tbody></table></div>`;
+}
+
+function xiaokeSectorInlineDrawerHtml(row = {}, remote = [], local = [], warning = "") {
+  const stats = xiaokeSectorAttributionStats(remote);
+  const liveHealth = xiaokeSectorLiveAttributionHealth(stats, row);
+  const widthText = stats.upRate === null ? "无成分宽度" : `上涨 ${stats.upCount} / 下跌 ${stats.downCount}，上涨率 ${stats.upRate}%`;
+  const driverText = stats.leader ? `${stats.leader.name} ${xiaokeSectorSignedPct(stats.leader.pctNumber, 2)}` : "-";
+  const dragText = stats.laggard ? `${stats.laggard.name} ${xiaokeSectorSignedPct(stats.laggard.pctNumber, 2)}` : "-";
+  const concentrationText = stats.concentration?.top3Share == null ? "暂无集中度" : `${stats.concentration.label} · 前3贡献${stats.concentration.top3Share}%`;
+  if (!remote.length && !local.length) {
+    return `<div class="sector-card-drawer-inner">
+      <div class="sector-card-drawer-head"><b>${escapeHtml(row.name || "板块")} 成分股明细</b><span>暂不可用</span></div>
+      <div class="strategy-cache-warning">${escapeHtml(warning || "东方财富成分接口暂不可用，当前没有本地样本可展示。")}</div>
+      <div class="date">建议：标准板块稍后重试；细分板块可先在“板块池管理”维护样本股，之后这里会直接展示。</div>
+      <div class="review-actions" style="justify-content:flex-start;margin-top:10px">
+        <button class="small-btn" onclick="addCustomSectorBoard()">维护样本</button>
+        <button class="small-btn" onclick='openSectorBoardDetail(${JSON.stringify({ name: row.name || "", code: row.code || "", source: row.source || "", groupChain: row.groupChain || "" })})'>打开完整归因</button>
+      </div>
+    </div>`;
+  }
+  if (!remote.length && local.length) {
+    return `<div class="sector-card-drawer-inner">
+      <div class="sector-card-drawer-head"><b>${escapeHtml(row.name || "板块")} 本地样本</b><span>未匹配东方财富成分</span></div>
+      <div class="strategy-cache-warning">这个板块暂时没有东方财富 BK 成分股，只显示你维护的本地样本；不能代表全市场板块。</div>
+      ${xiaokeCompactStockListHtml(local.slice(0, 12), "local")}
+    </div>`;
+  }
+  return `<div class="sector-card-drawer-inner">
+    <div class="sector-card-drawer-head"><b>${escapeHtml(row.name || "板块")} 成分股明细</b><span>${remote.length ? `东方财富成分 ${remote.length} 只` : "暂无成分"}</span></div>
+    ${warning ? `<div class="strategy-cache-warning">${escapeHtml(warning)}</div>` : ""}
+    <div class="sector-inline-summary">
+      <div><span>内部健康度</span><b>${escapeHtml(liveHealth.score || "-")}</b><small>${escapeHtml([liveHealth.label, ...liveHealth.reasons.slice(0, 1)].join(" · "))}</small></div>
+      <div><span>内部宽度</span><b>${escapeHtml(stats.upRate === null ? "-" : stats.upRate + "%")}</b><small>${escapeHtml(widthText)}</small></div>
+      <div><span>核心贡献</span><b>${escapeHtml(driverText)}</b><small>涨幅 × 成交活跃度</small></div>
+      <div><span>贡献集中度</span><b>${escapeHtml(stats.concentration?.top3Share == null ? "-" : stats.concentration.top3Share + "%")}</b><small>${escapeHtml(concentrationText)}</small></div>
+      <div><span>主要拖累</span><b>${escapeHtml(dragText)}</b><small>跌幅和净流出观察</small></div>
+    </div>
+    <div class="sector-inline-columns">
+      <section><h4>贡献股</h4>${xiaokeCompactStockListHtml(stats.driverRows.slice(0, 6), "driver")}</section>
+      <section><h4>拖累股</h4>${xiaokeCompactStockListHtml(stats.dragRows.slice(0, 6), "drag")}</section>
+      <section><h4>成交活跃</h4>${xiaokeCompactStockListHtml(stats.amountLeaders.slice(0, 6), "active")}</section>
+    </div>
+    <div class="review-actions" style="justify-content:flex-start;margin-top:10px">
+      <button class="small-btn" onclick='openSectorBoardDetail(${JSON.stringify({ name: row.name || "", code: row.code || "", source: row.source || "", groupChain: row.groupChain || "" })})'>打开完整归因</button>
+    </div>
+  </div>`;
+}
+
+function xiaokeSectorAttributionHtml(row = {}, remote = [], local = [], analysis = null, warning = "") {
+  const stats = xiaokeSectorAttributionStats(remote);
+  const liveHealth = xiaokeSectorLiveAttributionHealth(stats, analysis || row);
+  const rankText = analysis ? `第${analysis.currentRank}` : (row.rank ? `第${row.rank}` : "-");
+  const continuity = analysis ? `前10出现 ${analysis.top10Count} 次 / 前25出现 ${analysis.top25Count} 次，运动分 ${analysis.motionScore}` : "暂无历史轨迹分";
+  const widthText = stats.upRate === null ? "暂无成分股宽度" : `上涨 ${stats.upCount} / 下跌 ${stats.downCount} / 平 ${stats.flatCount}，上涨率 ${stats.upRate}%`;
+  const concentrationText = stats.concentration?.top3Share == null ? "暂无" : `${stats.concentration.label} · 前3贡献${stats.concentration.top3Share}%`;
+  const leaderText = stats.leader ? `${stats.leader.name} ${xiaokeSectorSignedPct(stats.leader.pctNumber, 2)}` : "暂无";
+  const laggardText = stats.laggard ? `${stats.laggard.name} ${xiaokeSectorSignedPct(stats.laggard.pctNumber, 2)}` : "暂无";
+  const conclusion = analysis
+    ? `${row.name || analysis.name} 当前归类为「${analysis.bucket}」：${rankText}，${continuity}。内部看 ${widthText}，核心驱动看 ${leaderText}。`
+    : `${row.name || "该板块"} 暂未匹配到轨迹评分，先看东方财富成分股宽度和领涨/拖累结构。`;
+  return `<section class="sector-attribution-panel">
+    <div class="metadata-head">
+      <div>
+        <div class="panel-title">主线归因</div>
+        <div class="date">先看标准板块强弱，再落到东方财富成分股。核心贡献股按“涨幅 × 成交活跃度 + 主力净流入”做观察排序，不等同于交易所官方指数权重。</div>
+      </div>
+      ${xiaokeSectorHealthBadgeHtml(liveHealth)}
+    </div>
+    <div class="sector-attribution-answer"><b>${escapeHtml(conclusion)}</b><span>${escapeHtml(warning ? "提示：" + warning : "若上涨家数扩散、贡献股持续轮动，主线更健康；若只剩少数股票硬拉，就要降低主线置信度。")}</span></div>
+    <div class="sector-attribution-summary">
+      <article><span>轨迹位置</span><b>${escapeHtml(rankText)}</b><small>${escapeHtml(continuity)}</small></article>
+      <article><span>内部宽度</span><b>${escapeHtml(stats.upRate === null ? "-" : stats.upRate + "%")}</b><small>${escapeHtml(widthText)}</small></article>
+      <article><span>核心贡献股</span><b>${escapeHtml(leaderText)}</b><small>贡献观察排序第一</small></article>
+      <article><span>贡献集中度</span><b>${escapeHtml(stats.concentration?.top3Share == null ? "-" : stats.concentration.top3Share + "%")}</b><small>${escapeHtml(concentrationText)}</small></article>
+      <article><span>分歧/拖累</span><b>${escapeHtml(laggardText)}</b><small>拖累观察排序第一</small></article>
+      <article><span>归因健康度</span><b>${escapeHtml(liveHealth.score || "-")}</b><small>${escapeHtml([liveHealth.label, ...liveHealth.reasons.slice(0, 2)].join(" · "))}</small></article>
+      <article><span>本地样本</span><b>${local.length}</b><small>只辅助盯盘，不代表板块</small></article>
+    </div>
+  </section>
+  <section class="sector-attribution-grid">
+    <section class="panel"><div class="metadata-head"><div><div class="panel-title">核心贡献股</div><div class="date">看主线是不是由多个高强度、成交活跃股票共同推动。</div></div></div>${xiaokeSectorAttributionRowsHtml(stats.driverRows, stats, "driver")}</section>
+    <section class="panel"><div class="metadata-head"><div><div class="panel-title">拖累与分歧</div><div class="date">看板块内部有没有明显掉队，避免只被头部股票误导。</div></div></div>${xiaokeSectorAttributionRowsHtml(stats.dragRows, stats, "drag")}</section>
+  </section>
+  <section class="sector-attribution-grid">
+    <section class="panel"><div class="metadata-head"><div><div class="panel-title">成交活跃成分</div><div class="date">成交额靠前的股票更能解释板块当天的关注度。</div></div></div>${xiaokeSectorAttributionRowsHtml(stats.amountLeaders, stats, "active")}</section>
+    <section class="panel"><div class="metadata-head"><div><div class="panel-title">我的关注样本</div><div class="date">来自自定义细分、管理分组或关注标的；用于盯盘对照。</div></div><span class="video-group-badge">${local.length} 只</span></div>${xiaokeStockRowsHtml(local)}</section>
+  </section>`;
+}
+
+function xiaokeSectorConstituentDigestHtml(remote = [], local = []) {
+  const quoted = remote.map(item => ({ ...item, pctNumber: Number(item.pct) })).filter(item => Number.isFinite(item.pctNumber));
+  const upCount = quoted.filter(item => item.pctNumber > 0).length;
+  const downCount = quoted.filter(item => item.pctNumber < 0).length;
+  const flatCount = Math.max(0, remote.length - upCount - downCount);
+  const gainers = quoted.slice().sort((a, b) => b.pctNumber - a.pctNumber).slice(0, 8);
+  const losers = quoted.slice().sort((a, b) => a.pctNumber - b.pctNumber).slice(0, 8);
+  const row = item => `<li><b>${escapeHtml(item.name || "-")}</b><span class="${item.pctNumber >= 0 ? "up" : "down"}">${escapeHtml(xiaokeSectorSignedPct(item.pctNumber, 2))}</span></li>`;
+  return `<section class="sector-detail-digest">
+    <div><span>东方财富成分</span><b>${remote.length}</b><small>上涨 ${upCount} / 下跌 ${downCount} / 平 ${flatCount}</small></div>
+    <div><span>我的样本</span><b>${local.length}</b><small>只用于盯自选，不代表板块涨跌</small></div>
+    <article><h3>领涨</h3><ul>${gainers.map(row).join("") || "<li><b>暂无</b><span>-</span></li>"}</ul></article>
+    <article><h3>领跌</h3><ul>${losers.map(row).join("") || "<li><b>暂无</b><span>-</span></li>"}</ul></article>
+  </section>`;
+}
+
+async function openSectorBoardDetail(row = {}) {
+  state.view = "sectorStrength";
+  restoredRenderShell();
+  const main = document.getElementById("main");
+  if (!main) return;
+  const name = row.name || row.query || "板块";
+  const groupHint = row.groupChain || row.source || "";
+  main.innerHTML = `<section class="review-head panel"><div><div class="panel-title">${escapeHtml(name)} 主线归因</div><div class="date">正在读取东方财富标准成分股、本地样本和历史轨迹。</div></div><div class="review-actions"><button class="small-btn" onclick="renderSectorStrength()">返回板块强弱</button><button class="small-btn" onclick="openSectorMovementLab()">轨迹规律</button><button class="small-btn" onclick="importCustomSectorBoards()">导入板块</button></div></section><section class="panel"><div class="strategy-running"><b>正在加载归因数据...</b></div></section>`;
+  let remote = [];
+  let warning = "";
+  if (row.code && /^BK/i.test(row.code)) {
+    try {
+      const response = await fetch(`/api/sector-constituents?code=${encodeURIComponent(row.code)}`, { cache: "no-store" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) throw new Error(data.error || "板块成分股获取失败");
+      remote = (data.items || []).map(item => ({ ...item, quoteKey: xiaokeQuoteKeyFromCode(item.code), sector: name }));
+    } catch (error) {
+      warning = error.message || "板块成分股获取失败";
+    }
+  }
+  const local = xiaokeLocalSectorStocks(name, groupHint);
+  const analysis = xiaokeFindSectorAnalysisRow(row, name);
+  const attributionSnapshot = saveSectorAttributionSnapshot({ ...row, name }, remote, local, analysis);
+  main.innerHTML = `<section class="review-head panel"><div><div class="panel-title">${escapeHtml(name)} 主线归因</div><div class="date">板块涨跌和主线判断以东方财富标准板块为准；本地/自定义股票只是你的盯盘样本。东方财富成分 ${remote.length} 只，本地样本 ${local.length} 只。${warning ? "提示：" + escapeHtml(warning) : ""}</div></div><div class="review-actions"><button class="small-btn" onclick="openSectorMovementLab()">返回轨迹规律</button><button class="small-btn" onclick="renderSectorStrength()">返回板块强弱</button><button class="small-btn" onclick="addCustomSectorBoard()">+自定义板块</button><button class="small-btn" onclick="importCustomSectorBoards()">批量导入</button></div></section>
+  ${xiaokeSectorAttributionHtml({ ...row, name }, remote, local, analysis, warning)}
+  ${xiaokeSectorAttributionHistoryHtml({ ...row, name }, attributionSnapshot)}
+  ${xiaokeSectorConstituentDigestHtml(remote, local)}
+  <section class="panel" style="margin-top:12px"><div class="metadata-head"><div><div class="panel-title">东方财富成分股明细</div><div class="date">用于查看这个标准板块内部到底哪些股票涨、哪些股票跌。</div></div><span class="video-group-badge">${remote.length} 只</span></div>${xiaokeStockRowsHtml(remote)}</section>
+  <section class="panel" style="margin-top:12px"><div class="metadata-head"><div><div class="panel-title">我的关注样本</div><div class="date">来自自定义细分板块、管理分组或关注标的，只做盯盘辅助。</div></div><span class="video-group-badge">${local.length} 只</span></div>${xiaokeStockRowsHtml(local)}</section>`;
+}
+
+function openSectorSnapshot(date) {
+  const snapshot = readSectorSnapshots().find(item => item.date === date) || readSectorSnapshots()[0];
+  if (!snapshot) return showToast("没有历史快照");
+  state.view = "sectorStrength";
+  restoredRenderShell();
+  const rows = snapshot.items || [];
+  const previous = xiaokeSectorSnapshotPrevious(snapshot.date);
+  const previousMap = new Map((previous?.items || []).map(item => [item.name, item]));
+  document.getElementById("main").innerHTML = `<section class="review-head panel"><div><div class="panel-title">${escapeHtml(snapshot.date)} 板块快照</div><div class="date">这是当日保存的板块强弱记录；已自动对比上一条快照。为避免卡顿，快照页不再自动加载全量轨迹分析。</div></div><div class="review-actions"><button class="small-btn" onclick="openSectorMovementLab()">轨迹规律</button><button class="small-btn" onclick="renderSectorStrength()">返回今日榜</button></div></section>
+  <section class="panel"><div class="stock-table-wrap"><table class="stock-table sector-prof-table"><thead><tr><th>排名</th><th>变化</th><th>板块</th><th>强度</th><th>当日</th><th>60日</th><th>宽度</th><th>领涨股</th><th>操作</th></tr></thead><tbody>${rows.map(row => { const old = previousMap.get(row.name); const delta = old ? Number(old.rank) - Number(row.rank) : null; const deltaText = delta === null ? "新" : delta > 0 ? `升${delta}` : delta < 0 ? `降${Math.abs(delta)}` : "持平"; return `<tr><td>${row.rank}</td><td class="${delta === null || delta >= 0 ? "up" : "down"}">${escapeHtml(deltaText)}</td><td><b>${escapeHtml(row.name)}</b><div class="date">${escapeHtml(row.code || "")}</div></td><td>${row.score}</td><td class="${Number(row.pct)>=0?'up':'down'}">${strategyNumber(row.pct,2,"%")}</td><td>${strategyNumber(row.pct60,2,"%")}</td><td>${row.breadth ?? "-"}</td><td>${escapeHtml(row.leader || "-")}</td><td><button class="small-btn" onclick='openSectorBoardDetail(${JSON.stringify(row)})'>归因</button></td></tr>`; }).join("")}</tbody></table></div></section>`;
+}
+
+function xiaokeSectorCardPayload(row = {}) {
+  const current = row.current || {};
+  return {
+    name: row.name || current.name || "",
+    code: row.code || current.code || "",
+    source: row.source || current.source || "",
+    groupChain: row.groupChain || current.groupChain || "",
+    dataBasis: row.dataBasis || current.dataBasis || ""
+  };
+}
+
+function xiaokeSectorCardDrawerId(row = {}) {
+  const payload = xiaokeSectorCardPayload(row);
+  return `sectorCardDrawer_${String(payload.code || payload.name || Math.random()).replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+}
+
+async function toggleSectorCardConstituents(payload = {}, targetId = "") {
+  const target = document.getElementById(targetId);
+  if (!target) return showToast("成分股区域没有找到");
+  if (target.dataset.open === "1") {
+    target.dataset.open = "0";
+    target.innerHTML = "";
+    return;
+  }
+  target.dataset.open = "1";
+  const name = payload.name || "板块";
+  const code = String(payload.code || "").trim().toUpperCase();
+  const local = xiaokeLocalSectorStocks(name, payload.groupChain || payload.source || "");
+  target.innerHTML = `<div class="sector-card-drawer-inner"><div class="strategy-running"><b>正在读取成分股...</b></div></div>`;
+  try {
+    const cacheKey = code || name;
+    window.xiaokeSectorConstituentCache = window.xiaokeSectorConstituentCache || new Map();
+    let remote = window.xiaokeSectorConstituentCache.get(cacheKey);
+    let warning = "";
+    if (!remote) {
+      if (/^BK\d{4,6}$/.test(code)) {
+        const response = await fetch(`/api/sector-constituents?code=${encodeURIComponent(code)}&t=${Date.now()}`, { cache: "no-store" });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.success) throw new Error(data.error || "板块成分股获取失败");
+        remote = (data.items || []).map(item => ({ ...item, quoteKey: xiaokeQuoteKeyFromCode(item.code), sector: name }));
+      } else {
+        remote = [];
+        warning = "未匹配东方财富 BK 代码，暂时只能显示本地样本。";
+      }
+      window.xiaokeSectorConstituentCache.set(cacheKey, remote);
+    }
+    target.innerHTML = xiaokeSectorInlineDrawerHtml(payload, remote, local, warning);
+  } catch (error) {
+    const message = /fetch failed|Failed to fetch/i.test(error.message || "")
+      ? "东方财富成分接口连接失败；当前可先看本地样本，或稍后重试。"
+      : (error.message || "成分股获取失败");
+    target.innerHTML = xiaokeSectorInlineDrawerHtml(payload, [], local, message);
+  }
+}
+
+sectorSnapshotHistoryHtml = function xiaokeSectorSnapshotHistoryHtmlV2() {
+  const allRows = readSectorSnapshots();
+  const rows = allRows.slice(0, 6);
+  if (!rows.length) return `<div class="date">尚未形成每日快照。</div>`;
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px">
+    ${rows.map((row, index) => {
+      const top = (row.items || []).slice(0, 3);
+      const source = row.source || (index === 0 ? "最新快照" : "历史快照");
+      return `<button onclick='openSectorSnapshot(${JSON.stringify(row.date)})' style="text-align:left;border:1px solid ${index === 0 ? "rgba(141,92,246,.65)" : "rgba(141,92,246,.28)"};background:linear-gradient(180deg,rgba(141,92,246,${index === 0 ? ".18" : ".08"}),rgba(18,24,31,.88));color:#eef4ff;border-radius:8px;padding:12px;cursor:pointer;min-height:92px">
+        <span style="display:inline-flex;height:22px;align-items:center;padding:0 7px;border-radius:5px;background:rgba(141,92,246,.22);border:1px solid rgba(141,92,246,.42);font-size:12px;font-weight:900">${index === 0 ? "最新" : "快照"}</span>
+        <b style="display:block;margin:8px 0 6px;font-size:17px">${escapeHtml(row.date)}</b>
+        <small style="display:block;color:#aeb6c6;line-height:1.45">${escapeHtml(top.map(item => `${item.rank}.${item.name}`).join("  |  ") || source)}</small>
+      </button>`;
+    }).join("")}
+    ${allRows.length > rows.length ? `<button onclick="openSectorBackfillDetail()" style="text-align:left;border:1px dashed rgba(141,92,246,.45);background:rgba(141,92,246,.06);color:#e5d8ff;border-radius:8px;padding:12px;cursor:pointer;min-height:92px"><b>查看全部 ${allRows.length} 条</b><small style="display:block;margin-top:8px;color:#aeb6c6">打开完整回填明细和每日完整表格</small></button>` : ""}
+  </div>`;
+};
+
+function xiaokeSectorSnapshotPrevious(date) {
+  const rows = readSectorSnapshots();
+  const index = rows.findIndex(item => item.date === date);
+  return index >= 0 ? rows[index + 1] : null;
+}
+
+const XIAOKE_SECTOR_TRAJECTORY_RANGE_KEY = "xiaoke_sector_trajectory_range_v1";
+const XIAOKE_SECTOR_BACKFILL_META_KEY = "xiaoke_sector_backfill_meta_v1";
+const XIAOKE_SECTOR_TRAJECTORY_RANGE_OPTIONS = [
+  ["5", "5日"],
+  ["10", "10日"],
+  ["20", "20日"],
+  ["90", "3个月"],
+  ["all", "开始至今"]
+];
+
+function xiaokeSectorNormalizeRange(range = "20") {
+  const value = String(range || "20");
+  if (XIAOKE_SECTOR_TRAJECTORY_RANGE_OPTIONS.some(([option]) => option === value)) return value;
+  if (value === "30") return "20";
+  return "20";
+}
+
+function xiaokeSectorTrajectoryRange() {
+  return xiaokeSectorNormalizeRange(localStorage.getItem(XIAOKE_SECTOR_TRAJECTORY_RANGE_KEY) || "20");
+}
+
+function setSectorTrajectoryRange(range = "20") {
+  localStorage.setItem(XIAOKE_SECTOR_TRAJECTORY_RANGE_KEY, xiaokeSectorNormalizeRange(range));
+  if (state.view === "sectorStrength") {
+    const main = document.getElementById("main");
+    if (main?.querySelector("[data-sector-movement-lab]")) openSectorMovementLab();
+    else renderSectorStrength({ skipFetch: true });
+  }
+}
+
+function xiaokeSectorDateMs(date) {
+  const time = new Date(String(date || "") + "T00:00:00").getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function xiaokeSectorSnapshotsForRange(range = xiaokeSectorTrajectoryRange()) {
+  const rows = readSectorSnapshots();
+  if (range === "all") return rows;
+  if (["5", "10", "20"].includes(String(range))) {
+    const limit = Number(range);
+    return rows.slice(0, Math.min(rows.length, limit));
+  }
+  const days = Number(range) || 30;
+  const cutoff = Date.now() - days * 86400000;
+  const filtered = rows.filter(item => xiaokeSectorDateMs(item.date) >= cutoff);
+  return filtered.length ? filtered : rows.slice(0, Math.min(rows.length, 66));
+}
+
+function xiaokeSectorRangeLabel(range = xiaokeSectorTrajectoryRange()) {
+  if (range === "5") return "近5个交易日";
+  if (range === "10") return "近10个交易日";
+  if (range === "20") return "近20个交易日";
+  if (range === "90") return "近三个月";
+  if (range === "all") return "开始记录至今";
+  return "近20个交易日";
+}
+
+function xiaokeSectorRangeControlsHtml() {
+  const current = xiaokeSectorTrajectoryRange();
+  return `<div class="review-actions" style="justify-content:flex-start;flex-wrap:wrap">
+    ${XIAOKE_SECTOR_TRAJECTORY_RANGE_OPTIONS.map(([value, label]) => `<button class="${current === value ? "small-btn primary" : "small-btn"}" style="${current === value ? 'border-color:#22c3d6;color:#d8fbff;background:rgba(34,195,214,.16)' : ''}" onclick="setSectorTrajectoryRange('${value}')">${label}</button>`).join("")}
+    <button class="small-btn" style="border-color:#f5a623;color:#ffe2a3;background:rgba(245,166,35,.14)" onclick="backfillSectorHistorySnapshots(90)">回填近3月东方财富</button>
+    <button class="small-btn" style="border-color:#8d5cf6;color:#d9c8ff;background:rgba(141,92,246,.14)" onclick="openSectorBackfillDetail()">查看回填明细</button>
+  </div>`;
+}
+
+function xiaokeSectorFocusDefinitions() {
+  return [
+    { label: "CPO/光通信", names: ["CPO", "CPO概念", "光通信模块"], codes: ["BK1136"] },
+    { label: "半导体材料", names: ["半导体材料"], codes: ["BK1325"] },
+    { label: "半导体设备", names: ["半导体设备"], codes: ["BK1326"] },
+    { label: "存储芯片", names: ["存储芯片", "存储", "高带宽内存", "HBM"], codes: ["BK1137", "BK1152"] },
+    { label: "半导体", names: ["半导体"], codes: ["BK1036"] }
+  ];
+}
+
+function xiaokeSectorNormalizeKey(value = "") {
+  return String(value || "").replace(/\s+/g, "").toUpperCase();
+}
+
+function xiaokeSectorMatchesFocus(row = {}, focus = {}) {
+  const current = row.current || row;
+  const code = xiaokeSectorNormalizeKey(current.code || row.code || "");
+  const name = xiaokeSectorNormalizeKey(current.name || row.name || "");
+  const codes = (focus.codes || []).map(xiaokeSectorNormalizeKey);
+  const names = (focus.names || []).map(xiaokeSectorNormalizeKey);
+  if (code && codes.includes(code)) return true;
+  return names.some(key => key && (name === key || name.includes(key) || key.includes(name)));
+}
+
+function xiaokeSectorFocusCoverageHtml(rows = [], snapshots = xiaokeSectorSnapshotsForRange()) {
+  const latestItems = snapshots[0]?.items || [];
+  const universe = [...(rows || []).map(row => row.current || row), ...latestItems].filter(Boolean);
+  const cards = xiaokeSectorFocusDefinitions().map(focus => {
+    const matched = universe.find(row => xiaokeSectorMatchesFocus(row, focus));
+    const rank = Number(matched?.rank);
+    const isStandard = /^BK\d{4,6}$/i.test(matched?.code || "");
+    const cls = matched ? (isStandard ? "good" : "warn") : "bad";
+    const title = matched ? (matched.name || focus.label) : focus.label;
+    const status = matched ? (isStandard ? "已覆盖BK" : "仅样本") : "未覆盖";
+    const pct = matched ? xiaokeSectorSignedPct(matched.pct, 2) : "-";
+    const meta = matched
+      ? `${Number.isFinite(rank) ? `第${rank}` : "无排名"} · ${escapeHtml(matched.code || "无BK")} · ${escapeHtml(matched.source || "快照")}`
+      : "当前快照没有纳入，不能据此判断强弱";
+    return `<article class="${cls}"><span>${escapeHtml(focus.label)}</span><b>${escapeHtml(title)} ${escapeHtml(pct)}</b><small>${escapeHtml(status)} · ${meta}</small></article>`;
+  }).join("");
+  const missing = xiaokeSectorFocusDefinitions().filter(focus => !universe.find(row => xiaokeSectorMatchesFocus(row, focus)));
+  const warning = missing.length
+    ? `关注板块缺口：${missing.map(item => item.label).join("、")} 未进入当前轨迹样本；主线结论只能看已覆盖板块，不能否定这些缺口板块。`
+    : "重点关注板块已进入当前轨迹样本，可以一起比较持续性。";
+  return `<section class="panel" style="margin-top:12px;border-color:${missing.length ? "rgba(245,166,35,.42)" : "rgba(25,201,139,.38)"}">
+    <div class="metadata-head">
+      <div><div class="panel-title">重点板块覆盖检查</div><div class="date">${escapeHtml(warning)} 回填失败或缺少BK映射时，这里会先亮出来，避免轨迹误判。</div></div>
+      <button class="small-btn" onclick="backfillSectorHistorySnapshots(90)">回填/校准</button>
+    </div>
+    <div class="sector-audit-summary">${cards}</div>
+  </section>`;
+}
+
+function mergeSectorSnapshots(incoming = []) {
+  const current = readSectorSnapshots();
+  const map = new Map(current.map(item => [item.date, item]));
+  incoming.forEach(snapshot => {
+    if (!snapshot?.date || !(snapshot.items || []).length) return;
+    const old = map.get(snapshot.date);
+    if (!old) {
+      map.set(snapshot.date, snapshot);
+      return;
+    }
+    const byKey = new Map();
+    [...(old.items || []), ...(snapshot.items || [])].forEach((item, index) => {
+      const key = item.name || item.code;
+      if (!key || byKey.has(key)) return;
+      byKey.set(key, { ...item, rank: item.rank || index + 1 });
+    });
+    const mergedItems = xiaokeTrimSectorSnapshotItems(Array.from(byKey.values()).sort((a, b) => Number(a.rank || 999) - Number(b.rank || 999)));
+    map.set(snapshot.date, { ...snapshot, ...old, source: uniqueClean([old.source, snapshot.source].filter(Boolean)).join(" + "), items: mergedItems });
+  });
+  const rows = Array.from(map.values()).sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 140);
+  localStorage.setItem(XIAOKE_SECTOR_SNAPSHOTS_KEY, JSON.stringify(rows));
+  xiaokeSectorSnapshotsRuntimeCacheRaw = null;
+  xiaokeSectorSnapshotsRuntimeCacheRows = null;
+  return rows;
+}
+
+async function backfillSectorHistorySnapshots(days = 90) {
+  if (window.__xiaokeSectorBackfillRunning) return showToast("回填正在进行中，请稍等");
+  window.__xiaokeSectorBackfillRunning = true;
+  showToast("正在小批量回填东方财富板块历史，先保证页面不卡死...");
+  const startedInMovement = Boolean(document.getElementById("main")?.querySelector("[data-sector-movement-lab]"));
+  const plans = [
+    { label: "标准回填", limit: 120, timeout: 22000 },
+    { label: "降级回填", limit: 40, timeout: 14000 }
+  ];
+  const errors = [];
+  try {
+    for (const plan of plans) {
+      try {
+        showToast(`${plan.label}：拉取近${days}天，最多 ${plan.limit} 个板块...`);
+        const { response, data } = await xiaokeFetchJsonWithTimeout(`/api/sector-history-snapshots?days=${encodeURIComponent(days)}&limit=${encodeURIComponent(plan.limit)}&t=${Date.now()}`, { cache: "no-store" }, plan.timeout);
+        if (!response.ok || !data.success) throw new Error(data.error || "回填板块历史失败");
+        if (!(data.snapshots || []).length) throw new Error("东方财富没有返回可用历史快照");
+        const rows = mergeSectorSnapshots(data.snapshots || []);
+        const meta = {
+          at: new Date().toISOString(),
+          days,
+          plan: plan.label,
+          limit: plan.limit,
+          snapshotCount: (data.snapshots || []).length,
+          sectorCount: data.sectorCount || 0,
+          fetched: data.fetched || 0,
+          failures: data.failures || [],
+          warning: data.warning || "",
+          errors,
+          firstDate: data.snapshots?.[data.snapshots.length - 1]?.date || "",
+          lastDate: data.snapshots?.[0]?.date || ""
+        };
+        localStorage.setItem(XIAOKE_SECTOR_BACKFILL_META_KEY, JSON.stringify(meta));
+        showToast(`已回填 ${data.snapshots?.length || 0} 个交易日，覆盖 ${data.fetched || 0}/${data.sectorCount || 0} 个板块${errors.length ? "（已自动降级）" : ""}`);
+        if (startedInMovement) openSectorMovementLab();
+        else openSectorBackfillDetail();
+        return rows;
+      } catch (error) {
+        errors.push(`${plan.label}: ${error.message || "失败"}`);
+      }
+    }
+    throw new Error(errors.join("；") || "回填板块历史失败");
+  } catch (error) {
+    const meta = { at: new Date().toISOString(), days, snapshotCount: 0, sectorCount: 0, fetched: 0, failures: [], errors, warning: error.message || "回填板块历史失败" };
+    localStorage.setItem(XIAOKE_SECTOR_BACKFILL_META_KEY, JSON.stringify(meta));
+    showToast(`回填失败：${error.message || "东方财富历史暂不可用"}；已保留最近快照`);
+    if (startedInMovement) openSectorMovementLab();
+    return [];
+  } finally {
+    window.__xiaokeSectorBackfillRunning = false;
+  }
+}
+
+function readSectorBackfillMeta() {
+  try {
+    const data = JSON.parse(localStorage.getItem(XIAOKE_SECTOR_BACKFILL_META_KEY) || "{}");
+    return data && typeof data === "object" ? data : {};
+  } catch {
+    return {};
+  }
+}
+
+function openSectorBackfillDetail() {
+  state.view = "sectorStrength";
+  restoredRenderShell();
+  const main = document.getElementById("main");
+  if (!main) return;
+  const meta = readSectorBackfillMeta();
+  const snapshots = readSectorSnapshots();
+  const rows = xiaokeSectorSnapshotsForRange("90").slice(0, 66);
+  main.innerHTML = `
+    <section class="review-head panel" style="border-color:rgba(141,92,246,.42);background:linear-gradient(180deg,rgba(141,92,246,.12),rgba(18,24,31,.88))">
+      <div>
+        <div class="panel-title">回填历史明细</div>
+        <div class="date">这里就是“回填近3月东方财富”后的详细数据入口。点击任意日期可以看当天完整快照和排名变化。</div>
+      </div>
+      ${xiaokeSectorControlToolbarHtml()}
+    </section>
+    <section class="sector-market-summary">
+      <div style="border-color:rgba(245,166,35,.42)"><span>最近回填</span><b>${escapeHtml(meta.snapshotCount || 0)}</b><small>${escapeHtml([meta.firstDate, meta.lastDate].filter(Boolean).join(" 至 ") || "尚未回填")}</small></div>
+      <div style="border-color:rgba(34,195,214,.42)"><span>覆盖板块</span><b>${escapeHtml(meta.fetched || 0)}</b><small>东方财富板块历史K线</small></div>
+      <div style="border-color:rgba(25,201,139,.42)"><span>本地快照</span><b>${snapshots.length}</b><small>用于近1月/近3月/全部对比</small></div>
+      <div style="border-color:rgba(239,60,99,.42)"><span>失败数</span><b>${(meta.failures || []).length}</b><small>接口限流或无历史</small></div>
+    </section>
+    <section class="panel" style="margin-top:12px">
+      <div class="metadata-head">
+        <div><div class="panel-title">近三个月每日快照</div><div class="date">每一行是一个交易日；展示当天前5名，点“查看明细”进入完整表格。对比数据就来自这些快照。</div></div>
+        ${xiaokeSectorRangeControlsHtml()}
+      </div>
+      <div class="stock-table-wrap"><table class="stock-table sector-prof-table"><thead><tr><th>日期</th><th>前5名</th><th>样本数</th><th>来源</th><th>操作</th></tr></thead><tbody>${rows.map(snapshot => `<tr><td><b>${escapeHtml(snapshot.date)}</b></td><td>${escapeHtml((snapshot.items || []).slice(0, 5).map(item => `${item.rank}.${item.name}`).join("  |  "))}</td><td>${(snapshot.items || []).length}</td><td>${escapeHtml(snapshot.source || "本地快照")}</td><td><button class="small-btn" onclick='openSectorSnapshot(${JSON.stringify(snapshot.date)})'>查看明细</button></td></tr>`).join("") || `<tr><td colspan="5"><div class="date">暂无近三个月快照。请先点“回填近3月东方财富”。</div></td></tr>`}</tbody></table></div>
+    </section>`;
+}
+
+function xiaokeIsStandardSector(row = {}) {
+  return /^BK\d{4,6}$/i.test(row.code || row.current?.code || "") && !row.localOnly && row.dataBasis !== "本地样本";
+}
+
+function xiaokeCoreAnalysisRows(rows = []) {
+  return (rows || []).filter(row => xiaokeIsStandardSector(row.current || row));
+}
+
+function xiaokeSampleOnlyAnalysisRows(rows = []) {
+  return (rows || []).filter(row => !xiaokeIsStandardSector(row.current || row));
+}
+
+function xiaokeSectorMainlineConclusionHtml(rows = []) {
+  const core = xiaokeCoreAnalysisRows(rows);
+  const primary = core.filter(row => row.bucket === "主线确认").slice(0, 4);
+  const secondary = core.filter(row => row.bucket === "次主线跟随").slice(0, 4);
+  const warming = core.filter(row => row.bucket === "升温启动" || row.bucket === "新观察").slice(0, 4);
+  const cooling = core.filter(row => row.bucket === "退潮降温").slice(0, 4);
+  const samples = xiaokeSampleOnlyAnalysisRows(rows).slice(0, 4);
+  const names = list => list.map(row => row.name).filter(Boolean).join("、") || "暂无";
+  const card = (title, list, cls, note) => {
+    const first = list[0] || null;
+    const payload = first ? { name: first.name, code: first.code || first.current?.code || "", source: first.source || first.current?.source || "" } : null;
+    return `<article class="${cls}">
+    <span>${escapeHtml(title)}</span>
+    <b>${escapeHtml(names(list))}</b>
+    <small>${escapeHtml(note)}</small>
+    ${payload ? `<button class="small-btn" style="margin-top:9px" onclick='openSectorBoardDetail(${JSON.stringify(payload)})'>看归因</button>` : ""}
+  </article>`;
+  };
+  const top = primary[0] || secondary[0] || warming[0] || core[0];
+  const summary = top
+    ? `当前优先看 ${top.name}：最新第${top.currentRank}，前10出现 ${top.top10Count} 次，运动分 ${top.motionScore}。`
+    : "当前缺少足够的东方财富标准板块快照，先回填历史或刷新今日榜。";
+  return `<section class="sector-mainline-conclusion">
+    <div class="metadata-head">
+      <div>
+        <div class="panel-title">当前主线结论</div>
+        <div class="date">只按东方财富 BK 标准板块判断；本地细分/管理分组只做样本观察，不进入主线核心结论。</div>
+      </div>
+      <span class="video-group-badge">${escapeHtml(xiaokeSectorRangeLabel())}</span>
+    </div>
+    <div class="sector-mainline-answer"><b>${escapeHtml(summary)}</b><span>依据：排名持续性、今日强度、宽度、近阶段升降位和历史快照。</span></div>
+    <div class="sector-mainline-grid">
+      ${card("主线确认", primary, "main", "前排持续，优先观察分歧后是否继续扩散")}
+      ${card("次主线跟随", secondary, "secondary", "位置靠前但还要看能否晋级主线")}
+      ${card("升温启动", warming, "warming", "排名上移或新进前排，等二次确认")}
+      ${card("退潮风险", cooling, "cooling", "从前排掉队或强度走弱")}
+      ${card("样本观察", samples, "sample", "未匹配标准板块或本地样本，不能代表全板块")}
+    </div>
+  </section>`;
+}
+
+function xiaokeSectorAnalysisRows(currentRows = []) {
+  const snapshots = xiaokeSectorSnapshotsForRange();
+  const currentMap = new Map((currentRows || []).map((row, index) => [row.name, { ...row, rank: row.rank || index + 1 }]));
+  const names = uniqueClean([
+    ...(currentRows || []).slice(0, 100).map(row => row.name),
+    ...snapshots.flatMap(snapshot => (snapshot.items || []).slice(0, 50).map(row => row.name))
+  ].filter(Boolean));
+  return names.map(name => {
+    const current = currentMap.get(name) || snapshots[0]?.items?.find(item => item.name === name) || {};
+    const currentRank = Number(current.rank || (currentRows || []).findIndex(row => row.name === name) + 1) || 999;
+    const prev = snapshots.find(snapshot => snapshot.date !== todayString())?.items?.find(item => item.name === name);
+    const history = snapshots
+      .map(snapshot => ({ date: snapshot.date, row: (snapshot.items || []).find(item => item.name === name) }))
+      .filter(item => item.row);
+    const ranks = history.map(item => Number(item.row.rank)).filter(Number.isFinite);
+    const top10Count = ranks.filter(rank => rank <= 10).length;
+    const top25Count = ranks.filter(rank => rank <= 25).length;
+    const avgRank = ranks.length ? Math.round(ranks.reduce((sum, rank) => sum + rank, 0) / ranks.length) : currentRank;
+    const bestRank = ranks.length ? Math.min(...ranks) : currentRank;
+    const oldRank = Number(prev?.rank) || null;
+    const delta = oldRank ? oldRank - currentRank : 0;
+    const trajectory = sectorTrajectory(name, currentRank, current);
+    const pct = Number(current.pct);
+    const breadth = Number(current.breadth);
+    const rankPower = Math.max(0, 35 - Math.min(currentRank, 35));
+    const continuityPower = top10Count * 8 + top25Count * 3;
+    const movePower = Math.max(-15, Math.min(20, delta || 0));
+    const widthPower = Number.isFinite(breadth) ? Math.max(0, Math.min(15, (breadth - 45) / 3)) : 0;
+    const dayPower = Number.isFinite(pct) ? Math.max(-8, Math.min(12, pct * 2)) : 0;
+    const motionScore = Math.round(rankPower + continuityPower + movePower + widthPower + dayPower);
+    const standard = xiaokeIsStandardSector(current);
+    let bucket = standard ? "观察" : "样本观察";
+    if (standard && currentRank <= 10 && (top10Count >= 2 || motionScore >= 58)) bucket = "主线确认";
+    else if (currentRank <= 25 && (top25Count >= 2 || motionScore >= 42)) bucket = "次主线跟随";
+    else if ((delta >= 8 && currentRank <= 40) || trajectory.phase === "启动" || trajectory.phase === "升温") bucket = "升温启动";
+    else if ((oldRank && oldRank <= 15 && currentRank > 25) || trajectory.phase === "退潮" || trajectory.phase === "降温") bucket = "退潮降温";
+    else if (!oldRank && currentRank <= 25) bucket = "新观察";
+    if (!standard) bucket = "样本观察";
+    return {
+      name,
+      code: current.code || "",
+      source: current.source || "",
+      dataBasis: current.dataBasis || (standard ? "东方财富标准板块" : "本地样本"),
+      sampleNote: current.sampleNote || "",
+      localOnly: !!current.localOnly,
+      localMatched: !!current.localMatched,
+      current,
+      currentRank,
+      oldRank,
+      delta,
+      trajectory,
+      top10Count,
+      top25Count,
+      avgRank,
+      bestRank,
+      motionScore,
+      bucket
+    };
+  }).sort((a, b) => b.motionScore - a.motionScore || a.currentRank - b.currentRank);
+}
+
+function xiaokeSectorMovementTable(title, desc, rows = []) {
+  return `<section class="panel" style="margin-top:12px">
+    <div class="metadata-head"><div><div class="panel-title">${escapeHtml(title)}</div><div class="date">${escapeHtml(desc)}</div></div></div>
+    <div class="stock-table-wrap"><table class="stock-table sector-prof-table"><thead><tr><th>板块</th><th>当前/前次</th><th>轨迹判断</th><th>持续性</th><th>强度</th><th>操作</th></tr></thead><tbody>${rows.map(row => {
+      const deltaText = row.oldRank ? (row.delta > 0 ? `升${row.delta}` : row.delta < 0 ? `降${Math.abs(row.delta)}` : "持平") : "新";
+      const rowPayload = { name: row.name, code: row.current?.code || "", source: row.current?.source || "" };
+      return `<tr><td><b>${escapeHtml(row.name)}</b><div class="date">${escapeHtml(row.current?.code || "")}</div></td><td>第${row.currentRank}<div class="${row.delta >= 0 ? "up" : "down"}">${escapeHtml(deltaText)}</div></td><td><span class="sector-phase phase-${escapeHtml(row.trajectory.phase)}">${escapeHtml(row.trajectory.phase)}</span><div class="date">${escapeHtml(row.trajectory.reason || "")}</div></td><td>前10:${row.top10Count}次 / 前25:${row.top25Count}次<div class="date">均排 ${row.avgRank}，最佳 ${row.bestRank}</div></td><td><b>${row.motionScore}</b></td><td><button class="small-btn" onclick='openSectorBoardDetail(${JSON.stringify(rowPayload)})'>归因</button></td></tr>`;
+    }).join("") || `<tr><td colspan="6"><div class="date">暂无足够记录。</div></td></tr>`}</tbody></table></div>
+  </section>`;
+}
+
+function xiaokeSectorSignedPct(value, digits = 1) {
+  if (value === null || value === undefined || value === "") return "-";
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  const fixed = number.toFixed(digits).replace(/\.0+$/, "").replace(/(\.\d*[1-9])0+$/, "$1");
+  return `${number > 0 ? "+" : ""}${fixed}%`;
+}
+
+function xiaokeFiniteNumberOrNull(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function xiaokeSectorLiquidityState(row = {}, universe = []) {
+  const current = row.current || row;
+  const amount = xiaokeFiniteNumberOrNull(current.amount ?? row.amount);
+  const sourceRows = (universe || []).map(item => item.current || item).filter(item => xiaokeFiniteNumberOrNull(item.amount) !== null);
+  const sorted = sourceRows.slice().sort((a, b) => Number(b.amount || 0) - Number(a.amount || 0));
+  const rank = amount === null ? null : sorted.findIndex(item => String(item.code || item.name) === String(current.code || current.name)) + 1;
+  const percentile = rank > 0 && sorted.length ? rank / sorted.length : null;
+  let score = 0;
+  let label = "量能待确认";
+  let cls = "warn";
+  let note = "缺少成交额字段";
+  if (amount !== null) {
+    const amountYi = amount / 100000000;
+    if ((percentile !== null && percentile <= .1) || amountYi >= 200) {
+      score = XIAOKE_SECTOR_MAINLINE_FORMULA_WEIGHTS.liquidity;
+      label = "量能强确认";
+      cls = "good";
+    } else if ((percentile !== null && percentile <= .25) || amountYi >= 80) {
+      score = 8;
+      label = "量能可用";
+      cls = "ok";
+    } else if ((percentile !== null && percentile <= .5) || amountYi >= 30) {
+      score = 4;
+      label = "量能一般";
+      cls = "neutral";
+    } else {
+      score = -4;
+      label = "量能不足";
+      cls = "warn";
+    }
+    note = `${xiaokeSectorMoneyText(amount)}${rank > 0 ? ` · 成交第${rank}` : ""}`;
+  }
+  return { amount, rank: rank || null, percentile, score, label, cls, note };
+}
+
+function xiaokeSectorSameBoardForAmount(a = {}, b = {}) {
+  const aCode = String(a.code || a.current?.code || "").trim().toUpperCase();
+  const bCode = String(b.code || b.current?.code || "").trim().toUpperCase();
+  if (aCode && bCode && aCode === bCode) return true;
+  return String(a.name || a.current?.name || "").trim() === String(b.name || b.current?.name || "").trim();
+}
+
+function xiaokeSectorAmountTrend(row = {}, snapshots = xiaokeSectorSnapshotsForRange()) {
+  const current = row.current || row;
+  const currentAmount = xiaokeFiniteNumberOrNull(current.amount ?? row.amount);
+  const history = (snapshots || [])
+    .filter(snapshot => snapshot?.date)
+    .map(snapshot => {
+      const matched = (snapshot.items || []).find(item => xiaokeSectorSameBoardForAmount(item, current));
+      return matched ? { date: snapshot.date, amount: xiaokeFiniteNumberOrNull(matched.amount), rank: matched.rank } : null;
+    })
+    .filter(item => item && item.amount !== null)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  const existsCurrent = history.some(item => String(item.date) === todayString());
+  const values = currentAmount !== null && !existsCurrent
+    ? [{ date: todayString(), amount: currentAmount, rank: current.rank || row.rank || null }, ...history]
+    : history;
+  const latest = values[0]?.amount ?? currentAmount;
+  const previous = values.slice(1).find(item => item.amount !== null)?.amount ?? null;
+  const recentBase = values.slice(1, 4).map(item => item.amount).filter(value => value !== null);
+  const avg3 = recentBase.length ? recentBase.reduce((sum, value) => sum + value, 0) / recentBase.length : null;
+  if (latest === null) {
+    return { latest, previous, avg3, ratio: null, cls: "warn", label: "成交额缺失", note: "没有成交额字段，不能确认资金持续性" };
+  }
+  const ratio = previous ? (latest - previous) / previous * 100 : null;
+  const avgRatio = avg3 ? (latest - avg3) / avg3 * 100 : null;
+  let cls = "neutral";
+  let label = "成交额可用";
+  if (ratio !== null) {
+    if (ratio >= 25 || (avgRatio !== null && avgRatio >= 20)) {
+      cls = "good";
+      label = "成交额放大";
+    } else if (ratio >= -10) {
+      cls = "ok";
+      label = "成交额平稳";
+    } else {
+      cls = "warn";
+      label = "成交额收缩";
+    }
+  }
+  const ratioText = ratio === null ? "缺少前值" : `${ratio > 0 ? "+" : ""}${ratio.toFixed(1).replace(/\.0$/, "")}%`;
+  const note = `${xiaokeSectorMoneyText(latest)}；较前次 ${ratioText}`;
+  return { latest, previous, avg3, ratio, avgRatio, cls, label, note };
+}
+
+function xiaokeSectorLiquidityConfirmHtml(rows = [], snapshots = xiaokeSectorSnapshotsForRange()) {
+  const core = xiaokeCoreAnalysisRows(rows);
+  const states = core.map(row => ({
+    row,
+    liquidity: xiaokeSectorLiquidityState(row.current || row, core.map(item => item.current || item)),
+    amountTrend: xiaokeSectorAmountTrend(row.current || row, snapshots)
+  }));
+  const strong = states.filter(item => item.liquidity.cls === "good" && ["good", "ok"].includes(item.amountTrend.cls)).slice(0, 5);
+  const amountUp = states.filter(item => item.amountTrend.cls === "good").slice(0, 5);
+  const weak = states.filter(item => item.liquidity.cls === "warn" || item.amountTrend.cls === "warn").slice(0, 5);
+  const rowHtml = item => {
+    const payload = { name: item.row.name, code: item.row.code || item.row.current?.code || "", source: item.row.source || item.row.current?.source || "" };
+    return `<tr>
+      <td><b>${escapeHtml(item.row.name)}</b><div class="date">${escapeHtml(item.row.code || item.row.current?.code || "")}</div></td>
+      <td><span class="sector-reliability ${escapeHtml(item.liquidity.cls)}">${escapeHtml(item.liquidity.label)}</span><div class="date">${escapeHtml(item.liquidity.note)}</div></td>
+      <td><span class="sector-reliability ${escapeHtml(item.amountTrend.cls)}">${escapeHtml(item.amountTrend.label)}</span><div class="date">${escapeHtml(item.amountTrend.note)}</div></td>
+      <td>第${escapeHtml(item.row.currentRank || item.row.current?.rank || "-")}<div class="date">${escapeHtml(item.row.bucket || "")}</div></td>
+      <td>${escapeHtml(item.row.top10Count ?? "-")} / ${escapeHtml(item.row.top25Count ?? "-")}</td>
+      <td><button class="small-btn" onclick='openSectorBoardDetail(${JSON.stringify(payload)})'>归因</button></td>
+    </tr>`;
+  };
+  return `<section class="panel sector-motion-priority" style="margin-top:12px;border-color:rgba(34,195,214,.34)">
+    <div class="metadata-head">
+      <div><div class="panel-title">资金/成交额确认层</div><div class="date">主线不仅看涨幅和排名，还要看成交额是否靠前、是否持续放大。这里优先确认“有资金持续参与”的板块。</div></div>
+      <span class="video-group-badge">资金确认 ${escapeHtml(strong.length)} / 风险 ${escapeHtml(weak.length)}</span>
+    </div>
+    <div class="sector-audit-summary">
+      <article><span>资金强确认</span><b>${escapeHtml(strong.length)}</b><small>${escapeHtml(strong.map(item => item.row.name).join("、") || "暂无")}</small></article>
+      <article><span>成交额放大</span><b>${escapeHtml(amountUp.length)}</b><small>${escapeHtml(amountUp.map(item => item.row.name).join("、") || "暂无")}</small></article>
+      <article><span>缩量/缺失</span><b>${escapeHtml(weak.length)}</b><small>${escapeHtml(weak.map(item => item.row.name).join("、") || "暂无")}</small></article>
+      <article><span>公式版本</span><b>${escapeHtml(XIAOKE_SECTOR_MAINLINE_FORMULA_VERSION)}</b><small>已把量能作为主线加分/扣分项</small></article>
+    </div>
+    <div class="stock-table-wrap" style="margin-top:10px"><table class="stock-table sector-prof-table"><thead><tr><th>板块</th><th>资金位置</th><th>成交趋势</th><th>排名</th><th>前10/前25</th><th>操作</th></tr></thead><tbody>${states.slice(0, 18).map(rowHtml).join("") || `<tr><td colspan="6"><div class="date">暂无可评估的标准BK板块。</div></td></tr>`}</tbody></table></div>
+  </section>`;
+}
+
+function xiaokeSectorBacktestStatus(rank) {
+  const rule = xiaokeSectorRuleSettings();
+  const value = Number(rank);
+  if (!Number.isFinite(value)) return { label: "消失", cls: "bad", hit10: false, hit25: false };
+  if (value <= rule.coreRank) return { label: `前${rule.coreRank}命中`, cls: "good", hit10: true, hit25: true };
+  if (value <= rule.frontRank) return { label: `前${rule.frontRank}留存`, cls: "ok", hit10: false, hit25: true };
+  return { label: `掉出前${rule.frontRank}`, cls: "warn", hit10: false, hit25: false };
+}
+
+function xiaokeSectorMainlineBacktest(snapshots = xiaokeSectorSnapshotsForRange()) {
+  const chronological = (snapshots || []).slice().reverse();
+  const horizons = [1, 3, 5];
+  const rows = [];
+  chronological.forEach((snapshot, index) => {
+    const candidates = (snapshot.items || [])
+      .filter(item => xiaokeIsStandardSector(item) && Number(item.rank) <= 10)
+      .slice(0, 5);
+    candidates.forEach(item => {
+      const result = { date: snapshot.date, name: item.name, code: item.code, startRank: Number(item.rank), startPct: xiaokeFiniteNumberOrNull(item.pct), horizons: {} };
+      horizons.forEach(days => {
+        const future = chronological[index + days];
+        const next = future?.items?.find(row => row.name === item.name || (item.code && row.code === item.code));
+        const status = xiaokeSectorBacktestStatus(next?.rank);
+        result.horizons[days] = { date: future?.date || "", rank: next?.rank ?? null, pct: xiaokeFiniteNumberOrNull(next?.pct), ...status };
+      });
+      rows.push(result);
+    });
+  });
+  const summary = horizons.map(days => {
+    const available = rows.filter(row => row.horizons[days]?.date);
+    const hit10 = available.filter(row => row.horizons[days].hit10).length;
+    const hit25 = available.filter(row => row.horizons[days].hit25).length;
+    return {
+      days,
+      total: available.length,
+      hit10,
+      hit25,
+      hit10Rate: available.length ? Math.round(hit10 / available.length * 100) : null,
+      hit25Rate: available.length ? Math.round(hit25 / available.length * 100) : null
+    };
+  });
+  return { rows: rows.filter(row => Object.values(row.horizons).some(item => item.date)), summary };
+}
+
+function xiaokeSectorMainlineBacktestHtml(snapshots = xiaokeSectorSnapshotsForRange()) {
+  const result = xiaokeSectorMainlineBacktest(snapshots);
+  const summaryCard = item => `<article><span>${escapeHtml(item.days)}日后</span><b>${escapeHtml(item.hit10Rate == null ? "-" : item.hit10Rate + "%")}</b><small>前10命中 ${escapeHtml(item.hit10)} / 样本 ${escapeHtml(item.total)}；前25留存 ${escapeHtml(item.hit25Rate == null ? "-" : item.hit25Rate + "%")}</small></article>`;
+  const recent = result.rows.slice(-16).reverse();
+  return `<section class="panel sector-motion-priority" style="margin-top:12px;border-color:rgba(25,201,139,.36)">
+    <div class="metadata-head">
+      <div><div class="panel-title">主线命中率复盘</div><div class="date">把历史某天前10标准BK当作“当日主线候选”，验证 1/3/5 个交易日后是否仍在前10或前25。这个模块用来校验规则，不用于预测保证。</div></div>
+      <span class="video-group-badge">${escapeHtml(xiaokeSectorRangeLabel())}</span>
+    </div>
+    <div class="sector-audit-summary">${result.summary.map(summaryCard).join("")}</div>
+    <div class="stock-table-wrap" style="margin-top:10px"><table class="stock-table sector-prof-table"><thead><tr><th>信号日</th><th>板块</th><th>当日排名</th><th>1日后</th><th>3日后</th><th>5日后</th></tr></thead><tbody>${recent.map(row => `<tr>
+      <td><b>${escapeHtml(row.date)}</b></td>
+      <td><b>${escapeHtml(row.name)}</b><div class="date">${escapeHtml(row.code || "")}</div></td>
+      <td>第${escapeHtml(row.startRank)}<div class="${Number(row.startPct) >= 0 ? "up" : "down"}">${escapeHtml(xiaokeSectorSignedPct(row.startPct, 1))}</div></td>
+      ${[1, 3, 5].map(days => { const item = row.horizons[days] || {}; return `<td><span class="sector-reliability ${escapeHtml(item.cls || "warn")}">${escapeHtml(item.label || "无样本")}</span><div class="date">${item.rank ? `第${escapeHtml(item.rank)} · ${escapeHtml(item.date)}` : escapeHtml(item.date || "-")}</div></td>`; }).join("")}
+    </tr>`).join("") || `<tr><td colspan="6"><div class="date">历史快照不足，至少需要连续多个交易日后才能复盘命中率。</div></td></tr>`}</tbody></table></div>
+  </section>`;
+}
+
+function xiaokeSectorAnalysisRowsFromSnapshots(currentSnapshot = {}, scopedSnapshots = []) {
+  const currentRows = currentSnapshot.items || [];
+  const currentMap = new Map(currentRows.map((row, index) => [row.name, { ...row, rank: row.rank || index + 1 }]));
+  const names = uniqueClean([
+    ...currentRows.slice(0, 100).map(row => row.name),
+    ...(scopedSnapshots || []).flatMap(snapshot => (snapshot.items || []).slice(0, 50).map(row => row.name))
+  ].filter(Boolean));
+  return names.map(name => {
+    const current = currentMap.get(name) || currentRows.find(item => item.name === name) || {};
+    const currentRank = Number(current.rank || currentRows.findIndex(row => row.name === name) + 1) || 999;
+    const prev = (scopedSnapshots || []).find(snapshot => snapshot.date !== currentSnapshot.date)?.items?.find(item => item.name === name);
+    const history = (scopedSnapshots || [])
+      .map(snapshot => ({ date: snapshot.date, row: (snapshot.items || []).find(item => item.name === name) }))
+      .filter(item => item.row);
+    const ranks = history.map(item => Number(item.row.rank)).filter(Number.isFinite);
+    const top10Count = ranks.filter(rank => rank <= 10).length;
+    const top25Count = ranks.filter(rank => rank <= 25).length;
+    const avgRank = ranks.length ? Math.round(ranks.reduce((sum, rank) => sum + rank, 0) / ranks.length) : currentRank;
+    const bestRank = ranks.length ? Math.min(...ranks) : currentRank;
+    const oldRank = Number(prev?.rank) || null;
+    const delta = oldRank ? oldRank - currentRank : 0;
+    const trajectory = sectorTrajectory(name, currentRank, current);
+    const pct = Number(current.pct);
+    const breadth = Number(current.breadth);
+    const rankPower = Math.max(0, 35 - Math.min(currentRank, 35));
+    const continuityPower = top10Count * 8 + top25Count * 3;
+    const movePower = Math.max(-15, Math.min(20, delta || 0));
+    const widthPower = Number.isFinite(breadth) ? Math.max(0, Math.min(15, (breadth - 45) / 3)) : 0;
+    const dayPower = Number.isFinite(pct) ? Math.max(-8, Math.min(12, pct * 2)) : 0;
+    const motionScore = Math.round(rankPower + continuityPower + movePower + widthPower + dayPower);
+    const standard = xiaokeIsStandardSector(current);
+    let bucket = standard ? "观察" : "样本观察";
+    if (standard && currentRank <= 10 && (top10Count >= 2 || motionScore >= 58)) bucket = "主线确认";
+    else if (standard && currentRank <= 25 && (top25Count >= 2 || motionScore >= 42)) bucket = "次主线跟随";
+    else if (standard && ((delta >= 8 && currentRank <= 40) || trajectory.phase === "启动" || trajectory.phase === "升温")) bucket = "升温启动";
+    else if (standard && ((oldRank && oldRank <= 15 && currentRank > 25) || trajectory.phase === "退潮" || trajectory.phase === "降温")) bucket = "退潮降温";
+    else if (standard && !oldRank && currentRank <= 25) bucket = "新观察";
+    return {
+      name,
+      code: current.code || "",
+      current,
+      source: current.source || "",
+      dataBasis: current.dataBasis || (/^BK\d{4,6}$/i.test(current.code || "") ? "东方财富标准板块" : "本地样本"),
+      bucket,
+      currentRank,
+      oldRank,
+      avgRank,
+      bestRank,
+      top10Count,
+      top25Count,
+      motionScore,
+      trajectory
+    };
+  });
+}
+
+function xiaokeSectorRuleCandidatesForSnapshot(snapshot = {}, scopedSnapshots = [], ruleKey = "legacy") {
+  if (ruleKey === "legacy") {
+    return (snapshot.items || [])
+      .filter(item => xiaokeIsStandardSector(item) && Number(item.rank) <= 10)
+      .slice(0, 5)
+      .map(item => ({ name: item.name, code: item.code || "", rank: Number(item.rank), pct: xiaokeFiniteNumberOrNull(item.pct), stage: "当日前10" }));
+  }
+  const analysis = xiaokeSectorAnalysisRowsFromSnapshots(snapshot, scopedSnapshots);
+  const rows = xiaokeSectorLifecycleRows(analysis, scopedSnapshots)
+    .filter(row => ["主升确认", "启动试探", "修复回流", "分歧换手"].includes(row.lifecycle.stage))
+    .filter(row => !xiaokeSectorInvalidationRules(row).hardStop);
+  const stagePriority = { "主升确认": 1, "启动试探": 2, "修复回流": 3, "分歧换手": 4 };
+  return rows
+    .sort((a, b) => (stagePriority[a.lifecycle.stage] || 9) - (stagePriority[b.lifecycle.stage] || 9) || b.lifecycle.score - a.lifecycle.score)
+    .slice(0, 5)
+    .map(row => ({ name: row.name, code: row.code || row.current?.code || "", rank: Number(row.lifecycle.latestRank), pct: xiaokeFiniteNumberOrNull(row.lifecycle.pct), stage: row.lifecycle.stage }));
+}
+
+function xiaokeSectorRuleVersionBacktest(snapshots = xiaokeSectorSnapshotsForRange()) {
+  const chronological = (snapshots || []).slice().reverse();
+  const horizons = [1, 3, 5];
+  const rules = [
+    { key: "legacy", label: "旧规则：只看当日前10" },
+    { key: "lifecycle", label: "新规则：生命周期候选" }
+  ];
+  const rows = [];
+  chronological.forEach((snapshot, index) => {
+    const scopedSnapshots = chronological.slice(0, index + 1).reverse();
+    rules.forEach(rule => {
+      const seen = new Set();
+      const candidates = xiaokeSectorRuleCandidatesForSnapshot(snapshot, scopedSnapshots, rule.key)
+        .filter(item => {
+          const key = item.code || item.name;
+          if (!key || seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      candidates.forEach(item => {
+        const result = { ruleKey: rule.key, ruleLabel: rule.label, date: snapshot.date, name: item.name, code: item.code, stage: item.stage, startRank: item.rank, startPct: item.pct, horizons: {} };
+        horizons.forEach(days => {
+          const future = chronological[index + days];
+          const next = future?.items?.find(row => row.name === item.name || (item.code && row.code === item.code));
+          const status = xiaokeSectorBacktestStatus(next?.rank);
+          result.horizons[days] = { date: future?.date || "", rank: next?.rank ?? null, pct: xiaokeFiniteNumberOrNull(next?.pct), ...status };
+        });
+        rows.push(result);
+      });
+    });
+  });
+  const summary = rules.flatMap(rule => horizons.map(days => {
+    const available = rows.filter(row => row.ruleKey === rule.key && row.horizons[days]?.date);
+    const hit10 = available.filter(row => row.horizons[days].hit10).length;
+    const hit25 = available.filter(row => row.horizons[days].hit25).length;
+    return {
+      ruleKey: rule.key,
+      label: rule.label,
+      days,
+      total: available.length,
+      hit10,
+      hit25,
+      hit10Rate: available.length ? Math.round(hit10 / available.length * 100) : null,
+      hit25Rate: available.length ? Math.round(hit25 / available.length * 100) : null
+    };
+  }));
+  return { rules, horizons, rows: rows.filter(row => Object.values(row.horizons).some(item => item.date)), summary };
+}
+
+function xiaokeSectorRuleVersionCompareHtml(snapshots = xiaokeSectorSnapshotsForRange()) {
+  const result = xiaokeSectorRuleVersionBacktest(snapshots);
+  const summaryCard = item => `<article class="${item.ruleKey === "lifecycle" ? "health-strong" : ""}"><span>${escapeHtml(item.label)} · ${escapeHtml(item.days)}日</span><b>${escapeHtml(item.hit10Rate == null ? "-" : item.hit10Rate + "%")}</b><small>前10命中 ${escapeHtml(item.hit10)} / 样本 ${escapeHtml(item.total)}；前25留存 ${escapeHtml(item.hit25Rate == null ? "-" : item.hit25Rate + "%")}</small></article>`;
+  const recent = result.rows.slice(-18).reverse();
+  return `<section class="panel sector-rule-compare" style="margin-top:12px">
+    <div class="metadata-head">
+      <div><div class="panel-title">规则版本对照</div><div class="date">把旧规则“当天前10”和新规则“生命周期候选”放回历史快照里复盘，比较 1/3/5 日后是否仍留在前排。样本少时只看方向，不作绝对结论。</div></div>
+      <span class="video-group-badge">${escapeHtml(XIAOKE_SECTOR_MAINLINE_FORMULA_VERSION)}</span>
+    </div>
+    <div class="sector-audit-summary">${result.summary.map(summaryCard).join("")}</div>
+    <div class="stock-table-wrap" style="margin-top:10px"><table class="stock-table sector-prof-table"><thead><tr><th>规则</th><th>信号日</th><th>候选</th><th>信号阶段</th><th>1日后</th><th>3日后</th><th>5日后</th></tr></thead><tbody>${recent.map(row => `<tr>
+      <td><b>${escapeHtml(row.ruleLabel.replace(/^.*?：/, ""))}</b></td>
+      <td>${escapeHtml(row.date)}</td>
+      <td><b>${escapeHtml(row.name)}</b><div class="date">${escapeHtml(row.code || "")}</div></td>
+      <td>${escapeHtml(row.stage || "-")}<div class="date">第${escapeHtml(row.startRank || "-")}</div></td>
+      ${[1, 3, 5].map(days => { const item = row.horizons[days] || {}; return `<td><span class="sector-reliability ${escapeHtml(item.cls || "warn")}">${escapeHtml(item.label || "无样本")}</span><div class="date">${item.rank ? `第${escapeHtml(item.rank)} · ${escapeHtml(item.date)}` : escapeHtml(item.date || "-")}</div></td>`; }).join("")}
+    </tr>`).join("") || `<tr><td colspan="7"><div class="date">快照不足，回填更多历史后再对照规则。</div></td></tr>`}</tbody></table></div>
+  </section>`;
+}
+
+function xiaokeSectorTimestampValue(value) {
+  if (!value) return null;
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : null;
+}
+
+function xiaokeFormatFreshnessAge(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return "未知";
+  const minutes = Math.round(ms / 60000);
+  if (minutes < 1) return "刚刚";
+  if (minutes < 60) return `${minutes}分钟前`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours}小时前`;
+  return `${Math.round(hours / 24)}天前`;
+}
+
+function xiaokeSectorFreshness(row = {}, meta = {}) {
+  const current = row.current || row;
+  const sourceText = [current.source, current.rankingSource, row.source, row.rankingSource, meta.source].filter(Boolean).join(" / ");
+  const mode = current.quoteMode || row.quoteMode || meta.quoteMode || (/历史K线|收盘|缓存/.test(sourceText) ? "close" : "intraday");
+  const timestamp = xiaokeSectorTimestampValue(current.sourceAt || row.sourceAt || current.asOf || row.asOf || meta.asOf || meta.sourceAt);
+  if (!timestamp) return { cls: "warn", label: "无时间戳", ageText: "未知", timestamp: null, mode, penalty: -5 };
+  const ageMs = Date.now() - timestamp;
+  const intradayLimit = 30 * 60 * 1000;
+  const closeLimit = 40 * 60 * 60 * 1000;
+  const cacheLimit = 2 * 60 * 60 * 1000;
+  const limit = /缓存/.test(sourceText) ? cacheLimit : mode === "close" ? closeLimit : intradayLimit;
+  const softLimit = mode === "close" ? 16 * 60 * 60 * 1000 : 10 * 60 * 1000;
+  let cls = "good";
+  let label = "SLA正常";
+  let penalty = 5;
+  if (ageMs > limit) { cls = "bad"; label = "已过期"; penalty = -14; }
+  else if (ageMs > softLimit) { cls = "warn"; label = "偏旧"; penalty = -6; }
+  else if (mode === "close") { cls = "ok"; label = "收盘可用"; penalty = 3; }
+  return { cls, label, ageText: xiaokeFormatFreshnessAge(ageMs), timestamp, mode, penalty };
+}
+
+function xiaokeSectorReliability(row = {}, meta = {}) {
+  const current = row.current || row;
+  const sourceText = [current.source, current.rankingSource, row.source, row.rankingSource, current.dataBasis, row.dataBasis].filter(Boolean).join(" / ");
+  const code = String(current.code || row.code || "").trim().toUpperCase();
+  const pct = Number(current.pct ?? row.pct);
+  const pct60 = Number(current.pct60 ?? row.pct60);
+  const upCount = Number(current.upCount ?? row.upCount);
+  const downCount = Number(current.downCount ?? row.downCount);
+  const reasons = [];
+  let score = 22;
+  if (/东方财富/.test(sourceText) && !/历史K线/.test(sourceText)) {
+    score += 35;
+    reasons.push("东方财富实时/板块行情");
+  } else if (/东方财富.*历史K线|历史K线校准/.test(sourceText)) {
+    score += 30;
+    reasons.push("东方财富BK历史K线校准");
+  } else if (/QMT|国信/.test(sourceText)) {
+    score += 28;
+    reasons.push("QMT本地终端");
+  } else if (/新浪|腾讯|公开行情|回退/.test(sourceText)) {
+    score += 16;
+    reasons.push("公开回退行情");
+  } else if (/本地|自定义|管理分组|样本/.test(sourceText) || current.localOnly || row.localOnly) {
+    score += 8;
+    reasons.push("本地样本");
+  }
+  if (/^BK\d{4,6}$/.test(code)) {
+    score += 18;
+    reasons.push("已匹配东方财富BK代码");
+  } else if (current.localMatched || row.localMatched) {
+    score += 10;
+    reasons.push("已并入标准板块");
+  } else {
+    score -= 8;
+    reasons.push("未匹配标准板块");
+  }
+  if (/东方财富标准板块|BK标准|标准板块/.test(sourceText)) score += 8;
+  if (/本地样本|自定义|管理分组/.test(sourceText) || current.localOnly || row.localOnly) score -= 8;
+  if (Number.isFinite(pct)) score += 8;
+  else { score -= 12; reasons.push("缺少今日涨跌"); }
+  if (Number.isFinite(pct60)) score += 5;
+  if (Number.isFinite(upCount) && Number.isFinite(downCount) && upCount + downCount > 0) score += 7;
+  else reasons.push("成分宽度不足");
+  const freshness = xiaokeSectorFreshness(current, meta);
+  score += freshness.penalty;
+  reasons.push(`${freshness.label}(${freshness.ageText})`);
+  const sourceDiffValue = xiaokeFiniteNumberOrNull(current.sourceDiffAbs ?? row.sourceDiffAbs);
+  const sourceDiffAbs = sourceDiffValue === null ? null : Math.abs(sourceDiffValue);
+  if (sourceDiffAbs !== null && sourceDiffAbs >= 5) {
+    score -= 16;
+    reasons.push("多源涨跌严重偏离");
+  } else if (sourceDiffAbs !== null && sourceDiffAbs >= 2) {
+    score -= 8;
+    reasons.push("多源涨跌需复核");
+  }
+  if (/实时列表失败|fetch failed|不可用/.test([meta.warning, meta.error].filter(Boolean).join(" / "))) score -= 6;
+  score = Math.max(0, Math.min(100, Math.round(score)));
+  const cls = score >= 82 ? "good" : score >= 68 ? "ok" : score >= 52 ? "warn" : "bad";
+  const label = score >= 82 ? "高可信" : score >= 68 ? "可用" : score >= 52 ? "需复核" : "低可信";
+  return { score, label, cls, reasons: uniqueClean(reasons).slice(0, 5) };
+}
+
+function xiaokeSectorReliabilityBadgeHtml(row = {}, meta = {}) {
+  const item = xiaokeSectorReliability(row, meta);
+  return `<span class="sector-reliability ${escapeHtml(item.cls)}" title="${escapeHtml(item.reasons.join("；"))}">${escapeHtml(item.score)} · ${escapeHtml(item.label)}</span>`;
+}
+
+function xiaokeSectorSourceCellHtml(row = {}, meta = {}) {
+  const diff = xiaokeFiniteNumberOrNull(row.sourceDiffAbs ?? row.current?.sourceDiffAbs);
+  const diffBadge = Number.isFinite(diff) && diff >= 2
+    ? `<div class="date"><span class="sector-source-diff ${diff >= 5 ? "bad" : "warn"}">多源差 ${escapeHtml(diff.toFixed(2))}pct</span></div>`
+    : "";
+  const freshness = xiaokeSectorFreshness(row, meta);
+  return `${xiaokeSectorReliabilityBadgeHtml(row, meta)}<div class="date">${escapeHtml(row.source || row.rankingSource || "-")}</div><div class="date"><span class="sector-source-diff ${escapeHtml(freshness.cls)}">${escapeHtml(freshness.label)} · ${escapeHtml(freshness.ageText)}</span></div>${diffBadge}`;
+}
+
+function xiaokeSectorDataAlertsHtml(rows = [], meta = {}, canUseCache = false) {
+  const list = Array.isArray(rows) ? rows : [];
+  const sourceText = [meta.source, meta.warning, ...list.slice(0, 100).map(row => row.source || row.rankingSource || "")].filter(Boolean).join(" / ");
+  const fallbackRows = list.filter(row => /新浪|缓存|回退/.test(row.source || row.rankingSource || ""));
+  const sourceDiffRows = list.filter(row => {
+    const diff = xiaokeFiniteNumberOrNull(row.sourceDiffAbs);
+    return diff !== null && diff >= 2;
+  });
+  const sampleRows = list.filter(row => xiaokeSectorIsLocalSample(row) && !row.localMatched);
+  const staleRows = list.filter(row => ["bad", "warn"].includes(xiaokeSectorFreshness(row, meta).cls));
+  const zeroRows = list.filter(row => {
+    const pct = Number(row.pct);
+    const up = Number(row.upCount);
+    const down = Number(row.downCount);
+    return (!Number.isFinite(pct) || pct === 0) && up === 0 && down === 0 && !/^BK\d{4,6}$/i.test(row.code || "");
+  });
+  const highTrust = list.filter(row => xiaokeSectorReliability(row, meta).score >= 82).length;
+  const standard = list.filter(row => xiaokeIsStandardSector(row)).length;
+  const alerts = [];
+  if (/实时列表失败|fetch failed|不可用/.test(sourceText)) alerts.push({ cls: "warn", title: "东方财富实时未在线", text: "页面已自动转向BK历史K线校准或公开回退；盘中涨跌要以质量灯为准。" });
+  if (fallbackRows.length) alerts.push({ cls: "warn", title: "存在回退源", text: `${fallbackRows.length} 个板块使用新浪/缓存等临时源，只适合临时观察。` });
+  if (sourceDiffRows.length) alerts.push({ cls: "bad", title: "多源涨跌有偏离", text: `${sourceDiffRows.length} 个板块东方财富与回退源差异超过 2pct，已在差异校验表列出。` });
+  if (staleRows.length) alerts.push({ cls: "warn", title: "SLA时间偏旧", text: `${staleRows.length} 个板块的数据更新时间偏旧，表格“可信度/来源”列已标出。` });
+  if (sampleRows.length) alerts.push({ cls: "sample", title: "本地样本未匹配", text: `${sampleRows.length} 个细分/产业链没有BK标准板块，不能进入主线核心判断。` });
+  if (zeroRows.length) alerts.push({ cls: "bad", title: "疑似数据断层", text: `${zeroRows.length} 个板块缺少有效涨跌或成分宽度，建议先隐藏或补匹配。` });
+  if (canUseCache) alerts.push({ cls: "ok", title: "当前为缓存展示", text: "页面先用最近一次结果秒开；点“刷新今日榜”会强制重新连接行情源。" });
+  if (!alerts.length) alerts.push({ cls: "good", title: "数据状态可用", text: `高可信 ${highTrust} 个，东方财富标准板块 ${standard} 个；可继续看轨迹和归因。` });
+  return `<section class="sector-data-alerts">
+    <div class="metadata-head">
+      <div><div class="panel-title">数据异常提醒</div><div class="date">把可能误导主线判断的情况提前亮出来：回退源、未匹配样本、0涨跌断层和缓存展示。</div></div>
+      <span class="video-group-badge">高可信 ${escapeHtml(highTrust)} / 标准 ${escapeHtml(standard)}</span>
+    </div>
+    <div class="sector-alert-grid">${alerts.slice(0, 4).map(item => `<article class="${escapeHtml(item.cls)}"><b>${escapeHtml(item.title)}</b><span>${escapeHtml(item.text)}</span></article>`).join("")}</div>
+  </section>`;
+}
+
+function xiaokeSectorSourceDiffAuditHtml(rows = []) {
+  const list = (rows || [])
+    .map(row => ({ ...row, diffAbs: xiaokeFiniteNumberOrNull(row.sourceDiffAbs), diff: xiaokeFiniteNumberOrNull(row.sourceDiff), fallbackPctNumber: xiaokeFiniteNumberOrNull(row.fallbackPct) }))
+    .filter(row => row.diffAbs !== null && row.diff !== null)
+    .sort((a, b) => b.diffAbs - a.diffAbs);
+  const abnormal = list.filter(row => row.diffAbs >= 2);
+  const severe = list.filter(row => row.diffAbs >= 5);
+  const rowHtml = row => {
+    const cls = row.diffAbs >= 5 ? "bad" : row.diffAbs >= 2 ? "warn" : "good";
+    const pctNumber = xiaokeFiniteNumberOrNull(row.pct);
+    const fallbackPctNumber = xiaokeFiniteNumberOrNull(row.fallbackPctNumber);
+    return `<tr>
+      <td><b>${escapeHtml(row.name)}</b><div class="date">${escapeHtml(row.code || "")}</div></td>
+      <td class="${pctNumber === null ? "" : pctNumber >= 0 ? "up" : "down"}">${escapeHtml(xiaokeSectorSignedPct(pctNumber, 2))}<div class="date">${escapeHtml(row.klineDate || "BK日线")}</div></td>
+      <td class="${fallbackPctNumber === null ? "" : fallbackPctNumber >= 0 ? "up" : "down"}">${escapeHtml(xiaokeSectorSignedPct(fallbackPctNumber, 2))}<div class="date">${escapeHtml(row.fallbackSource || "-")}</div></td>
+      <td><span class="sector-source-diff ${cls}">${escapeHtml((row.diff >= 0 ? "+" : "") + row.diff.toFixed(2))}pct</span></td>
+      <td>${escapeHtml(row.diffAbs >= 5 ? "严重偏离，今日只信东方财富BK口径" : row.diffAbs >= 2 ? "需要复核，避免回退源误导" : "差异正常")}</td>
+    </tr>`;
+  };
+  return `<section class="sector-source-audit">
+    <div class="metadata-head">
+      <div><div class="panel-title">多源差异校验</div><div class="date">主口径使用东方财富 BK 实时Quote/历史K线；回退源只做对照。差异超过 2pct 提醒，超过 5pct 按严重偏离处理。</div></div>
+      <span class="video-group-badge">${escapeHtml(abnormal.length)} 个偏离 / ${escapeHtml(severe.length)} 个严重</span>
+    </div>
+    ${list.length ? `<div class="stock-table-wrap"><table class="stock-table sector-prof-table"><thead><tr><th>板块</th><th>东方财富BK</th><th>回退源</th><th>差异</th><th>处理建议</th></tr></thead><tbody>${list.slice(0, 18).map(rowHtml).join("")}</tbody></table></div>` : `<div class="empty-state"><b>暂无可比对差异</b><p>当前没有同时拥有东方财富 BK 校准和回退源涨跌的板块。实时源恢复时这里也可能为空，这是正常状态。</p></div>`}
+  </section>`;
+}
+
+function xiaokeSectorRedlineAlertsHtml(rows = [], meta = {}) {
+  const list = Array.isArray(rows) ? rows : [];
+  const diffRows = list
+    .filter(row => {
+      const diff = xiaokeFiniteNumberOrNull(row.sourceDiffAbs);
+      return diff !== null && diff >= 2;
+    })
+    .sort((a, b) => Number(b.sourceDiffAbs || 0) - Number(a.sourceDiffAbs || 0));
+  const staleRows = list.filter(row => xiaokeSectorFreshness(row, meta).cls === "bad");
+  const fallbackRows = list.filter(row => /新浪|缓存|回退/.test(row.source || row.rankingSource || ""));
+  const sampleTopRows = list.filter(row => xiaokeSectorIsLocalSample(row) && !row.localMatched && Number(row.rank || 999) <= 25);
+  const redlines = [
+    diffRows.length ? { cls: "bad", title: "多源涨跌红线", text: `${diffRows.length} 个板块差异超过 2pct，优先复核：${diffRows.slice(0, 4).map(row => row.name).join("、")}` } : null,
+    staleRows.length ? { cls: "bad", title: "数据过期红线", text: `${staleRows.length} 个板块超过SLA时限，不建议用于盘中判断。` } : null,
+    fallbackRows.length ? { cls: "warn", title: "回退源红线", text: `${fallbackRows.length} 个板块仍在使用临时源，主线判断应降权。` } : null,
+    sampleTopRows.length ? { cls: "warn", title: "样本冒充板块红线", text: `${sampleTopRows.length} 个本地样本进入前25但未匹配BK，先锁定映射或隐藏。` } : null
+  ].filter(Boolean);
+  if (!redlines.length) return "";
+  return `<section class="sector-data-alerts" style="border-color:rgba(239,60,99,.38)">
+    <div class="metadata-head">
+      <div><div class="panel-title">红线告警</div><div class="date">这些情况会直接影响板块强弱可信度：多源偏离、数据过期、回退源、本地样本未匹配。</div></div>
+      <span class="video-group-badge">${escapeHtml(redlines.length)} 类红线</span>
+    </div>
+    <div class="sector-alert-grid">${redlines.map(item => `<article class="${escapeHtml(item.cls)}"><b>${escapeHtml(item.title)}</b><span>${escapeHtml(item.text)}</span></article>`).join("")}</div>
+  </section>`;
+}
+
+function xiaokeSectorConcentrationTrendHtml(limit = 10) {
+  const rows = readSectorAttributionSnapshots().filter(item => item.concentration && item.concentration.top3Share != null);
+  const groups = new Map();
+  rows.forEach(item => {
+    const key = String(item.code || item.name || "").toUpperCase();
+    if (!key) return;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  });
+  const trendRows = Array.from(groups.values()).map(list => {
+    const sorted = list.slice().sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    const latest = sorted[0];
+    const previous = sorted[1] || null;
+    const latestShare = Number(latest.concentration?.top3Share);
+    const previousShare = Number(previous?.concentration?.top3Share);
+    const delta = Number.isFinite(previousShare) ? latestShare - previousShare : null;
+    let state = latest.concentration?.label || "暂无";
+    let cls = latest.concentration?.cls || "neutral";
+    if (delta !== null && delta >= 10) { state = "集中度升高"; cls = "warn"; }
+    else if (delta !== null && delta <= -10) { state = "扩散改善"; cls = "good"; }
+    return { latest, sorted, latestShare, previousShare, delta, state, cls };
+  }).sort((a, b) => Number(b.latestShare || 0) - Number(a.latestShare || 0)).slice(0, limit);
+  const pill = item => `<span class="sector-rank-pill ${item.concentration?.top3Share >= 70 ? "rank-weak" : item.concentration?.top3Share >= 45 ? "rank-watch" : "rank-main"}" title="${escapeHtml(item.date)} 前3贡献${escapeHtml(item.concentration?.top3Share)}%">${escapeHtml(item.concentration?.top3Share ?? "-")}</span>`;
+  return `<section class="panel sector-attribution-timeline" style="margin-top:12px">
+    <div class="metadata-head">
+      <div><div class="panel-title">贡献集中度趋势</div><div class="date">看主线内部是扩散还是越来越依赖少数股票。前3贡献越高，越要警惕“只剩龙头硬拉”。</div></div>
+      <span class="video-group-badge">${escapeHtml(trendRows.length)} 个板块</span>
+    </div>
+    <div class="stock-table-wrap"><table class="stock-table sector-prof-table"><thead><tr><th>板块</th><th>最新集中度</th><th>变化</th><th>最近记录</th><th>解读</th></tr></thead><tbody>${trendRows.map(row => `<tr>
+      <td><b>${escapeHtml(row.latest.name)}</b><div class="date">${escapeHtml(row.latest.code || "")}</div></td>
+      <td><span class="sector-reliability ${escapeHtml(row.cls)}">${escapeHtml(row.latestShare)}%</span><div class="date">${escapeHtml(row.latest.concentration?.label || "")}</div></td>
+      <td class="${row.delta === null || row.delta <= 0 ? "up" : "down"}">${escapeHtml(row.delta === null ? "-" : `${row.delta > 0 ? "+" : ""}${row.delta}%`)}</td>
+      <td><div class="sector-rank-track">${row.sorted.slice(0, 8).map(pill).join("")}</div></td>
+      <td>${escapeHtml(row.state === "扩散改善" ? "贡献更分散，主线健康度提高" : row.state === "集中度升高" ? "贡献更集中，注意龙头断档风险" : "维持当前结构，结合宽度继续观察")}</td>
+    </tr>`).join("") || `<tr><td colspan="5"><div class="date">暂无集中度历史。先刷新当前主线归因，后续会自动形成趋势。</div></td></tr>`}</tbody></table></div>
+  </section>`;
+}
+
+function editSectorMappingRegistry() {
+  const sourceRows = xiaokeReadSectorMappingRegistry();
+  const lockedBefore = new Map(sourceRows.filter(xiaokeSectorMappingLocked).map(item => [xiaokeSectorMappingKey(item.alias), item]));
+  const current = sourceRows.map(item => ({
+    alias: item.alias,
+    matchName: item.matchName || "",
+    code: item.code || "",
+    confidence: item.confidence || 50,
+    status: item.status || "待人工确认",
+    locked: xiaokeSectorMappingLocked(item),
+    note: item.note || ""
+  }));
+  const text = prompt("编辑板块映射字典(JSON数组)。字段：alias/matchName/code/confidence/status/locked/note。已锁定项要先点“解锁”才能改BK。", JSON.stringify(current, null, 2));
+  if (text === null) return;
+  try {
+    const data = JSON.parse(text || "[]");
+    if (!Array.isArray(data)) throw new Error("必须是数组");
+    const blocked = data.find(row => {
+      const before = lockedBefore.get(xiaokeSectorMappingKey(row.alias));
+      if (!before) return false;
+      const changedTarget = String(before.matchName || "") !== String(row.matchName || "") || String(before.code || "").toUpperCase() !== String(row.code || "").toUpperCase();
+      const changedLock = row.locked === false;
+      return changedTarget || changedLock;
+    });
+    if (blocked) throw new Error(`${blocked.alias} 已锁定，先在表格里点“解锁”再修改`);
+    localStorage.setItem(XIAOKE_SECTOR_MAPPING_REGISTRY_KEY, JSON.stringify(data));
+    showToast("映射字典已保存");
+    renderSectorStrength({ skipFetch: true });
+  } catch (error) {
+    showToast(`映射字典格式错误：${error.message}`);
+  }
+}
+
+function xiaokeSectorMappingCsvEscape(value = "") {
+  return `"${String(value ?? "").replace(/"/g, '""')}"`;
+}
+
+function exportSectorMappingRegistryCsv() {
+  const rows = xiaokeReadSectorMappingRegistry();
+  const columns = ["alias", "matchName", "code", "confidence", "status", "locked", "note"];
+  const csv = [columns.join(","), ...rows.map(row => columns.map(key => xiaokeSectorMappingCsvEscape(key === "locked" ? xiaokeSectorMappingLocked(row) : row[key] ?? "")).join(","))].join("\r\n");
+  const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `板块映射字典-${todayString()}.csv`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 500);
+}
+
+function xiaokeParseSectorMappingCsv(text = "") {
+  const lines = String(text || "").split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  if (!lines.length) return [];
+  const split = line => {
+    const cells = [];
+    let current = "";
+    let quoted = false;
+    for (let index = 0; index < line.length; index += 1) {
+      const char = line[index];
+      if (char === '"' && line[index + 1] === '"') { current += '"'; index += 1; continue; }
+      if (char === '"') { quoted = !quoted; continue; }
+      if (char === "," && !quoted) { cells.push(current); current = ""; continue; }
+      current += char;
+    }
+    cells.push(current);
+    return cells.map(cell => cell.trim());
+  };
+  const header = split(lines[0]).map(item => item.replace(/^\ufeff/, ""));
+  return lines.slice(1).map(line => {
+    const cells = split(line);
+    const row = {};
+    header.forEach((key, index) => row[key] = cells[index] ?? "");
+    return row.alias ? {
+      alias: row.alias,
+      matchName: row.matchName || "",
+      code: String(row.code || "").toUpperCase(),
+      confidence: Number(row.confidence || 50),
+      status: row.status || "待人工确认",
+      locked: /^(true|1|yes|y|是|锁定)$/i.test(String(row.locked || "")) || /锁定/.test(row.status || ""),
+      note: row.note || ""
+    } : null;
+  }).filter(Boolean);
+}
+
+function importSectorMappingRegistry() {
+  const text = prompt("粘贴映射字典 CSV 或 JSON。CSV字段：alias,matchName,code,confidence,status,note");
+  if (text === null) return;
+  try {
+    const rows = /^\s*\[/.test(text) ? JSON.parse(text) : xiaokeParseSectorMappingCsv(text);
+    if (!Array.isArray(rows)) throw new Error("必须是数组或CSV");
+    localStorage.setItem(XIAOKE_SECTOR_MAPPING_REGISTRY_KEY, JSON.stringify(rows));
+    showToast(`已导入 ${rows.length} 条板块映射`);
+    renderSectorStrength({ skipFetch: true });
+  } catch (error) {
+    showToast(`导入失败：${error.message}`);
+  }
+}
+
+function lockSectorMapping(alias = "", matchName = "", code = "") {
+  if (!alias) return;
+  const rows = xiaokeReadSectorMappingRegistry().map(item => ({
+    alias: item.alias,
+    matchName: item.matchName || "",
+    code: item.code || "",
+    confidence: item.confidence || 50,
+    status: item.status || "待人工确认",
+    locked: xiaokeSectorMappingLocked(item),
+    note: item.note || ""
+  }));
+  const index = rows.findIndex(item => xiaokeSectorMappingKey(item.alias) === xiaokeSectorMappingKey(alias));
+  const next = {
+    ...(index >= 0 ? rows[index] : { alias }),
+    alias,
+    matchName: matchName || (index >= 0 ? rows[index].matchName : ""),
+    code: String(code || (index >= 0 ? rows[index].code : "")).toUpperCase(),
+    confidence: 100,
+    status: "已确认锁定",
+    locked: true,
+    note: "人工确认：主线判断按此东方财富BK口径"
+  };
+  if (index >= 0) rows[index] = next;
+  else rows.push(next);
+  localStorage.setItem(XIAOKE_SECTOR_MAPPING_REGISTRY_KEY, JSON.stringify(rows));
+  showToast(`${alias} 已锁定到 ${next.matchName || next.code || "指定BK"}`);
+  renderSectorStrength({ skipFetch: true });
+}
+
+function unlockSectorMapping(alias = "") {
+  if (!alias) return;
+  if (!confirm(`${alias} 已锁定。解锁后才允许修改目标 BK，确认解锁？`)) return;
+  const rows = xiaokeReadSectorMappingRegistry().map(item => ({
+    alias: item.alias,
+    matchName: item.matchName || "",
+    code: item.code || "",
+    confidence: item.confidence || 50,
+    status: xiaokeSectorMappingKey(item.alias) === xiaokeSectorMappingKey(alias) ? "已确认未锁定" : item.status || "待人工确认",
+    locked: xiaokeSectorMappingKey(item.alias) === xiaokeSectorMappingKey(alias) ? false : xiaokeSectorMappingLocked(item),
+    note: item.note || ""
+  }));
+  localStorage.setItem(XIAOKE_SECTOR_MAPPING_REGISTRY_KEY, JSON.stringify(rows));
+  showToast(`${alias} 已解锁，可以编辑映射`);
+  renderSectorStrength({ skipFetch: true });
+}
+
+function resetSectorMappingRegistry() {
+  if (!confirm("恢复默认映射字典？这会清除你手动改过的映射。")) return;
+  localStorage.removeItem(XIAOKE_SECTOR_MAPPING_REGISTRY_KEY);
+  showToast("已恢复默认映射字典");
+  renderSectorStrength({ skipFetch: true });
+}
+
+function xiaokeSectorMappingRegistryHtml(allRows = []) {
+  const rows = xiaokeReadSectorMappingRegistry();
+  const marketRows = allRows || [];
+  const rowHtml = item => {
+    const code = String(item.code || "").trim().toUpperCase();
+    const matchKey = xiaokeSectorNameKey(item.matchName || "");
+    const matched = code
+      ? marketRows.find(row => String(row.code || "").toUpperCase() === code)
+      : matchKey ? marketRows.find(row => xiaokeSectorNameKey(row.name) === matchKey) : null;
+    const confidence = Number(item.confidence || 0);
+    const locked = xiaokeSectorMappingLocked(item);
+    const statusCls = matched ? "strategy-audit-ok" : confidence >= 80 ? "strategy-audit-ok" : "strategy-audit-fail";
+    const pct = xiaokeFiniteNumberOrNull(matched?.pct);
+    return `<tr>
+      <td><b>${escapeHtml(item.alias)}</b><div class="date">${escapeHtml(item.note || "-")}</div></td>
+      <td><span class="${statusCls}">${escapeHtml(locked ? "已锁定" : matched ? "已落到BK" : item.status || "待确认")}</span><div class="date">置信度 ${escapeHtml(confidence)}%${locked ? " · 防误改" : ""}</div></td>
+      <td><b>${escapeHtml(item.matchName || "-")}</b><div class="date">${escapeHtml(code || "未绑定BK代码")}</div></td>
+      <td>${matched ? `<b>${escapeHtml(matched.name)}</b><div class="date">${escapeHtml(matched.code || "")}</div>` : "<span class=\"date\">当前行情未匹配</span>"}</td>
+      <td class="${pct === null ? "" : pct >= 0 ? "up" : "down"}">${escapeHtml(xiaokeSectorSignedPct(pct, 2))}</td>
+      <td>${locked ? `<button class="small-btn" onclick='unlockSectorMapping(${JSON.stringify(item.alias)})'>解锁</button>` : matched ? `<button class="small-btn" onclick='lockSectorMapping(${JSON.stringify(item.alias)}, ${JSON.stringify(matched.name)}, ${JSON.stringify(matched.code || "")})'>锁定</button>` : `<button class="small-btn" onclick="editSectorMappingRegistry()">编辑</button>`}</td>
+    </tr>`;
+  };
+  const confirmed = rows.filter(row => Number(row.confidence || 0) >= 80 && (row.code || row.matchName)).length;
+  const lockedCount = rows.filter(xiaokeSectorMappingLocked).length;
+  const pending = rows.length - confirmed;
+  return `<section class="sector-source-audit">
+    <div class="metadata-head">
+      <div><div class="panel-title">板块映射字典</div><div class="date">把你的细分/产业链名称映射到东方财富标准 BK。已确认的用于主线判断；待确认的只作为样本观察。</div></div>
+      <div class="review-actions"><span class="video-group-badge">确认 ${escapeHtml(confirmed)} / 锁定 ${escapeHtml(lockedCount)} / 待确认 ${escapeHtml(pending)}</span><button class="small-btn" onclick="exportSectorMappingRegistryCsv()">导出CSV</button><button class="small-btn" onclick="importSectorMappingRegistry()">导入</button><button class="small-btn" onclick="editSectorMappingRegistry()">编辑映射</button><button class="small-btn" onclick="resetSectorMappingRegistry()">恢复默认</button></div>
+    </div>
+    <div class="stock-table-wrap" style="margin-top:10px"><table class="stock-table sector-prof-table"><thead><tr><th>本地/别名</th><th>状态</th><th>目标BK</th><th>当前落点</th><th>今日涨跌</th><th>操作</th></tr></thead><tbody>${rows.map(rowHtml).join("")}</tbody></table></div>
+  </section>`;
+}
+
+function xiaokeSectorBkAuditRows(allRows = [], marketRows = []) {
+  const market = (marketRows || []).filter(row => row && row.name);
+  const merged = allRows || [];
+  return xiaokeCustomSectorRankingRows().map(local => {
+    const standard = xiaokeFindStandardSectorMatch(local, market);
+    const mergedRow = merged.find(row => {
+      const localNames = Array.isArray(row.localNames) ? row.localNames : [];
+      const localChains = Array.isArray(row.localGroupChains) ? row.localGroupChains : [];
+      return localNames.includes(local.name) || (local.groupChain && localChains.includes(local.groupChain)) || row.name === local.name;
+    }) || standard || null;
+    const matched = Boolean(standard || (mergedRow && (mergedRow.localMatched || /^BK\d{4,6}$/i.test(mergedRow.code || ""))));
+    const matchedRow = standard || mergedRow || {};
+    const samplePct = xiaokeFiniteNumberOrNull(local.pct);
+    const bkPct = xiaokeFiniteNumberOrNull(matchedRow.pct);
+    const sampleDiff = matched && samplePct !== null && bkPct !== null
+      ? Number((samplePct - bkPct).toFixed(2))
+      : null;
+    return {
+      name: local.name,
+      key: xiaokeSectorCompareKey(local),
+      sourceType: xiaokeSectorRowSourceType(local),
+      sourceLabel: xiaokeSectorSourceLabel(local) || "细分",
+      groupChain: local.groupChain || "",
+      stockCount: local.stockCount || 0,
+      quoteStockCount: local.quoteStockCount || 0,
+      localPct: samplePct,
+      matched,
+      matchedName: matchedRow.name || "",
+      matchedCode: matchedRow.code || "",
+      matchedPct: bkPct,
+      matchedSource: matchedRow.source || "",
+      sampleDiff,
+      status: matched ? "已匹配BK" : "未匹配",
+      note: matched ? "主线判断按东方财富BK，样本只辅助盯盘" : "不能代表全板块，建议补映射/编辑/隐藏"
+    };
+  }).sort((a, b) => Number(a.matched) - Number(b.matched) || String(a.sourceLabel).localeCompare(String(b.sourceLabel)) || a.name.localeCompare(b.name));
+}
+
+function xiaokeSectorBkAuditHtml(allRows = [], marketRows = []) {
+  const rows = xiaokeSectorBkAuditRows(allRows, marketRows);
+  const matched = rows.filter(row => row.matched);
+  const unmatched = rows.filter(row => !row.matched);
+  const highSampleDiff = rows.filter(row => {
+    const sampleDiff = xiaokeFiniteNumberOrNull(row.sampleDiff);
+    return sampleDiff !== null && Math.abs(sampleDiff) >= 5;
+  });
+  const rowHtml = row => {
+    const payload = { name: row.matchedName || row.name, code: row.matchedCode || "", source: row.matchedSource || "" };
+    const key = row.key || row.name;
+    const matchedPct = xiaokeFiniteNumberOrNull(row.matchedPct);
+    const localPct = xiaokeFiniteNumberOrNull(row.localPct);
+    const sampleDiff = xiaokeFiniteNumberOrNull(row.sampleDiff);
+    return `<tr class="${row.matched ? "" : "sector-audit-unmatched"}">
+      <td><b>${escapeHtml(row.name)}</b><div class="date">${escapeHtml([row.sourceLabel, row.groupChain].filter(Boolean).join(" / ") || "-")}</div></td>
+      <td>${row.matched ? `<span class="strategy-audit-ok">已匹配</span>` : `<span class="strategy-audit-fail">未匹配</span>`}<div class="date">${escapeHtml(row.note)}</div></td>
+      <td><b>${escapeHtml(row.matchedName || "-")}</b><div class="date">${escapeHtml(row.matchedCode || "无BK代码")}</div></td>
+      <td>${escapeHtml(row.quoteStockCount)}/${escapeHtml(row.stockCount)}<div class="date">本地样本有行情数</div></td>
+      <td class="${matchedPct === null ? "" : matchedPct >= 0 ? "up" : "down"}">${escapeHtml(xiaokeSectorSignedPct(matchedPct, 2))}<div class="date">BK涨跌</div></td>
+      <td class="${localPct === null ? "" : localPct >= 0 ? "up" : "down"}">${escapeHtml(xiaokeSectorSignedPct(localPct, 2))}<div class="date">样本均值</div></td>
+      <td>${sampleDiff !== null ? `<span class="sector-source-diff ${Math.abs(sampleDiff) >= 5 ? "warn" : "good"}">${escapeHtml((sampleDiff >= 0 ? "+" : "") + sampleDiff.toFixed(2))}pct</span>` : "-"}</td>
+      <td><div class="table-actions"><button class="small-btn" onclick='editSectorCompareBoard(${JSON.stringify(key)})'>编辑</button>${row.matched ? `<button class="small-btn primary" onclick='openSectorBoardDetail(${JSON.stringify(payload)})'>归因</button>` : `<button class="small-btn" onclick='hideSectorCompareBoard(${JSON.stringify(key)})'>隐藏</button>`}</div></td>
+    </tr>`;
+  };
+  return `<section class="sector-source-audit">
+    <div class="metadata-head">
+      <div><div class="panel-title">BK匹配审计表</div><div class="date">专门核对 CPO、PCB、MLCC、半导体设备等细分/产业链是否真的并入东方财富 BK。主线判断只认 BK，样本涨跌只辅助盯盘。</div></div>
+      <div class="review-actions"><span class="video-group-badge">匹配 ${escapeHtml(matched.length)} / 未匹配 ${escapeHtml(unmatched.length)}</span><button class="small-btn" onclick="hideUnmatchedSectorSamples()">隐藏未匹配样本</button></div>
+    </div>
+    <div class="sector-audit-summary">
+      <article><span>已匹配BK</span><b>${escapeHtml(matched.length)}</b><small>${escapeHtml(matched.slice(0, 4).map(row => row.name).join("、") || "暂无")}</small></article>
+      <article><span>未匹配样本</span><b>${escapeHtml(unmatched.length)}</b><small>${escapeHtml(unmatched.slice(0, 4).map(row => row.name).join("、") || "暂无")}</small></article>
+      <article><span>样本/BK偏离</span><b>${escapeHtml(highSampleDiff.length)}</b><small>样本均值与BK涨跌差超过 5pct</small></article>
+    </div>
+    ${rows.length ? `<div class="stock-table-wrap" style="margin-top:10px"><table class="stock-table sector-prof-table"><thead><tr><th>本地板块</th><th>状态</th><th>匹配BK</th><th>样本数</th><th>BK涨跌</th><th>样本涨跌</th><th>样本差</th><th>操作</th></tr></thead><tbody>${rows.slice(0, 80).map(rowHtml).join("")}</tbody></table></div>` : `<div class="empty-state"><b>暂无自定义细分或产业链</b><p>导入或新增 CPO/PCB/MLCC 等板块后，这里会显示它们是否匹配东方财富BK。</p></div>`}
+  </section>`;
+}
+
+function xiaokeSectorTodayMainlineHtml(rows = []) {
+  const list = Array.isArray(rows) ? rows : [];
+  const todayRows = list.slice()
+    .filter(row => Number.isFinite(Number(row.pct)))
+    .sort((a, b) => Number(b.pct) - Number(a.pct))
+    .slice(0, 6);
+  const analysis = xiaokeSectorAnalysisRows(list);
+  const core = xiaokeCoreAnalysisRows(analysis);
+  const mainline = [
+    ...core.filter(row => row.bucket === "主线确认"),
+    ...core.filter(row => row.bucket === "次主线跟随"),
+    ...core.filter(row => row.bucket === "升温启动" || row.bucket === "新观察")
+  ].slice(0, 6);
+  const todayLine = row => {
+    const rank = row.rank || list.findIndex(item => item.name === row.name) + 1 || "-";
+    const pct = Number(row.pct);
+    return `<li><b>${escapeHtml(row.name)}</b><span class="${pct >= 0 ? "up" : "down"}">${escapeHtml(xiaokeSectorSignedPct(pct, 2))}</span><em>今日第${escapeHtml(rank)} · ${escapeHtml(xiaokeSectorReliability(row).label)}</em></li>`;
+  };
+  const mainLine = row => {
+    const payload = { name: row.name, code: row.code || row.current?.code || "", source: row.source || row.current?.source || "" };
+    return `<li><b>${escapeHtml(row.name)}</b><span>${escapeHtml(row.bucket)}</span><em>第${escapeHtml(row.currentRank)} · 前10 ${escapeHtml(row.top10Count)}次 · 运动分${escapeHtml(row.motionScore)}</em><button onclick='openSectorBoardDetail(${JSON.stringify(payload)})'>归因</button></li>`;
+  };
+  return `<section class="sector-today-mainline">
+    <div class="metadata-head">
+      <div><div class="panel-title">今日强弱 vs 主线确认</div><div class="date">今日强弱只回答“今天谁涨得强”；主线确认回答“谁在多个交易日更持续”。这两个要分开看。</div></div>
+      <button class="small-btn primary" onclick="openSectorMovementLab()">打开轨迹规律</button>
+    </div>
+    <div class="sector-today-mainline-grid">
+      <article class="today"><h3>今日强弱</h3><p>按今日涨跌和强度看盘中热度，不直接等于主线。</p><ol>${todayRows.map(todayLine).join("") || "<li><b>暂无</b><span>-</span><em>等待行情</em></li>"}</ol></article>
+      <article class="mainline"><h3>主线确认</h3><p>按东方财富BK标准板块、排名持续性、前10/前25次数和运动分判断。</p><ol>${mainline.map(mainLine).join("") || "<li><b>暂无</b><span>-</span><em>先回填历史或刷新快照</em></li>"}</ol></article>
+    </div>
+  </section>`;
+}
+
+function xiaokeSectorMotionColor(index = 0, bucket = "") {
+  const palette = ["#19c98b", "#22c3d6", "#f5a623", "#8d5cf6", "#ef3c63", "#5a9dff", "#67d58b", "#d1a7ff"];
+  if (index < palette.length) return palette[index];
+  if (bucket === "主线确认") return "#19c98b";
+  if (bucket === "次主线跟随") return "#22c3d6";
+  if (bucket === "升温启动" || bucket === "新观察") return "#f5a623";
+  if (bucket === "退潮降温") return "#ef3c63";
+  return palette[index % palette.length];
+}
+
+function xiaokeSectorMainlineScoreBreakdown(row = {}, metrics = {}) {
+  const bucketScore = { "主线确认": 42, "次主线跟随": 24, "升温启动": 18, "新观察": 12, "观察": 4, "退潮降温": -18 }[row.bucket] || 0;
+  const parts = {
+    bucket: bucketScore,
+    motion: (Number(row.motionScore) || 0) * XIAOKE_SECTOR_MAINLINE_FORMULA_WEIGHTS.motion,
+    top10: Number(metrics.top10Rate || 0) * XIAOKE_SECTOR_MAINLINE_FORMULA_WEIGHTS.top10,
+    top25: Number(metrics.top25Rate || 0) * XIAOKE_SECTOR_MAINLINE_FORMULA_WEIGHTS.top25,
+    avgRank: Math.max(0, 35 - Number(metrics.avgRank || 99)) * XIAOKE_SECTOR_MAINLINE_FORMULA_WEIGHTS.avgRank,
+    pct: Math.max(-12, Math.min(18, Number(metrics.rangePct || 0) * XIAOKE_SECTOR_MAINLINE_FORMULA_WEIGHTS.pct)),
+    improvement: Math.max(-14, Math.min(18, Number(metrics.improvement || 0) * XIAOKE_SECTOR_MAINLINE_FORMULA_WEIGHTS.improvement)),
+    visibility: Number(metrics.visibility || 0) * XIAOKE_SECTOR_MAINLINE_FORMULA_WEIGHTS.visibility,
+    liquidity: Number(metrics.liquidityScore || 0)
+  };
+  const score = Math.round(Object.values(parts).reduce((sum, value) => sum + value, 0));
+  return { version: XIAOKE_SECTOR_MAINLINE_FORMULA_VERSION, score, parts };
+}
+
+function xiaokeSectorMotionRows(analysisRows = [], snapshots = xiaokeSectorSnapshotsForRange()) {
+  const rule = xiaokeSectorRuleSettings();
+  const chronological = (snapshots || []).slice().reverse();
+  if (chronological.length < 2) return [];
+  const nameSet = new Set();
+  return (analysisRows || []).map(row => {
+    const name = row.name || row.current?.name || "";
+    if (!name || nameSet.has(name)) return null;
+    nameSet.add(name);
+    const currentCode = String(row.current?.code || row.code || "").trim().toUpperCase();
+    const currentSource = row.current?.source || row.source || "";
+    const points = chronological.map((snapshot, index) => {
+      const item = (snapshot.items || []).find(entry => entry.name === name);
+      if (!item) return null;
+      const rank = Number(item.rank);
+      if (!Number.isFinite(rank)) return null;
+      return {
+        index,
+        date: snapshot.date,
+        rank,
+        pct: Number(item.pct),
+        score: Number(item.score),
+        breadth: Number(item.breadth),
+        code: String(item.code || currentCode || "").trim().toUpperCase(),
+        source: item.source || currentSource || "",
+        localOnly: Boolean(item.localOnly || row.current?.localOnly || row.localOnly)
+      };
+    }).filter(Boolean);
+    if (points.length < 2) return null;
+    const ranks = points.map(point => point.rank);
+    const firstRank = ranks[0];
+    const latestRank = ranks[ranks.length - 1];
+    const bestRank = Math.min(...ranks);
+    const worstRank = Math.max(...ranks);
+    const avgRank = Math.round(ranks.reduce((sum, rank) => sum + rank, 0) / ranks.length);
+    const rangePct = points.reduce((sum, point) => Number.isFinite(point.pct) ? sum + point.pct : sum, 0);
+    let trendClose = 100;
+    const trendPoints = points.map(point => {
+      const pct = Number.isFinite(point.pct) ? point.pct : 0;
+      const open = trendClose;
+      const close = Math.max(1, open * (1 + pct / 100));
+      const wick = Math.max(.25, Math.abs(pct) * .18);
+      const high = Math.max(open, close) * (1 + wick / 100);
+      const low = Math.min(open, close) * (1 - wick / 100);
+      trendClose = close;
+      return { ...point, open, high, low, close };
+    });
+    const trendReturn = trendClose - 100;
+    const top10Rate = points.filter(point => point.rank <= rule.coreRank).length / points.length;
+    const top25Rate = points.filter(point => point.rank <= rule.frontRank).length / points.length;
+    const improvement = firstRank - latestRank;
+    const visibility = points.length / chronological.length;
+    const liquidity = xiaokeSectorLiquidityState(row.current || row, analysisRows.map(item => item.current || item));
+    const mainline = xiaokeSectorMainlineScoreBreakdown(row, { top10Rate, top25Rate, avgRank, rangePct, improvement, visibility, liquidityScore: liquidity.score });
+    return { ...row, code: currentCode, source: currentSource, points, trendPoints, trendReturn, firstRank, latestRank, bestRank, worstRank, avgRank, rangePct, top10Rate, top25Rate, improvement, visibility, liquidity, mainlineScore: mainline.score, formulaVersion: mainline.version, scoreParts: mainline.parts };
+  }).filter(Boolean).sort((a, b) => b.mainlineScore - a.mainlineScore || a.latestRank - b.latestRank)
+    .map((row, index) => ({ ...row, chartIndex: index, color: xiaokeSectorMotionColor(index, row.bucket) }));
+}
+
+function xiaokeSectorMotionSignalCard(title, row, metric, note) {
+  if (!row) return `<div><span>${escapeHtml(title)}</span><b>-</b><small>暂无</small></div>`;
+  return `<div>
+    <span>${escapeHtml(title)}</span>
+    <b>${escapeHtml(metric)}</b>
+    <small>${escapeHtml(row.name)} · ${escapeHtml(note)}</small>
+  </div>`;
+}
+
+function xiaokeSectorMotionKCardHtml(row, maxRank) {
+  const rankToPct = rank => Math.max(0, Math.min(100, ((Math.min(Number(rank) || maxRank, maxRank) - 1) / Math.max(1, maxRank - 1)) * 100));
+  const wickTop = rankToPct(row.bestRank);
+  const wickBottom = rankToPct(row.worstRank);
+  const openY = rankToPct(row.firstRank);
+  const closeY = rankToPct(row.latestRank);
+  const bodyTop = Math.min(openY, closeY);
+  const bodyHeight = Math.max(7, Math.abs(openY - closeY));
+  const improved = row.latestRank <= row.firstRank;
+  const pctClass = Number(row.rangePct) >= 0 ? "up" : "down";
+  return `<article class="sector-motion-kcard">
+    <div class="sector-rank-head">
+      <b>${escapeHtml(row.name)}</b>
+      <span style="border-color:${row.color};color:${row.color}">第${escapeHtml(row.latestRank)}</span>
+    </div>
+    <div class="sector-motion-kbody">
+      <div class="sector-motion-candle ${improved ? "up" : "down"}" style="--candle-color:${row.color};--wick-top:${wickTop}%;--wick-height:${Math.max(4, wickBottom - wickTop)}%;--body-top:${bodyTop}%;--body-height:${bodyHeight}%"><i></i><b></b></div>
+      <div class="sector-motion-kstats">
+        <span>${escapeHtml(row.firstRank)} → ${escapeHtml(row.latestRank)}</span>
+        <strong class="${pctClass}">${escapeHtml(xiaokeSectorSignedPct(row.rangePct, 1))}</strong>
+        <small>前10 ${Math.round(row.top10Rate * 100)}% · 最佳 ${escapeHtml(row.bestRank)}</small>
+      </div>
+    </div>
+  </article>`;
+}
+
+function xiaokeSectorMotionState(row = {}) {
+  const rule = xiaokeSectorRuleSettings();
+  if (row.latestRank <= rule.coreRank && (row.top10Rate >= .5 || row.top25Rate >= .75)) return { label: "主线", cls: "main", note: "前排持续" };
+  if (row.improvement >= 12 && row.latestRank <= 30) return { label: "升位", cls: "warming", note: "排名上移" };
+  if (row.rangePct >= 18 && row.top10Rate < .55) return { label: "强涨不稳", cls: "volatile", note: "涨幅强但波动大" };
+  if (row.improvement <= -12 || (row.firstRank <= rule.coreRank && row.latestRank > rule.frontRank)) return { label: "退潮", cls: "cooling", note: "排名走弱" };
+  if (row.latestRank <= rule.frontRank) return { label: "跟随", cls: "secondary", note: "前排跟随" };
+  return { label: "观察", cls: "watch", note: "还需确认" };
+}
+
+function xiaokeSectorConsecutiveFromEnd(points = [], predicate = () => false) {
+  let count = 0;
+  for (let index = points.length - 1; index >= 0; index -= 1) {
+    if (!predicate(points[index])) break;
+    count += 1;
+  }
+  return count;
+}
+
+function xiaokeSectorLifecycleState(row = {}) {
+  const rule = xiaokeSectorRuleSettings();
+  const points = Array.isArray(row.points) ? row.points : [];
+  const current = row.current || row;
+  const latestPoint = points[points.length - 1] || {};
+  const previousPoint = points[points.length - 2] || {};
+  const latestRank = Number(row.latestRank ?? row.currentRank ?? latestPoint.rank ?? current.rank ?? 999);
+  const previousRank = Number(previousPoint.rank ?? row.oldRank ?? 999);
+  const firstRank = Number(row.firstRank ?? points[0]?.rank ?? previousRank ?? latestRank);
+  const rankValues = points.map(point => Number(point.rank)).filter(Number.isFinite);
+  const bestRank = Number(row.bestRank ?? (rankValues.length ? Math.min(...rankValues) : latestRank));
+  const worstRank = Number(row.worstRank ?? (rankValues.length ? Math.max(...rankValues) : latestRank));
+  const pct = xiaokeFiniteNumberOrNull(current.pct ?? latestPoint.pct);
+  const breadth = xiaokeFiniteNumberOrNull(current.breadth ?? latestPoint.breadth);
+  const recentPct = points.slice(-3).reduce((sum, point) => Number.isFinite(Number(point.pct)) ? sum + Number(point.pct) : sum, 0);
+  const top10Rate = Number(row.top10Rate ?? (points.length ? points.filter(point => Number(point.rank) <= rule.coreRank).length / points.length : 0));
+  const top25Rate = Number(row.top25Rate ?? (points.length ? points.filter(point => Number(point.rank) <= rule.frontRank).length / points.length : 0));
+  const improvement = Number(row.improvement ?? (firstRank - latestRank));
+  const dropFromBest = latestRank - bestRank;
+  const top10Streak = xiaokeSectorConsecutiveFromEnd(points, point => Number(point.rank) <= rule.coreRank);
+  const top25Streak = xiaokeSectorConsecutiveFromEnd(points, point => Number(point.rank) <= rule.frontRank);
+  const weakBreadth = breadth !== null && breadth < rule.breadthWarn;
+  const rankText = `${Number.isFinite(previousRank) && previousRank < 999 ? previousRank : firstRank || "-"} → ${Number.isFinite(latestRank) && latestRank < 999 ? latestRank : "-"}`;
+  const facts = [
+    `排名 ${rankText}`,
+    `前${rule.coreRank}占比 ${Math.round(top10Rate * 100)}%`,
+    `前${rule.frontRank}占比 ${Math.round(top25Rate * 100)}%`,
+    pct !== null ? `今日 ${xiaokeSectorSignedPct(pct, 1)}` : "",
+    breadth !== null ? `宽度 ${Math.round(breadth)}%` : ""
+  ].filter(Boolean);
+  const make = (stage, cls, score, nextCheck, action, reason) => ({
+    stage,
+    cls,
+    score,
+    nextCheck,
+    action,
+    reason,
+    facts,
+    latestRank,
+    previousRank: Number.isFinite(previousRank) && previousRank < 999 ? previousRank : null,
+    bestRank,
+    worstRank,
+    top10Streak,
+    top25Streak,
+    top10Rate,
+    top25Rate,
+    improvement,
+    dropFromBest,
+    recentPct,
+    pct,
+    breadth
+  });
+  if ((previousRank <= rule.previousFrontRank && latestRank > rule.frontRank) || dropFromBest >= rule.pullbackStop || (latestRank > rule.weakRank && recentPct < 0) || row.bucket === "退潮降温") {
+    return make("退潮降级", "cooling", 24, `明天先看是否反抽失败，不能快速回到前${rule.frontRank}就降级处理。`, "风险处理", "从前排掉队或排名回撤过大");
+  }
+  if (bestRank <= rule.coreRank && latestRank <= rule.repairRank && previousRank > rule.repairRank && (pct === null || pct >= 0)) {
+    return make("修复回流", "repair", 78, `明天看能否重新站回前${rule.coreRank}，并且宽度/成交额跟上。`, "等确认", `曾经进前${rule.coreRank}，分歧后重新回到前排`);
+  }
+  if (latestRank <= rule.divergenceRank && (pct !== null && pct < 0 || weakBreadth || dropFromBest >= 8) && (top10Rate >= rule.coreRateWarn / 100 || bestRank <= rule.coreRank)) {
+    return make("分歧换手", "divergence", 72, `明天重点看守不守前${rule.coreRank}/前${rule.frontRank}，不能修复就转退潮。`, "观察承接", "仍在前排但出现涨跌或宽度分歧");
+  }
+  if (latestRank <= rule.coreRank && (top10Streak >= 2 || top10Rate >= rule.confirmCoreRate / 100 || row.bucket === "主线确认")) {
+    return make("主升确认", "confirm", 92, `分歧日看是否守前${rule.coreRank}，缩量分歧后能否再扩散。`, "主线跟踪", `排名持续位于前${rule.coreRank}，具备主线持续性`);
+  }
+  if (latestRank <= rule.frontRank && (improvement >= 8 || previousRank > rule.frontRank || row.bucket === "升温启动" || row.bucket === "新观察")) {
+    return make("启动试探", "launch", 66, `明天看是否继续留前${rule.frontRank}，并争取晋级前${rule.coreRank}。`, "二次确认", "排名明显上移或新进入前排");
+  }
+  if (latestRank <= rule.frontRank || top25Rate >= rule.frontRateWarn / 100) {
+    return make("跟随观察", "secondary", 52, "看能否从跟随晋级主线，否则只作辅助方向。", "后排跟踪", `位置还在前${rule.frontRank}，但主线持续性不足`);
+  }
+  return make("后排观察", "watch", 28, `没有回到前${rule.frontRank}前，不参与主线判断。`, "暂不处理", "排名和持续性都不够");
+}
+
+function xiaokeSectorLifecycleRows(analysisRows = [], snapshots = xiaokeSectorSnapshotsForRange()) {
+  const coreRows = xiaokeCoreAnalysisRows(analysisRows);
+  const motionRows = xiaokeSectorMotionRows(coreRows, snapshots);
+  const motionMap = new Map(motionRows.map(row => [row.name, row]));
+  return coreRows.map(row => {
+    const motion = motionMap.get(row.name);
+    const merged = motion ? { ...row, ...motion, current: row.current || motion.current || row, bucket: row.bucket || motion.bucket } : row;
+    const lifecycle = xiaokeSectorLifecycleState(merged);
+    return { ...merged, lifecycle };
+  }).sort((a, b) => b.lifecycle.score - a.lifecycle.score || Number(a.lifecycle.latestRank || 999) - Number(b.lifecycle.latestRank || 999));
+}
+
+function xiaokeSectorLifecycleStageLabel(stage = "") {
+  const map = {
+    "启动试探": "启动",
+    "主升确认": "确认",
+    "分歧换手": "分歧",
+    "修复回流": "修复",
+    "退潮降级": "退潮",
+    "跟随观察": "跟随",
+    "后排观察": "观察"
+  };
+  return map[stage] || stage || "-";
+}
+
+function xiaokeSectorLifecycleBadgeHtml(lifecycle = {}) {
+  const item = lifecycle.lifecycle || lifecycle || {};
+  return `<span class="sector-lifecycle-badge ${escapeHtml(item.cls || "watch")}">${escapeHtml(xiaokeSectorLifecycleStageLabel(item.stage))}</span>`;
+}
+
+function xiaokeSectorLifecyclePanelHtml(analysisRows = [], snapshots = xiaokeSectorSnapshotsForRange()) {
+  const rule = xiaokeSectorRuleSettings();
+  const rows = xiaokeSectorLifecycleRows(analysisRows, snapshots);
+  const stages = [
+    ["启动试探", "启动", `新进前${rule.frontRank}，等二次确认`],
+    ["主升确认", "确认", `连续前${rule.coreRank}，主线跟踪`],
+    ["分歧换手", "分歧", "前排分歧，看承接"],
+    ["修复回流", "修复", "分歧后回流，等站稳"],
+    ["退潮降级", "退潮", "掉出前排，风险处理"]
+  ];
+  const counts = stages.map(([stage, label]) => ({
+    stage,
+    label,
+    count: rows.filter(row => row.lifecycle.stage === stage).length,
+    names: rows.filter(row => row.lifecycle.stage === stage).slice(0, 3).map(row => row.name).join("、") || "暂无"
+  }));
+  const focus = rows.filter(row => ["启动试探", "主升确认", "分歧换手", "修复回流", "退潮降级"].includes(row.lifecycle.stage)).slice(0, 18);
+  return `<section class="panel sector-lifecycle-panel" style="margin-top:12px">
+    <div class="metadata-head">
+      <div><div class="panel-title">主线生命周期</div><div class="date">状态机：启动 → 确认 → 分歧 → 修复 → 退潮。只对东方财富 BK 标准板块做主线判断，样本板块不参与。</div></div>
+      <span class="video-group-badge">${escapeHtml(XIAOKE_SECTOR_LIFECYCLE_VERSION)}</span>
+    </div>
+    <div class="sector-lifecycle-flow">${stages.map(([stage, label, text], index) => `<article class="${escapeHtml(stage)}"><b>${escapeHtml(index + 1)}. ${escapeHtml(label)}</b><span>${escapeHtml(text)}</span></article>`).join("")}</div>
+    <div class="sector-audit-summary">${counts.map(item => `<article><span>${escapeHtml(item.label)}</span><b>${escapeHtml(item.count)}</b><small>${escapeHtml(item.names)}</small></article>`).join("")}</div>
+    <div class="stock-table-wrap" style="margin-top:10px"><table class="stock-table sector-prof-table"><thead><tr><th>板块</th><th>生命周期</th><th>证据</th><th>明日验证</th><th>动作</th><th>操作</th></tr></thead><tbody>${focus.map(row => {
+      const payload = { name: row.name, code: row.code || row.current?.code || "", source: row.source || row.current?.source || "" };
+      return `<tr>
+        <td><b>${escapeHtml(row.name)}</b><div class="date">${escapeHtml(row.code || row.current?.code || "")}</div></td>
+        <td>${xiaokeSectorLifecycleBadgeHtml(row.lifecycle)}<div class="date">${escapeHtml(row.lifecycle.reason)}</div></td>
+        <td>${escapeHtml(row.lifecycle.facts.join("；"))}</td>
+        <td>${escapeHtml(row.lifecycle.nextCheck)}</td>
+        <td><span class="sector-source-diff ${row.lifecycle.cls === "cooling" ? "bad" : row.lifecycle.cls === "divergence" ? "warn" : "good"}">${escapeHtml(row.lifecycle.action)}</span></td>
+        <td><button class="small-btn" onclick='openSectorBoardDetail(${JSON.stringify(payload)})'>归因</button></td>
+      </tr>`;
+    }).join("") || `<tr><td colspan="6"><div class="date">快照不足，先刷新或回填历史。</div></td></tr>`}</tbody></table></div>
+  </section>`;
+}
+
+function xiaokeSectorInvalidationRules(row = {}) {
+  const rule = xiaokeSectorRuleSettings();
+  const lifecycle = row.lifecycle || xiaokeSectorLifecycleState(row);
+  const current = row.current || row;
+  const latestRank = Number(lifecycle.latestRank ?? row.latestRank ?? row.currentRank ?? current.rank ?? 999);
+  const previousRank = Number(lifecycle.previousRank ?? row.oldRank ?? 999);
+  const bestRank = Number(lifecycle.bestRank ?? row.bestRank ?? latestRank);
+  const dropFromBest = Number(lifecycle.dropFromBest ?? (latestRank - bestRank));
+  const top10Rate = Number(lifecycle.top10Rate ?? row.top10Rate ?? 0);
+  const top25Rate = Number(lifecycle.top25Rate ?? row.top25Rate ?? 0);
+  const pct = xiaokeFiniteNumberOrNull(lifecycle.pct ?? current.pct);
+  const recentPct = xiaokeFiniteNumberOrNull(lifecycle.recentPct ?? row.rangePct);
+  const breadth = xiaokeFiniteNumberOrNull(lifecycle.breadth ?? current.breadth);
+  const rules = [];
+  const add = (level, title, detail) => rules.push({ level, title, detail });
+  if (!xiaokeIsStandardSector(current)) {
+    add("stop", "非BK样本", "未匹配东方财富标准BK，不进入主线核心判断。");
+  }
+  if (lifecycle.stage === "退潮降级") {
+    add("stop", "生命周期退潮", lifecycle.reason || "已从前排掉队。");
+  }
+  if (bestRank <= rule.coreRank && latestRank > rule.frontRank) {
+    add("stop", `跌出前${rule.frontRank}`, `曾进前${rule.coreRank}，最新第${latestRank}，主线先降级。`);
+  }
+  if (Number.isFinite(previousRank) && previousRank <= rule.previousFrontRank && latestRank > rule.frontRank) {
+    add("stop", "隔日失守", `前次第${previousRank}，最新第${latestRank}，前排承接失败。`);
+  }
+  if (dropFromBest >= rule.pullbackStop) {
+    add("stop", "回撤过深", `距离最佳排名回撤 ${dropFromBest} 位。`);
+  } else if (dropFromBest >= rule.pullbackWarn) {
+    add("warn", "排名回撤", `距离最佳排名回撤 ${dropFromBest} 位，需要观察修复。`);
+  }
+  if (breadth !== null && breadth < rule.breadthWarn) {
+    add("warn", "宽度不足", `上涨宽度约 ${Math.round(breadth)}%，板块扩散不足。`);
+  }
+  if (recentPct !== null && recentPct < 0 && Number.isFinite(previousRank) && latestRank > previousRank) {
+    add("warn", "价弱名退", `近段涨跌 ${xiaokeSectorSignedPct(recentPct, 1)}，排名继续后移。`);
+  }
+  if (top10Rate < rule.coreRateWarn / 100 && latestRank > rule.coreRank) {
+    add("observe", `前${rule.coreRank}不足`, `前${rule.coreRank}占比 ${Math.round(top10Rate * 100)}%，还没形成持续主线。`);
+  }
+  if (top25Rate < rule.frontRateWarn / 100 && latestRank > rule.frontRank) {
+    add("observe", `前${rule.frontRank}不足`, `前${rule.frontRank}占比 ${Math.round(top25Rate * 100)}%，暂按后排观察。`);
+  }
+  if (!rules.length) {
+    add("good", "红线未触发", "继续按生命周期跟踪，重点看分歧日承接。");
+  }
+  const hardStop = rules.some(rule => rule.level === "stop");
+  const warned = rules.some(rule => rule.level === "warn");
+  const level = hardStop ? "stop" : warned ? "warn" : "good";
+  const label = hardStop ? "红线触发" : warned ? "黄灯观察" : "正常跟踪";
+  const action = hardStop ? "降级/风险处理" : warned ? "缩小权重等确认" : "继续观察";
+  return { level, label, action, hardStop, rules, nextCheck: lifecycle.nextCheck || "" };
+}
+
+function xiaokeSectorInvalidationPanelHtml(analysisRows = [], snapshots = xiaokeSectorSnapshotsForRange()) {
+  const rows = xiaokeSectorLifecycleRows(analysisRows, snapshots)
+    .map(row => ({ ...row, invalidation: xiaokeSectorInvalidationRules(row) }));
+  const stop = rows.filter(row => row.invalidation.level === "stop");
+  const warn = rows.filter(row => row.invalidation.level === "warn");
+  const good = rows.filter(row => row.invalidation.level === "good");
+  const focus = [...stop, ...warn, ...rows.filter(row => ["主升确认", "启动试探", "修复回流", "分歧换手"].includes(row.lifecycle.stage))]
+    .filter((row, index, arr) => arr.findIndex(item => item.name === row.name) === index)
+    .slice(0, 16);
+  const ruleHtml = rule => `<span class="sector-invalidation-rule ${escapeHtml(rule.level)}">${escapeHtml(rule.title)}</span>`;
+  return `<section class="panel sector-invalidation-panel" style="margin-top:12px">
+    <div class="metadata-head">
+      <div><div class="panel-title">主线失效条件</div><div class="date">把“还能不能看”规则化：红线先降级，黄灯等确认，正常才继续跟踪。避免涨一天就追、跌一天又乱删。</div></div>
+      <span class="video-group-badge">红线 ${escapeHtml(stop.length)} / 黄灯 ${escapeHtml(warn.length)}</span>
+    </div>
+    <div class="sector-audit-summary">
+      <article><span>红线触发</span><b>${escapeHtml(stop.length)}</b><small>${escapeHtml(stop.slice(0, 4).map(row => row.name).join("、") || "暂无")}</small></article>
+      <article><span>黄灯观察</span><b>${escapeHtml(warn.length)}</b><small>${escapeHtml(warn.slice(0, 4).map(row => row.name).join("、") || "暂无")}</small></article>
+      <article><span>正常跟踪</span><b>${escapeHtml(good.length)}</b><small>${escapeHtml(good.slice(0, 4).map(row => row.name).join("、") || "暂无")}</small></article>
+    </div>
+    <div class="stock-table-wrap" style="margin-top:10px"><table class="stock-table sector-prof-table"><thead><tr><th>板块</th><th>阶段</th><th>失效信号</th><th>处理动作</th><th>明日验证</th><th>操作</th></tr></thead><tbody>${focus.map(row => {
+      const payload = { name: row.name, code: row.code || row.current?.code || "", source: row.source || row.current?.source || "" };
+      return `<tr>
+        <td><b>${escapeHtml(row.name)}</b><div class="date">${escapeHtml(row.code || row.current?.code || "")}</div></td>
+        <td>${xiaokeSectorLifecycleBadgeHtml(row.lifecycle)}<div class="date">第${escapeHtml(row.lifecycle.latestRank || "-")}</div></td>
+        <td>${row.invalidation.rules.slice(0, 3).map(ruleHtml).join(" ")}<div class="date">${escapeHtml(row.invalidation.rules[0]?.detail || "")}</div></td>
+        <td><span class="sector-source-diff ${row.invalidation.level === "stop" ? "bad" : row.invalidation.level === "warn" ? "warn" : "good"}">${escapeHtml(row.invalidation.action)}</span></td>
+        <td>${escapeHtml(row.invalidation.nextCheck || row.lifecycle.nextCheck || "")}</td>
+        <td><button class="small-btn" onclick='openSectorBoardDetail(${JSON.stringify(payload)})'>归因</button></td>
+      </tr>`;
+    }).join("") || `<tr><td colspan="6"><div class="date">当前没有需要处理的失效信号。</div></td></tr>`}</tbody></table></div>
+  </section>`;
+}
+
+function readSectorCandidatePool() {
+  try {
+    const rows = JSON.parse(localStorage.getItem(XIAOKE_SECTOR_CANDIDATE_POOL_KEY) || "[]");
+    return Array.isArray(rows) ? rows : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeSectorCandidatePool(rows = []) {
+  const clean = (rows || []).filter(row => row?.name).slice(0, 120);
+  localStorage.setItem(XIAOKE_SECTOR_CANDIDATE_POOL_KEY, JSON.stringify(clean));
+  return clean;
+}
+
+function xiaokeSectorMovementLabIsOpen() {
+  if (window.__xiaokeSectorMovementLabOpen) return true;
+  const main = document.getElementById("main");
+  if (!main) return false;
+  if (main.querySelector("[data-sector-movement-lab]")) return true;
+  const text = main.innerText || "";
+  return text.includes("板块轨迹规律") && text.includes("全量轨迹表");
+}
+
+function xiaokeBuildSectorCandidatePool(analysisRows = [], snapshots = xiaokeSectorSnapshotsForRange()) {
+  const rule = xiaokeSectorRuleSettings();
+  const stagePriority = { "主升确认": 1, "启动试探": 2, "修复回流": 3, "分歧换手": 4, "跟随观察": 5 };
+  return xiaokeSectorLifecycleRows(analysisRows, snapshots)
+    .filter(row => ["主升确认", "启动试探", "修复回流", "分歧换手", "跟随观察"].includes(row.lifecycle.stage))
+    .filter(row => row.lifecycle.stage !== "跟随观察" || Number(row.lifecycle.latestRank) <= rule.watchRank)
+    .map(row => {
+      const invalidation = xiaokeSectorInvalidationRules(row);
+      return {
+        date: snapshots[0]?.date || todayString(),
+        at: new Date().toISOString(),
+        name: row.name,
+        code: row.code || row.current?.code || "",
+        stage: row.lifecycle.stage,
+        cls: row.lifecycle.cls,
+        rank: row.lifecycle.latestRank,
+        pct: row.lifecycle.pct,
+        score: row.lifecycle.score,
+        top10Rate: row.lifecycle.top10Rate,
+        top25Rate: row.lifecycle.top25Rate,
+        nextCheck: row.lifecycle.nextCheck,
+        action: row.lifecycle.action,
+        invalidation: invalidation.label,
+        invalidationLevel: invalidation.level,
+        rule: invalidation.rules[0]?.title || "",
+        source: row.source || row.current?.source || ""
+      };
+    })
+    .filter(row => row.invalidationLevel !== "stop")
+    .sort((a, b) => (stagePriority[a.stage] || 9) - (stagePriority[b.stage] || 9) || Number(a.rank || 999) - Number(b.rank || 999))
+    .slice(0, rule.candidateLimit);
+}
+
+function saveSectorCandidatePoolFromCurrent(silent = false) {
+  const snapshot = readSectorSnapshots()[0];
+  if (!snapshot?.items?.length) {
+    if (!silent) showToast("暂无板块快照，先刷新今日榜或回填历史");
+    return [];
+  }
+  const rows = xiaokeBuildSectorCandidatePool(xiaokeSectorAnalysisRows(snapshot.items || []), xiaokeSectorReviewSnapshotsFor(snapshot.date, 20));
+  writeSectorCandidatePool(rows);
+  if (!silent) showToast(`已刷新主线观察池：${rows.length} 个候选`);
+  if (xiaokeSectorMovementLabIsOpen()) {
+    window.__xiaokeSectorMovementLabOpen = true;
+    setTimeout(() => openSectorMovementLab(), 120);
+  }
+  else if (state.view === "sectorStrength") renderSectorStrength({ skipFetch: true });
+  return rows;
+}
+
+function clearSectorCandidatePool() {
+  writeSectorCandidatePool([]);
+  showToast("主线观察池已清空");
+  if (xiaokeSectorMovementLabIsOpen()) {
+    window.__xiaokeSectorMovementLabOpen = true;
+    setTimeout(() => openSectorMovementLab(), 120);
+  }
+  else if (state.view === "sectorStrength") renderSectorStrength({ skipFetch: true });
+}
+
+function xiaokeSectorCandidatePoolHtml(analysisRows = [], snapshots = xiaokeSectorSnapshotsForRange()) {
+  const recommended = xiaokeBuildSectorCandidatePool(analysisRows, snapshots);
+  const saved = readSectorCandidatePool();
+  const list = saved.length ? saved : recommended;
+  const rowHtml = row => {
+    const payload = { name: row.name, code: row.code || "", source: row.source || "" };
+    const pct = xiaokeFiniteNumberOrNull(row.pct);
+    return `<tr>
+      <td><b>${escapeHtml(row.name)}</b><div class="date">${escapeHtml(row.code || "")}</div></td>
+      <td>${xiaokeSectorLifecycleBadgeHtml(row)}<div class="date">第${escapeHtml(row.rank || "-")} · ${pct === null ? "-" : escapeHtml(xiaokeSectorSignedPct(pct, 1))}</div></td>
+      <td>${escapeHtml(Math.round(Number(row.top10Rate || 0) * 100))}% / ${escapeHtml(Math.round(Number(row.top25Rate || 0) * 100))}%<div class="date">前10 / 前25占比</div></td>
+      <td><span class="sector-source-diff ${row.invalidationLevel === "warn" ? "warn" : "good"}">${escapeHtml(row.invalidation || "正常跟踪")}</span><div class="date">${escapeHtml(row.rule || row.action || "")}</div></td>
+      <td>${escapeHtml(row.nextCheck || "")}</td>
+      <td><button class="small-btn" onclick='openSectorBoardDetail(${JSON.stringify(payload)})'>归因</button></td>
+    </tr>`;
+  };
+  return `<section class="panel sector-candidate-pool" style="margin-top:12px">
+    <div class="metadata-head">
+      <div><div class="panel-title">主线候选观察池</div><div class="date">盘后/盘中把明天要看的板块沉淀下来：主升继续跟踪，启动等二次确认，分歧看承接，修复看能否站回前10。</div></div>
+      <div class="review-actions"><span class="video-group-badge">${saved.length ? "已保存" : "推荐"} ${escapeHtml(list.length)}</span><button class="small-btn primary" onclick="saveSectorCandidatePoolFromCurrent()">刷新观察池</button><button class="small-btn" onclick="clearSectorCandidatePool()">清空</button></div>
+    </div>
+    <div class="stock-table-wrap" style="margin-top:10px"><table class="stock-table sector-prof-table"><thead><tr><th>板块</th><th>阶段/排名</th><th>持续性</th><th>风险状态</th><th>明日验证</th><th>操作</th></tr></thead><tbody>${list.slice(0, 18).map(rowHtml).join("") || `<tr><td colspan="6"><div class="date">暂无候选。先回填历史或刷新今日榜。</div></td></tr>`}</tbody></table></div>
+  </section>`;
+}
+
+function xiaokeSectorFunnelKey(row = {}) {
+  return String(row.code || row.current?.code || row.name || row.current?.name || "").trim().toUpperCase();
+}
+
+function xiaokeLatestAttributionForCandidate(row = {}, rows = readSectorAttributionSnapshots()) {
+  const code = String(row.code || row.current?.code || "").trim().toUpperCase();
+  const name = String(row.name || row.current?.name || "").trim();
+  return (rows || []).find(item => {
+    const itemCode = String(item.code || "").trim().toUpperCase();
+    return Boolean((code && itemCode === code) || (name && item.name === name));
+  }) || null;
+}
+
+function xiaokeStockFunnelRowHtml(item = {}, role = "driver") {
+  const pct = xiaokeFiniteNumberOrNull(item.pct);
+  const amount = xiaokeFiniteNumberOrNull(item.amount);
+  const net = xiaokeFiniteNumberOrNull(item.mainNetInflow);
+  const roleMap = {
+    leader: ["leader", "龙头"],
+    core: ["core", "中军"],
+    catchup: ["catchup", "补涨"],
+    laggard: ["laggard", "掉队"],
+    driver: ["leader", "龙头"],
+    confirm: ["core", "中军"],
+    risk: ["laggard", "掉队"]
+  };
+  const [cls, reason] = roleMap[role] || roleMap.leader;
+  return `<button class="sector-funnel-stock ${cls}" onclick='openStockProfileEditor(${JSON.stringify({ name: item.name || "", key: xiaokeQuoteKeyFromCode(item.code) || item.code || "", sector: item.sector || "" })})'>
+    <b>${escapeHtml(item.name || "-")}</b>
+    <span class="${pct === null || pct >= 0 ? "up" : "down"}">${escapeHtml(xiaokeSectorSignedPct(pct, 2))}</span>
+    <em>${escapeHtml(reason)}${amount !== null ? ` · 成交${xiaokeSectorMoneyText(amount)}` : ""}${net !== null && net !== 0 ? ` · 净流${xiaokeSectorMoneyText(net)}` : ""}</em>
+  </button>`;
+}
+
+function xiaokeSectorFunnelStockGroups(snapshot = {}) {
+  const uniqueStocks = (list = []) => {
+    const seen = new Set();
+    return (list || []).filter(item => {
+      const key = xiaokeSectorFunnelKey(item);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
+  const leaders = uniqueStocks(snapshot.drivers || []).slice(0, 3);
+  const leaderKeys = new Set(leaders.map(xiaokeSectorFunnelKey));
+  const laggards = uniqueStocks(snapshot.drags || []).slice(0, 4);
+  const laggardKeys = new Set(laggards.map(xiaokeSectorFunnelKey));
+  const cores = uniqueStocks(snapshot.active || [])
+    .filter(item => {
+      const key = xiaokeSectorFunnelKey(item);
+      const pct = xiaokeFiniteNumberOrNull(item.pct);
+      return key && !leaderKeys.has(key) && !laggardKeys.has(key) && (pct === null || pct >= 0);
+    })
+    .slice(0, 4);
+  const coreKeys = new Set(cores.map(xiaokeSectorFunnelKey));
+  const catchups = uniqueStocks([...(snapshot.drivers || []).slice(3), ...(snapshot.active || [])])
+    .filter(item => {
+      const key = xiaokeSectorFunnelKey(item);
+      const pct = xiaokeFiniteNumberOrNull(item.pct);
+      return key && !leaderKeys.has(key) && !coreKeys.has(key) && !laggardKeys.has(key) && (pct === null || pct >= 0);
+    })
+    .slice(0, 4);
+  return { leaders, cores, catchups, laggards };
+}
+
+function xiaokeSectorFunnelCardHtml(row = {}, attributionRows = readSectorAttributionSnapshots()) {
+  const snapshot = xiaokeLatestAttributionForCandidate(row, attributionRows);
+  const payload = { name: row.name, code: row.code || "", source: row.source || "" };
+  if (!snapshot) {
+    return `<article class="sector-funnel-card missing">
+      <div class="sector-funnel-card-head">
+        <div><b>${escapeHtml(row.name || "-")}</b><small>${escapeHtml(row.stage || row.lifecycle?.stage || "候选观察")} · 第${escapeHtml(row.rank || row.lifecycle?.latestRank || "-")}</small></div>
+        <span class="sector-source-diff warn">待刷新成分</span>
+      </div>
+      <p>还没有这个板块的成分股归因快照。先点“刷新个股漏斗”，系统会从东方财富成分接口拉取贡献股、拖累股和成交活跃股。</p>
+      <div class="review-actions" style="justify-content:flex-start"><button class="small-btn primary" onclick="refreshMainlineStockFunnel()">刷新个股漏斗</button><button class="small-btn" onclick='openSectorBoardDetail(${JSON.stringify(payload)})'>打开归因</button></div>
+    </article>`;
+  }
+  const previous = xiaokePreviousAttributionSnapshot(snapshot, attributionRows);
+  const health = xiaokeSectorAttributionHealth(snapshot, previous);
+  const groups = xiaokeSectorFunnelStockGroups(snapshot);
+  const stage = row.stage || row.lifecycle?.stage || snapshot.bucket || "候选观察";
+  const rank = row.rank || row.lifecycle?.latestRank || snapshot.rank || "-";
+  const widthText = snapshot.upRate == null ? "-" : `${snapshot.upRate}%`;
+  const concentrationText = snapshot.concentration?.top3Share == null ? "-" : `${snapshot.concentration.top3Share}%`;
+  const column = (title, list, role, empty) => `<section><h4>${escapeHtml(title)}</h4>${list.length ? list.map(item => xiaokeStockFunnelRowHtml(item, role)).join("") : `<div class="date">${escapeHtml(empty)}</div>`}</section>`;
+  return `<article class="sector-funnel-card ${escapeHtml(health.cls || "neutral")}">
+    <div class="sector-funnel-card-head">
+      <div><b>${escapeHtml(snapshot.name || row.name || "-")}</b><small>${escapeHtml(stage)} · 第${escapeHtml(rank)} · 快照 ${escapeHtml(snapshot.date || "-")}</small></div>
+      ${xiaokeSectorHealthBadgeHtml(health)}
+    </div>
+    <div class="sector-funnel-metrics">
+      <div><span>内部宽度</span><b>${escapeHtml(widthText)}</b><small>涨${escapeHtml(snapshot.upCount ?? "-")} / 跌${escapeHtml(snapshot.downCount ?? "-")}</small></div>
+      <div><span>集中度</span><b>${escapeHtml(concentrationText)}</b><small>${escapeHtml(snapshot.concentration?.label || "-")}</small></div>
+      <div><span>净流入</span><b>${escapeHtml(xiaokeSectorMoneyText(snapshot.netInflowTotal))}</b><small>成分股合计</small></div>
+    </div>
+    <div class="sector-funnel-columns">
+      ${column("龙头", groups.leaders, "leader", "暂无龙头贡献股")}
+      ${column("中军", groups.cores, "core", "暂无成交确认股")}
+      ${column("补涨", groups.catchups, "catchup", "暂无补涨观察股")}
+      ${column("掉队", groups.laggards, "laggard", "暂无明显掉队")}
+    </div>
+    <div class="sector-funnel-note">${escapeHtml(health.reasons.slice(0, 3).join("；") || "等待更多归因快照确认。")}</div>
+    <div class="review-actions" style="justify-content:flex-start"><button class="small-btn" onclick='openSectorBoardDetail(${JSON.stringify(payload)})'>完整归因</button></div>
+  </article>`;
+}
+
+function xiaokeSectorStockFunnelCandidates(analysisRows = [], snapshots = xiaokeSectorSnapshotsForRange()) {
+  const rule = xiaokeSectorRuleSettings();
+  const saved = readSectorCandidatePool();
+  const built = xiaokeBuildSectorCandidatePool(analysisRows, snapshots);
+  const sourceRows = saved.length ? saved : built;
+  const seen = new Set();
+  return sourceRows.filter(row => {
+    const code = String(row.code || "").trim().toUpperCase();
+    const key = code || row.name;
+    if (!key || seen.has(key) || !/^BK\d{4,6}$/.test(code)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, rule.funnelLimit);
+}
+
+function xiaokeSectorStockFunnelHtml(analysisRows = [], snapshots = xiaokeSectorSnapshotsForRange()) {
+  const candidates = xiaokeSectorStockFunnelCandidates(analysisRows, snapshots);
+  const attributionRows = readSectorAttributionSnapshots();
+  const covered = candidates.filter(row => xiaokeLatestAttributionForCandidate(row, attributionRows)).length;
+  const latestDrivers = candidates
+    .map(row => xiaokeLatestAttributionForCandidate(row, attributionRows))
+    .filter(Boolean)
+    .flatMap(item => (item.drivers || []).slice(0, 2).map(stock => stock.name))
+    .filter(Boolean)
+    .slice(0, 8);
+  return `<section class="panel sector-stock-funnel-panel" style="margin-top:12px">
+    <div class="metadata-head">
+      <div><div class="panel-title">主线到个股漏斗</div><div class="date">板块确认后，把成分股自动分成龙头、中军、补涨、掉队四层；先看板块，再看板块内部结构。</div></div>
+      <div class="review-actions"><span class="video-group-badge">覆盖 ${escapeHtml(covered)} / ${escapeHtml(candidates.length)}</span><button class="small-btn primary" onclick="refreshMainlineStockFunnel()">刷新个股漏斗</button></div>
+    </div>
+    <div class="sector-audit-summary">
+      <article><span>候选板块</span><b>${escapeHtml(candidates.length)}</b><small>${escapeHtml(candidates.slice(0, 4).map(row => row.name).join("、") || "暂无")}</small></article>
+      <article><span>已归因</span><b>${escapeHtml(covered)}</b><small>有东方财富成分股快照</small></article>
+      <article><span>近期驱动股</span><b>${escapeHtml(latestDrivers.length || "-")}</b><small>${escapeHtml(latestDrivers.join("、") || "刷新后显示")}</small></article>
+    </div>
+    <div class="sector-funnel-grid">${candidates.map(row => xiaokeSectorFunnelCardHtml(row, attributionRows)).join("") || `<div class="empty-state"><b>暂无可下钻板块</b><p>先刷新板块强弱、回填历史，或刷新主线观察池。</p></div>`}</div>
+  </section>`;
+}
+
+async function refreshMainlineStockFunnel(limit = null) {
+  const rule = xiaokeSectorRuleSettings();
+  const snapshots = xiaokeSectorSnapshotsForRange();
+  const latest = snapshots[0]?.items || readSectorSnapshots()[0]?.items || window.xiaokeSectorMergedRowsCache || [];
+  const analysisRows = xiaokeSectorAnalysisRows(latest);
+  const candidates = xiaokeSectorStockFunnelCandidates(analysisRows, snapshots).slice(0, Math.max(1, Number(limit) || rule.funnelLimit));
+  if (!candidates.length) return showToast("没有可刷新个股漏斗的东方财富BK候选板块");
+  showToast(`正在刷新 ${candidates.length} 个主线候选的成分股漏斗...`);
+  let saved = 0;
+  for (const candidate of candidates) {
+    const code = String(candidate.code || "").trim().toUpperCase();
+    const name = candidate.name || code;
+    const analysis = analysisRows.find(row => String(row.code || row.current?.code || "").trim().toUpperCase() === code || row.name === name) || candidate;
+    try {
+      const response = await fetch(`/api/sector-constituents?code=${encodeURIComponent(code)}&t=${Date.now()}`, { cache: "no-store" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) throw new Error(data.error || "成分股获取失败");
+      const remote = (data.items || []).map(item => ({ ...item, quoteKey: xiaokeQuoteKeyFromCode(item.code), sector: name }));
+      const local = xiaokeLocalSectorStocks(name, candidate.source || "");
+      if (saveSectorAttributionSnapshot({ name, code, source: candidate.source || "东方财富标准板块" }, remote, local, analysis)) saved += 1;
+    } catch (error) {
+      console.warn("刷新个股漏斗失败", name, error);
+    }
+  }
+  showToast(`个股漏斗已更新：${saved}/${candidates.length} 个板块`);
+  if (xiaokeSectorMovementLabIsOpen()) {
+    window.__xiaokeSectorMovementLabOpen = true;
+    setTimeout(() => openSectorMovementLab(), 120);
+  } else if (state.view === "sectorStrength") {
+    renderSectorStrength({ skipFetch: true });
+  }
+}
+
+function readSectorDailyJudgments() {
+  try {
+    const rows = JSON.parse(localStorage.getItem(XIAOKE_SECTOR_DAILY_JUDGMENTS_KEY) || "[]");
+    return Array.isArray(rows)
+      ? rows.filter(row => row?.date).sort((a, b) => String(b.date).localeCompare(String(a.date)))
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeSectorDailyJudgments(rows = []) {
+  const clean = (rows || []).filter(row => row?.date).slice(0, 180);
+  localStorage.setItem(XIAOKE_SECTOR_DAILY_JUDGMENTS_KEY, JSON.stringify(clean));
+  return clean;
+}
+
+function xiaokeSectorJudgmentFindFutureSnapshot(date = "", days = 1, snapshots = readSectorSnapshots()) {
+  const chronological = (snapshots || []).filter(snapshot => snapshot?.date).slice().sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const index = chronological.findIndex(snapshot => String(snapshot.date) === String(date));
+  if (index < 0) return null;
+  return chronological[index + Number(days || 0)] || null;
+}
+
+function xiaokeSectorJudgmentTrackedRows(record = {}) {
+  const rows = [
+    ...(record.mainline || []),
+    ...(record.candidates || [])
+  ];
+  const seen = new Set();
+  return rows.filter(row => {
+    const key = String(row.code || row.name || "").toUpperCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 10);
+}
+
+function xiaokeEvaluateSectorDailyJudgment(record = {}, snapshots = readSectorSnapshots()) {
+  if (!record?.date) return record;
+  const horizons = [1, 3, 5];
+  const tracked = xiaokeSectorJudgmentTrackedRows(record);
+  const evaluation = horizons.map(days => {
+    const future = xiaokeSectorJudgmentFindFutureSnapshot(record.date, days, snapshots);
+    if (!future || !tracked.length) {
+      return { days, status: "pending", cls: "neutral", label: "等待样本", date: future?.date || "", total: tracked.length, hit10: 0, hit25: 0, rows: [] };
+    }
+    const rows = tracked.map(item => {
+      const next = (future.items || []).find(row => row.name === item.name || (item.code && row.code === item.code));
+      const status = xiaokeSectorBacktestStatus(next?.rank);
+      return {
+        name: item.name,
+        code: item.code || "",
+        startRank: item.rank || item.currentRank || null,
+        startStage: item.stage || "",
+        futureRank: next?.rank ?? null,
+        futurePct: xiaokeFiniteNumberOrNull(next?.pct),
+        ...status
+      };
+    });
+    const hit10 = rows.filter(row => row.hit10).length;
+    const hit25 = rows.filter(row => row.hit25).length;
+    const total = rows.length;
+    const hit10Rate = total ? Math.round(hit10 / total * 100) : null;
+    const hit25Rate = total ? Math.round(hit25 / total * 100) : null;
+    const cls = hit10 ? "good" : hit25 ? "ok" : "warn";
+    const label = hit10 ? "主线命中" : hit25 ? "前排留存" : "整体失效";
+    return { days, status: "done", cls, label, date: future.date, total, hit10, hit25, hit10Rate, hit25Rate, rows };
+  });
+  return { ...record, evaluation, evaluatedAt: new Date().toISOString() };
+}
+
+function xiaokeSectorDailyJudgmentSummary(record = {}) {
+  const main = (record.mainline || [])[0];
+  const candidates = (record.candidates || []).slice(0, 3).map(row => row.name).filter(Boolean).join("、") || "暂无";
+  const risks = (record.invalidations || []).filter(row => row.level === "stop").slice(0, 3).map(row => row.name).join("、") || "暂无";
+  const funnel = (record.funnel || []).filter(row => row.covered).slice(0, 3).map(row => {
+    const drivers = (row.drivers || []).slice(0, 2).join("/");
+    return `${row.name}${drivers ? `(${drivers})` : ""}`;
+  }).join("、") || "待刷新";
+  if (!main) return `今日没有形成清晰主线。候选观察：${candidates}；风险红线：${risks}；个股漏斗：${funnel}。`;
+  return `今日主线优先看 ${main.name}（${main.stage}，第${main.rank || "-"}）。候选观察：${candidates}；风险红线：${risks}；个股漏斗：${funnel}。`;
+}
+
+function xiaokeSectorDailySummaryText(record = {}) {
+  const evalLine = (record.evaluation || []).map(item => {
+    if (item.status !== "done") return `${item.days}日后：等待样本`;
+    return `${item.days}日后：${item.label}，前核心命中 ${item.hit10}/${item.total}，前排留存 ${item.hit25}/${item.total}`;
+  }).join("\n");
+  return [
+    `【板块强弱每日总结 ${record.date || ""}】`,
+    `结论：${record.dailySummary || xiaokeSectorDailyJudgmentSummary(record)}`,
+    `主线：${(record.mainline || []).map(row => `${row.name}/${row.stage}/第${row.rank || "-"}`).join("、") || "暂无"}`,
+    `候选：${(record.candidates || []).slice(0, 6).map(row => `${row.name}/${row.stage}/第${row.rank || "-"}`).join("、") || "暂无"}`,
+    `风险：${(record.invalidations || []).filter(row => row.level === "stop").slice(0, 5).map(row => `${row.name}/${row.rule}`).join("、") || "暂无红线"}`,
+    `个股漏斗：${(record.funnel || []).filter(row => row.covered).slice(0, 5).map(row => `${row.name}：${(row.drivers || []).slice(0, 3).join("、") || "待观察"}`).join("；") || "暂无归因快照"}`,
+    `验证：\n${evalLine || "等待后续交易日验证"}`,
+    `口径：${record.source || "本地快照"}；${record.formulaVersion || ""}；${record.ruleVersion || ""}`
+  ].join("\n");
+}
+
+function xiaokeBuildSectorDailyJudgment(snapshot = readSectorSnapshots()[0], options = {}) {
+  if (!snapshot?.items?.length) return null;
+  const date = snapshot.date || todayString();
+  const snapshots = xiaokeSectorReviewSnapshotsFor(date, 20);
+  const analysisRows = xiaokeSectorAnalysisRows(snapshot.items || []);
+  const lifecycleRows = xiaokeSectorLifecycleRows(analysisRows, snapshots);
+  const closeReview = xiaokeBuildSectorCloseReview(snapshot, options);
+  const candidates = xiaokeBuildSectorCandidatePool(analysisRows, snapshots);
+  const attributionRows = readSectorAttributionSnapshots();
+  const invalidations = lifecycleRows
+    .map(row => ({ row, invalidation: xiaokeSectorInvalidationRules(row) }))
+    .filter(item => item.invalidation.level === "stop" || item.invalidation.level === "warn")
+    .slice(0, 12)
+    .map(item => ({
+      name: item.row.name,
+      code: item.row.code || item.row.current?.code || "",
+      stage: item.row.lifecycle.stage,
+      rank: item.row.lifecycle.latestRank,
+      level: item.invalidation.level,
+      label: item.invalidation.label,
+      rule: item.invalidation.rules[0]?.title || "",
+      detail: item.invalidation.rules[0]?.detail || ""
+    }));
+  const funnel = candidates.slice(0, xiaokeSectorRuleSettings().funnelLimit).map(row => {
+    const snapshotItem = xiaokeLatestAttributionForCandidate(row, attributionRows);
+    const previous = snapshotItem ? xiaokePreviousAttributionSnapshot(snapshotItem, attributionRows) : null;
+    const health = snapshotItem ? xiaokeSectorAttributionHealth(snapshotItem, previous) : null;
+    return {
+      name: row.name,
+      code: row.code || "",
+      stage: row.stage,
+      rank: row.rank,
+      covered: Boolean(snapshotItem),
+      health: health ? { score: health.score, label: health.label, cls: health.cls } : null,
+      upRate: snapshotItem?.upRate ?? null,
+      drivers: xiaokeSnapshotNames(snapshotItem?.drivers || [], 4),
+      risks: xiaokeSnapshotNames(snapshotItem?.drags || [], 4)
+    };
+  });
+  const mainline = (closeReview?.mainline || []).map(row => ({
+    name: row.name,
+    code: row.code || "",
+    stage: row.stage,
+    rank: row.rank,
+    pct: row.pct,
+    nextCheck: row.nextCheck,
+    action: row.action
+  }));
+  const record = {
+    id: `sector_daily_judgment_${date}`,
+    version: XIAOKE_SECTOR_DAILY_JUDGMENT_VERSION,
+    date,
+    at: new Date().toISOString(),
+    status: closeReview?.status || (xiaokeAshareCloseReady(date) ? "正式盘后复盘" : "盘中预览"),
+    ready: Boolean(closeReview?.ready || xiaokeAshareCloseReady(date) || options.forceClose),
+    source: snapshot.source || "本地板块快照",
+    quoteMode: snapshot.quoteMode || xiaokeSectorQuoteMode(),
+    formulaVersion: XIAOKE_SECTOR_MAINLINE_FORMULA_VERSION,
+    lifecycleVersion: XIAOKE_SECTOR_LIFECYCLE_VERSION,
+    ruleVersion: XIAOKE_SECTOR_RULE_SETTINGS_VERSION,
+    ruleSettings: xiaokeSectorRuleSettings(),
+    snapshotCount: snapshots.length,
+    topToday: (closeReview?.topToday || []).slice(0, 8),
+    mainline,
+    candidates: candidates.slice(0, 12).map(row => ({
+      name: row.name,
+      code: row.code || "",
+      stage: row.stage,
+      rank: row.rank,
+      pct: row.pct,
+      invalidation: row.invalidation,
+      invalidationLevel: row.invalidationLevel,
+      nextCheck: row.nextCheck
+    })),
+    invalidations,
+    funnel,
+    reviewSummary: closeReview?.summary || "",
+    dailySummary: "",
+    nextActions: [
+      ...(mainline || []).slice(0, 3).map(row => `${row.name}：${row.nextCheck || "看能否保持前排"}`),
+      ...invalidations.filter(row => row.level === "stop").slice(0, 2).map(row => `${row.name}：红线处理，${row.detail}`)
+    ].slice(0, 6)
+  };
+  record.dailySummary = xiaokeSectorDailyJudgmentSummary(record);
+  return xiaokeEvaluateSectorDailyJudgment(record);
+}
+
+function saveSectorDailyJudgment(record = {}, silent = false) {
+  if (!record?.date) return null;
+  const evaluated = xiaokeEvaluateSectorDailyJudgment(record);
+  const rows = readSectorDailyJudgments();
+  const next = [evaluated, ...rows.filter(row => row.date !== evaluated.date)].slice(0, 180);
+  writeSectorDailyJudgments(next);
+  if (!silent) showToast(`${evaluated.date} 每日主线总结已保存`);
+  return evaluated;
+}
+
+function generateSectorDailyJudgment(forceClose = false) {
+  const snapshot = readSectorSnapshots()[0];
+  const record = xiaokeBuildSectorDailyJudgment(snapshot, { forceClose });
+  if (!record) return showToast("暂无板块快照，先刷新今日榜或回填历史");
+  saveSectorDailyJudgment(record);
+  if (xiaokeSectorMovementLabIsOpen()) openSectorMovementLab();
+  else if (state.view === "sectorStrength") renderSectorStrength({ skipFetch: true });
+  return record;
+}
+
+function copySectorDailySummary(date = "") {
+  const record = readSectorDailyJudgments().find(row => row.date === date)
+    || xiaokeBuildSectorDailyJudgment(readSectorSnapshots()[0], { forceClose: xiaokeAshareCloseReady(date || todayString()) });
+  if (!record) return showToast("暂无可复制的每日总结");
+  const text = xiaokeSectorDailySummaryText(xiaokeEvaluateSectorDailyJudgment(record));
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(() => showToast("每日主线总结已复制")).catch(() => window.prompt("复制失败，请手动复制：", text));
+  } else {
+    window.prompt("请手动复制：", text);
+  }
+}
+
+function xiaokeRefreshSectorDailyJudgmentEvaluations() {
+  const rows = readSectorDailyJudgments();
+  if (!rows.length) return [];
+  const next = rows.map(row => xiaokeEvaluateSectorDailyJudgment(row));
+  writeSectorDailyJudgments(next);
+  return next;
+}
+
+function xiaokeSectorMistakeKey(item = {}) {
+  return String(item.code || item.name || "").trim().toUpperCase();
+}
+
+function xiaokeSectorSameTrackedItem(a = {}, b = {}) {
+  const aCode = String(a.code || "").trim().toUpperCase();
+  const bCode = String(b.code || "").trim().toUpperCase();
+  if (aCode && bCode && aCode === bCode) return true;
+  return String(a.name || "").trim() === String(b.name || "").trim();
+}
+
+function xiaokeSectorTrackedMeta(record = {}, item = {}) {
+  const rows = [...(record.mainline || []), ...(record.candidates || [])];
+  return rows.find(row => xiaokeSectorSameTrackedItem(row, item)) || item || {};
+}
+
+function xiaokeSectorMistakeReason(record = {}, meta = {}, result = {}) {
+  const rule = xiaokeSectorRuleSettings();
+  const startRank = Number(result.startRank ?? meta.rank ?? 999);
+  const futureRank = Number(result.futureRank);
+  const futurePct = xiaokeFiniteNumberOrNull(result.futurePct);
+  const stage = String(result.startStage || meta.stage || "");
+  const invalidation = (record.invalidations || []).find(row => xiaokeSectorSameTrackedItem(row, meta));
+  const funnel = (record.funnel || []).find(row => xiaokeSectorSameTrackedItem(row, meta));
+  const hasFutureRank = Number.isFinite(futureRank);
+  if (!hasFutureRank) {
+    return {
+      type: "数据断层",
+      cls: "data",
+      reason: "后续快照没有找到该板块，可能是名称/BK代码未稳定匹配。",
+      action: "先修正板块映射，再把这条当低置信度样本处理。"
+    };
+  }
+  if (invalidation?.level === "stop") {
+    return {
+      type: "红线已提示",
+      cls: "warn",
+      reason: `${invalidation.rule || invalidation.label || "失效红线"}：${invalidation.detail || "当日已经出现降级信号。"}`,
+      action: "以后红线触发时不再按主线处理，只保留观察仓位或移出核心。"
+    };
+  }
+  if (stage.includes("启动") && futureRank > rule.frontRank) {
+    return {
+      type: "启动未确认",
+      cls: "launch",
+      reason: `当时是启动/新观察，后续第${futureRank}，没有留在前${rule.frontRank}。`,
+      action: `启动只做观察，必须次日继续前${rule.frontRank}且宽度改善后再升为主线。`
+    };
+  }
+  if (startRank <= rule.coreRank && futureRank > rule.frontRank) {
+    return {
+      type: "核心掉队",
+      cls: "bad",
+      reason: `当时第${startRank}，后续跌到第${futureRank}，从前${rule.coreRank}直接掉出前${rule.frontRank}。`,
+      action: `主线确认后也要设置失守线：跌出前${rule.frontRank}先降级，不再硬扛主线叙事。`
+    };
+  }
+  if (funnel && !funnel.covered) {
+    return {
+      type: "归因不足",
+      cls: "data",
+      reason: "当时没有成分股漏斗，无法确认谁在真实贡献。",
+      action: "把个股漏斗刷新作为主线确认前置条件，至少看到领涨/拖累结构。"
+    };
+  }
+  if (funnel?.health && ["warn", "diverge", "missing"].includes(String(funnel.health.cls || ""))) {
+    return {
+      type: "成分背离",
+      cls: "diverge",
+      reason: `当时个股结构为“${funnel.health.label || "不健康"}”，板块强但内部不够一致。`,
+      action: "板块强、成分弱时只当轮动，不当主升；优先等扩散确认。"
+    };
+  }
+  if (futurePct !== null && futurePct < 0) {
+    return {
+      type: "强度回落",
+      cls: "bad",
+      reason: `后续涨跌为 ${xiaokeSectorSignedPct(futurePct, 1)}，排名也未能留在核心。`,
+      action: "涨幅推动的板块需要叠加排名持续性，不能只看当日涨幅。"
+    };
+  }
+  if (Number.isFinite(startRank) && startRank > rule.coreRank && futureRank > rule.frontRank) {
+    return {
+      type: "后排追踪",
+      cls: "weak",
+      reason: `当时仅第${startRank}，后续第${futureRank}，本来就不是核心主线。`,
+      action: `后排方向只进入候选池，连续进入前${rule.coreRank}后再升级。`
+    };
+  }
+  return {
+    type: "持续性不足",
+    cls: "warn",
+    reason: `后续第${futureRank}，没有达到核心验证标准。`,
+    action: "提高持续性权重：连续前排和宽度确认优先于单日强度。"
+  };
+}
+
+function xiaokeSectorMistakeCategory(reason = {}) {
+  const type = String(reason.type || "");
+  const text = `${type} ${reason.reason || ""} ${reason.action || ""}`;
+  if (/映射|BK|名称|匹配/.test(text)) {
+    return { key: "mapping", label: "映射错误", cls: "diverge", note: "先锁定BK绑定和名称字典" };
+  }
+  if (/数据断层|数据源|回退源|缓存|缺失|归因不足/.test(text)) {
+    return { key: "source", label: "数据源断层", cls: "data", note: "先修数据质量，再复盘规则" };
+  }
+  if (/核心掉队|红线|退潮|掉出前|回撤/.test(text)) {
+    return { key: "tide", label: "主线退潮", cls: "bad", note: "按失效线降级或移出核心" };
+  }
+  if (/启动|后排|持续性|强度回落|成分背离|宽度|过宽/.test(text)) {
+    return { key: "rule", label: "规则过宽", cls: "warn", note: "收紧晋级或提高确认门槛" };
+  }
+  return { key: "other", label: "其他待复核", cls: "weak", note: "样本不足，先观察" };
+}
+
+function xiaokeSectorMistakeBookRows(limit = 40) {
+  const rule = xiaokeSectorRuleSettings();
+  const rows = [];
+  const judgments = readSectorDailyJudgments().map(row => xiaokeEvaluateSectorDailyJudgment(row));
+  judgments.forEach(record => {
+    const tracked = xiaokeSectorJudgmentTrackedRows(record);
+    tracked.forEach(item => {
+      const meta = xiaokeSectorTrackedMeta(record, item);
+      const done = (record.evaluation || [])
+        .filter(evaluation => evaluation.status === "done")
+        .map(evaluation => ({
+          days: evaluation.days,
+          date: evaluation.date,
+          result: (evaluation.rows || []).find(row => xiaokeSectorSameTrackedItem(row, item))
+        }))
+        .filter(row => row.result)
+        .sort((a, b) => Number(b.days || 0) - Number(a.days || 0));
+      if (!done.length) return;
+      const latest = done[0];
+      const result = latest.result || {};
+      const hit10 = Boolean(result.hit10);
+      const hit25 = Boolean(result.hit25);
+      const wasCore = Number(result.startRank ?? meta.rank ?? 999) <= rule.coreRank || String(result.startStage || meta.stage || "").includes("主升");
+      if (hit10 || (hit25 && !wasCore)) return;
+      const severity = hit25 ? "降级题" : "错题";
+      const reason = xiaokeSectorMistakeReason(record, meta, result);
+      const category = xiaokeSectorMistakeCategory(reason);
+      rows.push({
+        id: `${record.date}_${item.code || item.name}_${latest.days}`,
+        date: record.date,
+        checkDate: latest.date,
+        days: latest.days,
+        name: item.name || meta.name || "",
+        code: item.code || meta.code || "",
+        stage: result.startStage || meta.stage || "",
+        startRank: result.startRank ?? meta.rank ?? null,
+        futureRank: result.futureRank ?? null,
+        futurePct: result.futurePct ?? null,
+        severity,
+        reason,
+        category,
+        summary: record.dailySummary || "",
+        nextActions: record.nextActions || []
+      });
+    });
+  });
+  return rows
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)) || (a.severity === "错题" ? -1 : 1))
+    .slice(0, limit);
+}
+
+function xiaokeSectorMistakeBookStats(rows = xiaokeSectorMistakeBookRows(200)) {
+  const typeCounts = rows.reduce((acc, row) => {
+    const key = row.reason?.type || "未分类";
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+  const topType = Object.entries(typeCounts).sort((a, b) => b[1] - a[1])[0];
+  const wrong = rows.filter(row => row.severity === "错题").length;
+  const downgrade = rows.filter(row => row.severity === "降级题").length;
+  const judgments = readSectorDailyJudgments().map(row => xiaokeEvaluateSectorDailyJudgment(row));
+  const doneEvaluations = judgments.flatMap(record => (record.evaluation || []).filter(item => item.status === "done"));
+  const hit25Total = doneEvaluations.reduce((sum, item) => sum + Number(item.hit25 || 0), 0);
+  const total = doneEvaluations.reduce((sum, item) => sum + Number(item.total || 0), 0);
+  const retention = total ? Math.round(hit25Total / total * 100) : null;
+  const categorySeeds = [
+    { key: "source", label: "数据源断层", cls: "data" },
+    { key: "mapping", label: "映射错误", cls: "diverge" },
+    { key: "rule", label: "规则过宽", cls: "warn" },
+    { key: "tide", label: "主线退潮", cls: "bad" }
+  ];
+  const categories = categorySeeds.map(seed => {
+    const matched = rows.filter(row => (row.category || xiaokeSectorMistakeCategory(row.reason)).key === seed.key);
+    return { ...seed, count: matched.length, names: matched.slice(0, 3).map(row => row.name).join("、") || "暂无" };
+  });
+  return { wrong, downgrade, topType: topType ? `${topType[0]} ${topType[1]}次` : "暂无", retention, total, categories };
+}
+
+function xiaokeSectorMistakeBookText(rows = xiaokeSectorMistakeBookRows(24)) {
+  if (!rows.length) return "【主线错题本】\n暂无已验证失败的主线判断。";
+  const stats = xiaokeSectorMistakeBookStats(rows);
+  return [
+    "【主线错题本】",
+    `错题：${stats.wrong}；降级题：${stats.downgrade}；最高频原因：${stats.topType}；前排留存率：${stats.retention === null ? "-" : stats.retention + "%"}`,
+    `四类归因：${stats.categories.map(item => `${item.label}${item.count}`).join("，")}`,
+    "",
+    ...rows.map((row, index) => `${index + 1}. ${row.date} ${row.name}：${row.severity}，${row.days}日后 ${row.startRank || "-"} → ${row.futureRank || "消失"}。类别：${(row.category || xiaokeSectorMistakeCategory(row.reason)).label}；归因：${row.reason.reason} 修正：${row.reason.action}`)
+  ].join("\n");
+}
+
+function copySectorMistakeBook() {
+  const text = xiaokeSectorMistakeBookText();
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(() => showToast("主线错题本已复制")).catch(() => window.prompt("复制失败，请手动复制：", text));
+  } else {
+    window.prompt("请手动复制：", text);
+  }
+}
+
+function refreshSectorMistakeBook() {
+  xiaokeRefreshSectorDailyJudgmentEvaluations();
+  showToast("主线错题本已重新评估");
+  if (xiaokeSectorMovementLabIsOpen()) openSectorMovementLab();
+  else if (state.view === "sectorStrength") renderSectorStrength({ skipFetch: true });
+}
+
+function xiaokeSectorMistakeBookHtml() {
+  const rows = xiaokeSectorMistakeBookRows(30);
+  const stats = xiaokeSectorMistakeBookStats(rows);
+  const rowHtml = row => {
+    const category = row.category || xiaokeSectorMistakeCategory(row.reason);
+    return `<tr>
+    <td><b>${escapeHtml(row.date)}</b><div class="date">${escapeHtml(row.days)}日后：${escapeHtml(row.checkDate || "等待")}</div></td>
+    <td><b>${escapeHtml(row.name)}</b><div class="date">${escapeHtml(row.code || row.stage || "")}</div></td>
+    <td><span class="sector-mistake-severity ${row.severity === "错题" ? "bad" : "warn"}">${escapeHtml(row.severity)}</span><div class="date">${escapeHtml(row.stage || "-")}</div></td>
+    <td><b>${escapeHtml(row.startRank || "-")} → ${escapeHtml(row.futureRank || "消失")}</b><div class="date">${escapeHtml(row.futurePct == null ? "" : xiaokeSectorSignedPct(row.futurePct, 1))}</div></td>
+    <td><span class="sector-mistake-tag ${escapeHtml(category.cls || "warn")}">${escapeHtml(category.label)}</span> <span class="sector-mistake-tag ${escapeHtml(row.reason.cls || "warn")}">${escapeHtml(row.reason.type)}</span><div class="date">${escapeHtml(row.reason.reason)}</div></td>
+    <td>${escapeHtml(row.reason.action)}</td>
+  </tr>`;
+  };
+  return `<section class="panel sector-mistake-book-panel" style="margin-top:12px">
+    <div class="metadata-head">
+      <div><div class="panel-title">主线错题本 / 误判归因</div><div class="date">自动从“每日主线总结与验证”生成：只记录验证失败或核心降级的板块，用来修正规则，而不是事后找理由。</div></div>
+      <div class="review-actions"><span class="video-group-badge">${escapeHtml(XIAOKE_SECTOR_MISTAKE_BOOK_VERSION)}</span><button class="small-btn primary" onclick="refreshSectorMistakeBook()">重新评估</button><button class="small-btn" onclick="copySectorMistakeBook()">复制错题本</button></div>
+    </div>
+    <div class="sector-audit-summary">
+      <article><span>错题</span><b>${escapeHtml(stats.wrong)}</b><small>没有留在前排或消失</small></article>
+      <article><span>降级题</span><b>${escapeHtml(stats.downgrade)}</b><small>核心主线退为前排跟随</small></article>
+      <article><span>最高频原因</span><b>${escapeHtml(stats.topType)}</b><small>后续优先修正规则</small></article>
+      <article><span>前排留存率</span><b>${escapeHtml(stats.retention === null ? "-" : stats.retention + "%")}</b><small>${escapeHtml(stats.total ? `已验证样本 ${stats.total}` : "等待更多快照")}</small></article>
+    </div>
+    <div class="sector-audit-summary">${stats.categories.map(item => `<article><span>${escapeHtml(item.label)}</span><b>${escapeHtml(item.count)}</b><small>${escapeHtml(item.names)}</small></article>`).join("")}</div>
+    <div class="stock-table-wrap" style="margin-top:10px"><table class="stock-table sector-prof-table"><thead><tr><th>判断日</th><th>板块</th><th>类型</th><th>验证结果</th><th>归因</th><th>规则修正动作</th></tr></thead><tbody>${rows.map(rowHtml).join("") || `<tr><td colspan="6"><div class="date">暂无错题。等每日总结经过 1/3/5 日验证后，这里会自动沉淀误判样本。</div></td></tr>`}</tbody></table></div>
+  </section>`;
+}
+
+function xiaokeSectorRulePatchText(patch = {}, base = xiaokeSectorRuleSettings()) {
+  const defs = new Map(xiaokeSectorRuleFieldDefs().map(item => [item.key, item]));
+  return Object.entries(patch).map(([key, value]) => {
+    const def = defs.get(key);
+    const next = xiaokeClampRuleValue(key, value);
+    const current = base[key];
+    return `${def?.title || key} ${current} → ${next}${def?.suffix || ""}`;
+  }).join("；");
+}
+
+function xiaokeSectorRuleAdjustmentSuggestions(rows = xiaokeSectorMistakeBookRows(120)) {
+  const rule = xiaokeSectorRuleSettings();
+  const countType = type => rows.filter(row => row.reason?.type === type).length;
+  const suggestions = [];
+  const add = (title, reason, patch, priority, impact, cls = "warn") => {
+    const cleanPatch = {};
+    Object.entries(patch || {}).forEach(([key, value]) => {
+      if (!(key in XIAOKE_SECTOR_RULE_DEFAULTS)) return;
+      const next = xiaokeClampRuleValue(key, value);
+      if (next !== rule[key]) cleanPatch[key] = next;
+    });
+    if (!Object.keys(cleanPatch).length) return;
+    suggestions.push({ title, reason, patch: cleanPatch, priority, impact, cls, changeText: xiaokeSectorRulePatchText(cleanPatch, rule) });
+  };
+  const continuity = countType("持续性不足") + countType("强度回落");
+  const launch = countType("启动未确认") + countType("后排追踪");
+  const coreDrop = countType("核心掉队");
+  const structure = countType("成分背离") + countType("归因不足");
+  const data = countType("数据断层");
+  if (continuity >= 2 || rows.length >= 4 && continuity >= 1) {
+    add(
+      "提高主线持续性门槛",
+      `错题里有 ${continuity} 条属于持续性或强度回落，说明单日强度权重可能偏高。`,
+      { confirmCoreRate: rule.confirmCoreRate + 5, coreRateWarn: rule.coreRateWarn + 5, frontRateWarn: rule.frontRateWarn + 5, breadthWarn: rule.breadthWarn + 3 },
+      1,
+      "减少涨一天就被升级为主线的误判，但可能少抓一部分早期启动。",
+      "warn"
+    );
+  }
+  if (launch >= 1) {
+    add(
+      "收紧启动板块晋级",
+      `错题里有 ${launch} 条启动/后排方向没有被验证，候选池需要更挑剔。`,
+      { watchRank: rule.watchRank - 3, candidateLimit: rule.candidateLimit - 4, frontRateWarn: rule.frontRateWarn + 5 },
+      2,
+      "启动先观察，二次确认后再进入主线候选，降低噪音。",
+      "launch"
+    );
+  }
+  if (coreDrop >= 1) {
+    add(
+      "提前处理核心掉队",
+      `错题里有 ${coreDrop} 条核心掉队，说明退潮识别可以更早。`,
+      { pullbackWarn: rule.pullbackWarn - 3, pullbackStop: rule.pullbackStop - 5, previousFrontRank: rule.previousFrontRank - 2 },
+      3,
+      "主线跌出强势区会更早黄灯/红线，减少硬扛退潮。",
+      "bad"
+    );
+  }
+  if (structure >= 1) {
+    add(
+      "提高内部扩散要求",
+      `错题里有 ${structure} 条来自成分背离或归因不足，说明板块内部没有确认。`,
+      { breadthWarn: rule.breadthWarn + 5, funnelLimit: rule.funnelLimit + 2 },
+      4,
+      "要求更高的上涨宽度，并多看几个候选板块的个股漏斗。",
+      "diverge"
+    );
+  }
+  if (data >= 1) {
+    suggestions.push({
+      title: "先修数据映射，不调主线规则",
+      reason: `错题里有 ${data} 条数据断层，参数调整无法解决名称/BK匹配问题。`,
+      patch: {},
+      priority: 5,
+      impact: "先去 BK匹配审计表锁定映射，再看是否需要调整规则。",
+      cls: "data",
+      changeText: "无参数变更"
+    });
+  }
+  if (!suggestions.length) {
+    suggestions.push({
+      title: rows.length ? "暂不建议调参" : "等待错题样本",
+      reason: rows.length ? "当前错题样本不足以支持参数变化，先继续积累 1/3/5 日验证。" : "还没有可验证错题，先保持当前规则。",
+      patch: {},
+      priority: 99,
+      impact: "避免因为样本太少而过拟合。",
+      cls: "neutral",
+      changeText: "无参数变更"
+    });
+  }
+  return suggestions.sort((a, b) => a.priority - b.priority).slice(0, 6);
+}
+
+function xiaokeSectorRecommendedRulePatch() {
+  const suggestions = xiaokeSectorRuleAdjustmentSuggestions();
+  const patch = {};
+  suggestions.filter(item => Object.keys(item.patch || {}).length).slice(0, 2).forEach(item => {
+    Object.assign(patch, item.patch);
+  });
+  return patch;
+}
+
+function applySectorRuleAdvisorPatch(mode = "recommended") {
+  const patch = mode === "strict" ? {
+    confirmCoreRate: xiaokeSectorRuleSettings().confirmCoreRate + 5,
+    coreRateWarn: xiaokeSectorRuleSettings().coreRateWarn + 5,
+    frontRateWarn: xiaokeSectorRuleSettings().frontRateWarn + 5,
+    breadthWarn: xiaokeSectorRuleSettings().breadthWarn + 5,
+    pullbackWarn: xiaokeSectorRuleSettings().pullbackWarn - 3,
+    pullbackStop: xiaokeSectorRuleSettings().pullbackStop - 5
+  } : xiaokeSectorRecommendedRulePatch();
+  if (!Object.keys(patch).length) return showToast("暂无可应用的调参建议");
+  writeSectorRuleSettings({ ...xiaokeSectorRuleSettings(), ...patch });
+  showToast(mode === "strict" ? "已应用严格调参建议" : "已应用错题本推荐调参");
+  if (xiaokeSectorMovementLabIsOpen()) openSectorMovementLab();
+  else if (state.view === "sectorStrength") renderSectorStrength({ skipFetch: true });
+}
+
+function xiaokeSectorRuleAdvisorHtml() {
+  const rows = xiaokeSectorMistakeBookRows(120);
+  const suggestions = xiaokeSectorRuleAdjustmentSuggestions(rows);
+  const patch = xiaokeSectorRecommendedRulePatch();
+  const stats = xiaokeSectorMistakeBookStats(rows);
+  const cards = suggestions.map(item => `<article class="${escapeHtml(item.cls || "warn")}">
+    <span>${escapeHtml(item.title)}</span>
+    <b>${escapeHtml(item.changeText)}</b>
+    <small>${escapeHtml(item.reason)}</small>
+    <em>${escapeHtml(item.impact)}</em>
+  </article>`).join("");
+  return `<section class="panel sector-rule-advisor-panel" style="margin-top:12px">
+    <div class="metadata-head">
+      <div><div class="panel-title">规则调参建议器</div><div class="date">根据主线错题本反推参数：错在哪里，就建议收紧哪条规则。建议先小步应用，避免过拟合。</div></div>
+      <div class="review-actions"><span class="video-group-badge">${escapeHtml(XIAOKE_SECTOR_RULE_ADVISOR_VERSION)}</span><button class="small-btn primary" onclick="applySectorRuleAdvisorPatch('recommended')">应用推荐调参</button><button class="small-btn" onclick="applySectorRuleAdvisorPatch('strict')">应用严格调参</button><button class="small-btn" onclick="resetSectorRuleSettings()">恢复默认</button></div>
+    </div>
+    <div class="sector-audit-summary">
+      <article><span>错题样本</span><b>${escapeHtml(rows.length)}</b><small>${escapeHtml(stats.topType || "暂无")}</small></article>
+      <article><span>推荐变更</span><b>${escapeHtml(Object.keys(patch).length)}</b><small>${escapeHtml(Object.keys(patch).join("、") || "暂无")}</small></article>
+      <article><span>留存率</span><b>${escapeHtml(stats.retention === null ? "-" : stats.retention + "%")}</b><small>来自每日总结验证</small></article>
+    </div>
+    <div class="sector-rule-advisor-grid">${cards}</div>
+  </section>`;
+}
+
+function xiaokeScorePercent(value, fallback = null) {
+  if (value === null || value === undefined || value === "") return fallback;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(0, Math.min(100, Math.round(number)));
+}
+
+function xiaokeSectorScoreMetric(label, value, note, cls = "neutral") {
+  const percent = xiaokeScorePercent(value, null);
+  const width = percent === null ? 0 : percent;
+  return { label, value: percent, note, cls, width };
+}
+
+function xiaokeLatestAttributionForName(name = "", code = "") {
+  const key = String(code || "").trim().toUpperCase();
+  const cleanName = String(name || "").trim();
+  return readSectorAttributionSnapshots().find(item => {
+    const itemCode = String(item.code || "").trim().toUpperCase();
+    return (key && itemCode === key) || (cleanName && item.name === cleanName);
+  }) || null;
+}
+
+function xiaokeSectorMainlineScoreBreakdown(row = {}, rank = 999, analysis = null, amountRows = []) {
+  const rule = xiaokeSectorRuleSettings();
+  const currentRank = Number(rank || row.rank || analysis?.currentRank || 999);
+  const pct = xiaokeFiniteNumberOrNull(row.pct);
+  const breadth = xiaokeFiniteNumberOrNull(row.breadth);
+  const amount = xiaokeFiniteNumberOrNull(row.amount);
+  const sortedAmount = (amountRows || []).map(item => xiaokeFiniteNumberOrNull(item.amount)).filter(value => value !== null).sort((a, b) => b - a);
+  const amountRank = amount === null ? null : sortedAmount.findIndex(value => value === amount) + 1;
+  const amountScore = amountRank > 0 && sortedAmount.length ? Math.round((1 - (amountRank - 1) / Math.max(1, sortedAmount.length - 1)) * 100) : null;
+  const top10Rate = xiaokeFiniteNumberOrNull(analysis?.top10Count) !== null && analysis?.top10Count != null && analysis?.top25Count != null
+    ? Math.min(100, Math.round((Number(analysis.top10Count || 0) * 8 + Number(analysis.top25Count || 0) * 2) * 5))
+    : xiaokeFiniteNumberOrNull(analysis?.top10Rate) !== null ? Math.round(Number(analysis.top10Rate || 0) * 100) : null;
+  const attr = xiaokeLatestAttributionForName(row.name, row.code);
+  const attrHealth = attr ? xiaokeSectorAttributionHealth(attr, xiaokePreviousAttributionSnapshot(attr, readSectorAttributionSnapshots())) : null;
+  const standard = xiaokeIsStandardSector(row);
+  const sourceDiff = xiaokeFiniteNumberOrNull(row.sourceDiffAbs);
+  const dataScore = standard ? (sourceDiff !== null && sourceDiff >= 3 ? 72 : 100) : 45;
+  const metrics = [
+    xiaokeSectorScoreMetric("排名位置", currentRank <= rule.coreRank ? 100 : currentRank <= rule.frontRank ? 76 : currentRank <= 40 ? 48 : 22, `第${currentRank || "-"}，核心前${rule.coreRank}，前排前${rule.frontRank}`, currentRank <= rule.coreRank ? "good" : currentRank <= rule.frontRank ? "ok" : "warn"),
+    xiaokeSectorScoreMetric("持续性", top10Rate, analysis ? `前10 ${analysis.top10Count || 0}次 / 前25 ${analysis.top25Count || 0}次` : "缺少历史快照", top10Rate >= 70 ? "good" : top10Rate >= 45 ? "ok" : "warn"),
+    xiaokeSectorScoreMetric("当日强度", pct === null ? null : (pct + 5) / 12 * 100, pct === null ? "无涨跌幅" : xiaokeSectorSignedPct(pct, 2), pct >= 3 ? "good" : pct >= 0 ? "ok" : "bad"),
+    xiaokeSectorScoreMetric("上涨宽度", breadth, breadth === null ? "接口未提供宽度" : `${Math.round(breadth)}% 上涨宽度`, breadth >= 65 ? "good" : breadth >= rule.breadthWarn ? "ok" : "warn"),
+    xiaokeSectorScoreMetric("量能关注", amountScore, amount === null ? "缺少成交额" : `成交额排名 ${amountRank || "-"}/${sortedAmount.length}`, amountScore >= 70 ? "good" : amountScore >= 45 ? "ok" : "warn"),
+    xiaokeSectorScoreMetric("归因健康", attrHealth?.score ?? null, attrHealth ? attrHealth.label : "未刷新成分股漏斗", attrHealth?.cls === "strong" || attrHealth?.cls === "healthy" ? "good" : attrHealth ? "warn" : "neutral"),
+    xiaokeSectorScoreMetric("数据可信", dataScore, standard ? (sourceDiff !== null ? `BK标准，源差 ${sourceDiff}pct` : "东方财富BK标准板块") : "非BK样本，只辅助盯盘", standard ? "good" : "warn")
+  ];
+  const usable = metrics.filter(item => item.value !== null);
+  const explainScore = usable.length ? Math.round(usable.reduce((sum, item) => sum + item.value, 0) / usable.length) : 0;
+  const weak = metrics.filter(item => item.value === null || item.value < 50).slice(0, 3).map(item => item.label);
+  const strong = metrics.filter(item => item.value >= 75).slice(0, 3).map(item => item.label);
+  return { metrics, explainScore, weak, strong };
+}
+
+function xiaokeSectorMainlineScoreExplainerHtml(rows = []) {
+  const list = (rows || []).slice(0, 12);
+  if (!list.length) return "";
+  const analysisRows = xiaokeSectorAnalysisRows(rows || []);
+  const analysisMap = new Map(analysisRows.map(item => [item.name, item]));
+  const metricHtml = item => `<div class="sector-score-metric ${escapeHtml(item.cls)}">
+    <span>${escapeHtml(item.label)}</span>
+    <b>${escapeHtml(item.value === null ? "-" : item.value)}</b>
+    <i><em style="width:${escapeHtml(item.width)}%"></em></i>
+    <small>${escapeHtml(item.note || "")}</small>
+  </div>`;
+  return `<section class="panel sector-score-explainer-panel" style="margin-top:12px">
+    <div class="metadata-head">
+      <div><div class="panel-title">板块主线评分解释器</div><div class="date">把强度拆成排名、持续性、涨幅、宽度、量能、归因、数据可信度。先看为什么强，再决定是不是主线。</div></div>
+      <span class="video-group-badge">7项拆分</span>
+    </div>
+    <div class="sector-score-explainer-grid">${list.map((row, index) => {
+      const rank = row.rank || index + 1;
+      const breakdown = xiaokeSectorMainlineScoreBreakdown(row, rank, analysisMap.get(row.name), rows);
+      const payload = { name: row.name, code: row.code || "", source: row.source || "" };
+      return `<article>
+        <div class="sector-score-head"><div><b>${escapeHtml(row.name)}</b><span>第${escapeHtml(rank)} · 解释分 ${escapeHtml(breakdown.explainScore)}</span></div><button class="small-btn" onclick='openSectorBoardDetail(${JSON.stringify(payload)})'>归因</button></div>
+        <div class="sector-score-metrics">${breakdown.metrics.map(metricHtml).join("")}</div>
+        <p>${escapeHtml(breakdown.weak.length ? `短板：${breakdown.weak.join("、")}。` : `优势：${breakdown.strong.join("、") || "结构均衡"}。`)}</p>
+      </article>`;
+    }).join("")}</div>
+  </section>`;
+}
+
+function xiaokeSectorEvaluationBadgeHtml(item = {}) {
+  const cls = item.status !== "done" ? "neutral" : item.cls || "neutral";
+  const label = item.status !== "done"
+    ? `${item.days}日后等待`
+    : `${item.days}日后${item.label}`;
+  const note = item.status !== "done"
+    ? "等待后续交易日"
+    : `前核心 ${item.hit10}/${item.total} · 前排 ${item.hit25}/${item.total}`;
+  return `<span class="sector-eval-badge ${escapeHtml(cls)}"><b>${escapeHtml(label)}</b><em>${escapeHtml(note)}</em></span>`;
+}
+
+function xiaokeSectorDailyJudgmentHtml(currentRows = []) {
+  const snapshot = readSectorSnapshots()[0] || (currentRows?.length ? { date: todayString(), items: currentRows, source: "当前页面" } : null);
+  const savedRows = readSectorDailyJudgments().map(row => xiaokeEvaluateSectorDailyJudgment(row));
+  const currentSaved = snapshot?.date ? savedRows.find(row => row.date === snapshot.date) : null;
+  const current = currentSaved || xiaokeBuildSectorDailyJudgment(snapshot || null, { forceClose: xiaokeAshareCloseReady(snapshot?.date || todayString()) });
+  const rows = current ? [current, ...savedRows.filter(row => row.date !== current.date)].slice(0, 16) : savedRows.slice(0, 16);
+  if (!current && !rows.length) return "";
+  const evalSummary = current?.evaluation?.length ? current.evaluation.map(xiaokeSectorEvaluationBadgeHtml).join("") : `<span class="sector-eval-badge neutral"><b>等待验证</b><em>需要后续快照</em></span>`;
+  const historyRow = row => {
+    const main = (row.mainline || [])[0];
+    const risk = (row.invalidations || []).filter(item => item.level === "stop").slice(0, 2).map(item => item.name).join("、") || "暂无";
+    const drivers = (row.funnel || []).filter(item => item.covered).slice(0, 2).map(item => `${item.name}:${(item.drivers || []).slice(0, 2).join("/") || "-"}`).join("；") || "待刷新";
+    return `<tr>
+      <td><b>${escapeHtml(row.date)}</b><div class="date">${escapeHtml(row.status || "")}</div></td>
+      <td>${main ? `<b>${escapeHtml(main.name)}</b><div class="date">${escapeHtml(main.stage || "")} · 第${escapeHtml(main.rank || "-")}</div>` : "暂无"}</td>
+      <td>${escapeHtml((row.candidates || []).slice(0, 3).map(item => item.name).join("、") || "暂无")}</td>
+      <td>${escapeHtml(risk)}</td>
+      <td>${escapeHtml(drivers)}</td>
+      <td><div class="sector-eval-inline">${(row.evaluation || []).map(xiaokeSectorEvaluationBadgeHtml).join("")}</div></td>
+      <td><button class="small-btn" onclick='copySectorDailySummary(${JSON.stringify(row.date)})'>复制</button></td>
+    </tr>`;
+  };
+  return `<section class="panel sector-daily-judgment-panel" style="margin-top:12px">
+    <div class="metadata-head">
+      <div><div class="panel-title">盘后自动复盘历史对比</div><div class="date">每天保存当日主线判断、候选池、失效红线和个股漏斗；后续用 1/3/5 个交易日自动验证是否留在前10或前25。</div></div>
+      <div class="review-actions"><span class="video-group-badge">${escapeHtml(XIAOKE_SECTOR_DAILY_JUDGMENT_VERSION)}</span><button class="small-btn primary" onclick="generateSectorDailyJudgment(true)">生成/更新今日总结</button><button class="small-btn" onclick='copySectorDailySummary(${JSON.stringify(current?.date || "")})'>复制总结</button></div>
+    </div>
+    ${current ? `<div class="sector-daily-summary-box"><b>${escapeHtml(current.dailySummary || xiaokeSectorDailyJudgmentSummary(current))}</b><span>${evalSummary}</span><small>${escapeHtml((current.nextActions || []).join("；") || "等待明日验证。")}</small></div>` : ""}
+    <div class="stock-table-wrap" style="margin-top:10px"><table class="stock-table sector-prof-table"><thead><tr><th>日期</th><th>当日主线</th><th>候选池</th><th>红线</th><th>个股漏斗</th><th>验证</th><th>操作</th></tr></thead><tbody>${rows.map(historyRow).join("") || `<tr><td colspan="7"><div class="date">暂无每日主线总结。</div></td></tr>`}</tbody></table></div>
+  </section>`;
+}
+
+function readSectorCloseReviews() {
+  try {
+    const rows = JSON.parse(localStorage.getItem(XIAOKE_SECTOR_CLOSE_REVIEWS_KEY) || "[]");
+    return Array.isArray(rows) ? rows : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeSectorCloseReviews(rows = []) {
+  const clean = (rows || []).filter(row => row && row.date).slice(0, 120);
+  localStorage.setItem(XIAOKE_SECTOR_CLOSE_REVIEWS_KEY, JSON.stringify(clean));
+  return clean;
+}
+
+function xiaokeAshareCloseReady(date = todayString()) {
+  if (String(date || "") !== todayString()) return true;
+  const now = new Date();
+  return now.getHours() * 60 + now.getMinutes() >= 15 * 60 + 5;
+}
+
+function xiaokeSectorReviewSnapshotsFor(date = todayString(), limit = 20) {
+  return readSectorSnapshots()
+    .filter(snapshot => String(snapshot.date || "") <= String(date || todayString()))
+    .slice(0, limit);
+}
+
+function xiaokeSectorCloseReviewSummary(review = {}) {
+  const main = review.mainline?.[0];
+  if (!main) return "当前缺少足够的东方财富BK快照，盘后只保留数据，不形成主线判断。";
+  const stageText = main.stage === "主升确认"
+    ? "主线确认"
+    : main.stage === "分歧换手"
+      ? "主线分歧"
+      : main.stage === "修复回流"
+        ? "主线修复"
+        : main.stage === "启动试探"
+          ? "启动观察"
+          : "阶段观察";
+  return `${stageText}：优先看 ${main.name}，最新第${main.rank}，阶段为${main.stage}；明天验证：${main.nextCheck}`;
+}
+
+function xiaokeBuildSectorCloseReview(snapshot = readSectorSnapshots()[0], options = {}) {
+  if (!snapshot?.items?.length) return null;
+  const date = snapshot.date || todayString();
+  const snapshots = xiaokeSectorReviewSnapshotsFor(date, 20);
+  const analysisRows = xiaokeSectorAnalysisRows(snapshot.items || []);
+  const lifecycleRows = xiaokeSectorLifecycleRows(analysisRows, snapshots);
+  const topToday = (snapshot.items || []).slice(0, 8).map(item => ({
+    name: item.name,
+    code: item.code || "",
+    rank: item.rank,
+    pct: xiaokeFiniteNumberOrNull(item.pct),
+    score: item.score ?? null,
+    source: item.source || ""
+  }));
+  const keyRows = lifecycleRows
+    .filter(row => ["启动试探", "主升确认", "分歧换手", "修复回流", "退潮降级"].includes(row.lifecycle.stage))
+    .slice(0, 16)
+    .map(row => ({
+      name: row.name,
+      code: row.code || row.current?.code || "",
+      stage: row.lifecycle.stage,
+      cls: row.lifecycle.cls,
+      rank: row.lifecycle.latestRank,
+      previousRank: row.lifecycle.previousRank,
+      pct: row.lifecycle.pct,
+      breadth: row.lifecycle.breadth,
+      facts: row.lifecycle.facts,
+      reason: row.lifecycle.reason,
+      nextCheck: row.lifecycle.nextCheck,
+      action: row.lifecycle.action
+    }));
+  const stageCounts = keyRows.reduce((acc, row) => {
+    acc[row.stage] = (acc[row.stage] || 0) + 1;
+    return acc;
+  }, {});
+  const mainline = keyRows.filter(row => ["主升确认", "分歧换手", "修复回流", "启动试探"].includes(row.stage)).slice(0, 5);
+  const risk = keyRows.filter(row => row.stage === "退潮降级").slice(0, 5);
+  const watch = keyRows.filter(row => ["启动试探", "修复回流", "分歧换手"].includes(row.stage)).slice(0, 6);
+  const ready = xiaokeAshareCloseReady(date) || options.forceClose === true;
+  const review = {
+    id: `sector_close_${date}`,
+    date,
+    at: new Date().toISOString(),
+    ready,
+    status: ready ? "正式盘后复盘" : "盘中预览",
+    source: snapshot.source || "本地板块快照",
+    quoteMode: snapshot.quoteMode || xiaokeSectorQuoteMode(),
+    formulaVersion: XIAOKE_SECTOR_MAINLINE_FORMULA_VERSION,
+    lifecycleVersion: XIAOKE_SECTOR_LIFECYCLE_VERSION,
+    snapshotCount: snapshots.length,
+    topToday,
+    keyRows,
+    stageCounts,
+    mainline,
+    risk,
+    watch,
+    summary: "",
+    nextFocus: watch.map(row => `${row.name}：${row.nextCheck}`).slice(0, 5),
+    riskText: risk.length ? risk.map(row => `${row.name}：${row.reason}`).join("；") : "暂无明确退潮红线，但仍需看数据源质量和明日承接。",
+    dataNote: ready ? "按收盘后可用快照生成" : "当前未到收盘确认时间，只作为盘中预览"
+  };
+  review.summary = xiaokeSectorCloseReviewSummary(review);
+  return review;
+}
+
+function saveSectorCloseReview(review = {}, silent = false) {
+  if (!review?.date) return null;
+  const rows = readSectorCloseReviews();
+  const next = [review, ...rows.filter(row => row.date !== review.date)].slice(0, 120);
+  writeSectorCloseReviews(next);
+  try {
+    const snapshot = readSectorSnapshots().find(item => item.date === review.date) || readSectorSnapshots()[0];
+    const judgment = xiaokeBuildSectorDailyJudgment(snapshot, { forceClose: review.ready });
+    if (judgment) saveSectorDailyJudgment(judgment, true);
+  } catch (error) {
+    console.warn("保存每日主线总结失败", error);
+  }
+  if (!silent) showToast(`${review.date} 板块盘后复盘已保存`);
+  return review;
+}
+
+function xiaokeMaybeAutoSaveSectorCloseReview(snapshot = readSectorSnapshots()[0]) {
+  if (!snapshot?.items?.length || !xiaokeAshareCloseReady(snapshot.date)) return null;
+  const exists = readSectorCloseReviews().find(row => row.date === snapshot.date && row.ready && row.lifecycleVersion === XIAOKE_SECTOR_LIFECYCLE_VERSION);
+  if (exists) return exists;
+  const review = xiaokeBuildSectorCloseReview(snapshot, { forceClose: true });
+  return review ? saveSectorCloseReview(review, true) : null;
+}
+
+function generateSectorCloseReview(forceClose = false) {
+  const snapshot = readSectorSnapshots()[0];
+  const review = xiaokeBuildSectorCloseReview(snapshot, { forceClose });
+  if (!review) return showToast("暂无板块快照，先刷新今日榜或回填历史");
+  saveSectorCloseReview(review);
+  if (state.view === "sectorStrength") renderSectorStrength({ skipFetch: true });
+  return review;
+}
+
+function xiaokeSectorCloseReviewText(review = {}) {
+  const main = (review.mainline || []).map(row => `${row.name}（${row.stage}，第${row.rank}）`).join("、") || "暂无";
+  const watch = (review.nextFocus || []).join("\n") || "等待下一交易日确认。";
+  return [
+    `【板块强弱盘后复盘 ${review.date || ""}】`,
+    `结论：${review.summary || ""}`,
+    `主线/候选：${main}`,
+    `风险：${review.riskText || ""}`,
+    `明日观察：\n${watch}`,
+    `口径：${review.source || ""}；${review.dataNote || ""}；生命周期 ${review.lifecycleVersion || ""}`
+  ].join("\n");
+}
+
+function xiaokeFindSectorCloseReview(date = "") {
+  const targetDate = date || readSectorSnapshots()[0]?.date || todayString();
+  return readSectorCloseReviews().find(row => row.date === targetDate)
+    || xiaokeBuildSectorCloseReview(readSectorSnapshots()[0], { forceClose: xiaokeAshareCloseReady(targetDate) });
+}
+
+function copySectorCloseReviewText(date = "") {
+  const review = xiaokeFindSectorCloseReview(date);
+  if (!review) return showToast("暂无可复制的板块复盘");
+  const text = xiaokeSectorCloseReviewText(review);
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(() => showToast("板块盘后复盘已复制")).catch(() => {
+      window.prompt("复制失败，请手动复制：", text);
+    });
+  } else {
+    window.prompt("请手动复制：", text);
+  }
+}
+
+function exportSectorCloseReviewMarkdown(date = "") {
+  const review = xiaokeFindSectorCloseReview(date);
+  if (!review) return showToast("暂无可导出的板块复盘");
+  const text = xiaokeSectorCloseReviewText(review);
+  const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `板块强弱盘后复盘-${review.date || todayString()}.md`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 500);
+  showToast("板块盘后复盘已导出");
+}
+
+function copySectorCloseReviewToDailyReview(date = "") {
+  const review = readSectorCloseReviews().find(row => row.date === date) || xiaokeBuildSectorCloseReview(readSectorSnapshots()[0], { forceClose: xiaokeAshareCloseReady(date || todayString()) });
+  if (!review) return showToast("暂无可沉淀的板块复盘");
+  const rows = readDailyReviews();
+  const id = `sector_close_review_${review.date}`;
+  const text = xiaokeSectorCloseReviewText(review);
+  const next = {
+    id,
+    mode: "day",
+    date: review.date,
+    target: "板块强弱盘后复盘",
+    action: "复盘",
+    position: "",
+    price: "",
+    reason: `主线生命周期：${(review.mainline || []).map(row => `${row.name}/${row.stage}`).join("、") || "暂无"}`,
+    result: review.summary || "",
+    lesson: text
+  };
+  saveDailyReviews([next, ...rows.filter(row => row.id !== id)]);
+  showToast("已沉淀到每日复盘");
+}
+
+function xiaokeAutoGenerateSectorCloseReview() {
+  const snapshot = readSectorSnapshots()[0];
+  xiaokeMaybeAutoSaveSectorCloseReview(snapshot);
+}
+
+function xiaokeSectorCloseReviewHtml(currentRows = []) {
+  const snapshot = readSectorSnapshots()[0];
+  const saved = snapshot?.date ? readSectorCloseReviews().find(row => row.date === snapshot.date) : null;
+  const review = saved || xiaokeBuildSectorCloseReview(snapshot || { date: todayString(), items: currentRows || [] });
+  if (!review) return "";
+  const modeCls = review.ready ? "good" : "warn";
+  const countCard = (title, value, note, cls = "") => `<article class="${escapeHtml(cls)}"><span>${escapeHtml(title)}</span><b>${escapeHtml(value)}</b><small>${escapeHtml(note)}</small></article>`;
+  const rows = (review.keyRows || []).slice(0, 10);
+  return `<section class="panel sector-close-review ${review.ready ? "ready" : "preview"}" style="margin-top:12px">
+    <div class="metadata-head">
+      <div><div class="panel-title">盘后自动复盘</div><div class="date">${escapeHtml(review.status)} · ${escapeHtml(review.date)} · ${escapeHtml(review.dataNote)}。保存后可沉淀到“每日复盘”。</div></div>
+      <div class="review-actions"><span class="sector-source-diff ${modeCls}">${escapeHtml(review.ready ? "可沉淀" : "盘中预览")}</span><button class="small-btn primary" onclick="generateSectorCloseReview(true)">生成/更新</button><button class="small-btn" onclick='copySectorCloseReviewText(${JSON.stringify(review.date)})'>复制报告</button><button class="small-btn" onclick='exportSectorCloseReviewMarkdown(${JSON.stringify(review.date)})'>导出Markdown</button><button class="small-btn" onclick='copySectorCloseReviewToDailyReview(${JSON.stringify(review.date)})'>沉淀每日复盘</button></div>
+    </div>
+    <div class="sector-mainline-answer"><b>${escapeHtml(review.summary)}</b><span>口径：${escapeHtml(review.source || "-")}；快照 ${escapeHtml(review.snapshotCount || 0)} 条；公式 ${escapeHtml(review.formulaVersion || "")}</span></div>
+    <div class="sector-audit-summary">
+      ${countCard("主线/候选", (review.mainline || []).length, (review.mainline || []).slice(0, 3).map(row => row.name).join("、") || "暂无", "health-strong")}
+      ${countCard("启动/修复/分歧", (review.watch || []).length, (review.watch || []).slice(0, 3).map(row => `${row.name}/${row.stage}`).join("、") || "暂无", "health-neutral")}
+      ${countCard("退潮风险", (review.risk || []).length, (review.risk || []).slice(0, 3).map(row => row.name).join("、") || "暂无", "health-warn")}
+    </div>
+    <div class="stock-table-wrap" style="margin-top:10px"><table class="stock-table sector-prof-table"><thead><tr><th>板块</th><th>阶段</th><th>证据</th><th>明日观察</th><th>动作</th></tr></thead><tbody>${rows.map(row => `<tr>
+      <td><b>${escapeHtml(row.name)}</b><div class="date">${escapeHtml(row.code || "")}</div></td>
+      <td>${xiaokeSectorLifecycleBadgeHtml(row)}<div class="date">第${escapeHtml(row.rank || "-")}</div></td>
+      <td>${escapeHtml((row.facts || []).join("；"))}</td>
+      <td>${escapeHtml(row.nextCheck || "")}</td>
+      <td>${escapeHtml(row.action || "")}</td>
+    </tr>`).join("") || `<tr><td colspan="5"><div class="date">暂无生命周期样本。</div></td></tr>`}</tbody></table></div>
+  </section>`;
+}
+
+function xiaokeSectorUniqueMotionRows(groups = [], limit = 6) {
+  const seen = new Set();
+  const rows = [];
+  groups.flat().forEach(row => {
+    if (!row?.name || seen.has(row.name) || rows.length >= limit) return;
+    seen.add(row.name);
+    rows.push(row);
+  });
+  return rows.map((row, index) => ({ ...row, chartIndex: index, color: xiaokeSectorMotionColor(index, row.bucket) }));
+}
+
+function xiaokeSectorFocusMotionRows(rows = []) {
+  const main = rows.filter(row => row.latestRank <= 10 || row.top10Rate >= .55).slice(0, 4);
+  const rising = rows.slice().filter(row => row.improvement >= 8 && row.latestRank <= 35).sort((a, b) => b.improvement - a.improvement || a.latestRank - b.latestRank).slice(0, 4);
+  const gain = rows.slice().filter(row => row.rangePct > 0).sort((a, b) => b.rangePct - a.rangePct).slice(0, 3);
+  const risk = rows.slice().filter(row => row.improvement <= -8 || (row.firstRank <= 12 && row.latestRank > 25) || row.latestRank > 45).sort((a, b) => a.improvement - b.improvement || b.latestRank - a.latestRank).slice(0, 3);
+  return xiaokeSectorUniqueMotionRows([main.slice(0, 2), rising.slice(0, 2), gain.slice(0, 1), risk.slice(0, 1), rows.slice(0, 6)], 6);
+}
+
+function xiaokeSectorSampleMotionPoints(points = [], total = 0) {
+  if (points.length <= 28) return points;
+  const step = Math.max(2, Math.ceil((total || points.length) / 24));
+  return points.filter((point, index) => index === 0 || index === points.length - 1 || point.index % step === 0);
+}
+
+function xiaokeSectorMotionReadoutHtml(rows = []) {
+  const main = rows.find(row => row.latestRank <= 10 && (row.top10Rate >= .5 || row.top25Rate >= .75)) || rows[0];
+  const rising = rows.slice().filter(row => row.improvement > 0).sort((a, b) => b.improvement - a.improvement)[0];
+  const gain = rows.slice().sort((a, b) => Number(b.trendReturn ?? b.rangePct) - Number(a.trendReturn ?? a.rangePct))[0];
+  const risk = rows.slice().filter(row => row.improvement < 0 || row.latestRank > 30).sort((a, b) => a.improvement - b.improvement || b.latestRank - a.latestRank)[0];
+  const card = (title, row, metric, cls, note) => row ? `<article class="sector-motion-readout-card ${cls}">
+    <span>${escapeHtml(title)}</span>
+    <b>${escapeHtml(row.name)}</b>
+    <strong>${escapeHtml(metric)}</strong>
+    <small>${escapeHtml(note)}</small>
+  </article>` : `<article class="sector-motion-readout-card ${cls}"><span>${escapeHtml(title)}</span><b>-</b><strong>-</strong><small>暂无</small></article>`;
+  return `<div class="sector-motion-readout">
+    ${card("最像主线", main, main ? `第${main.latestRank} · 前10 ${Math.round(main.top10Rate * 100)}%` : "-", "main", main ? `趋势${xiaokeSectorSignedPct(main.trendReturn ?? main.rangePct, 1)}，最佳第${main.bestRank}` : "暂无")}
+    ${card("升位最快", rising, rising ? `${rising.improvement > 0 ? "+" : ""}${rising.improvement} 位` : "-", "warming", rising ? `${rising.firstRank} → ${rising.latestRank}，趋势${xiaokeSectorSignedPct(rising.trendReturn ?? rising.rangePct, 1)}` : "暂无")}
+    ${card("趋势最强", gain, gain ? xiaokeSectorSignedPct(gain.trendReturn ?? gain.rangePct, 1) : "-", "gain", gain ? `最新第${gain.latestRank}，前10 ${Math.round(gain.top10Rate * 100)}%` : "暂无")}
+    ${card("退潮风险", risk, risk ? `${risk.firstRank} → ${risk.latestRank}` : "-", "cooling", risk ? `趋势${xiaokeSectorSignedPct(risk.trendReturn ?? risk.rangePct, 1)}，最差第${risk.worstRank}` : "暂无")}
+  </div>`;
+}
+
+function xiaokeSectorMotionGroupHtml(title, rows = [], cls = "") {
+  const items = rows.slice(0, 5).map(row => {
+    const state = xiaokeSectorMotionState(row);
+    return `<li>
+      <b>${escapeHtml(row.name)}</b>
+      <span>${escapeHtml(state.label)}</span>
+      <em>第${escapeHtml(row.latestRank)} · ${escapeHtml(xiaokeSectorSignedPct(row.rangePct, 1))} · 前10 ${Math.round(row.top10Rate * 100)}%</em>
+    </li>`;
+  }).join("");
+  return `<article class="sector-motion-group ${cls}">
+    <h3>${escapeHtml(title)}</h3>
+    <ul>${items || `<li><b>暂无</b><span>等待</span><em>需要更多快照</em></li>`}</ul>
+  </article>`;
+}
+
+function xiaokeSectorMotionGroupsHtml(rows = []) {
+  const main = rows.filter(row => row.latestRank <= 10 || row.top10Rate >= .55).slice(0, 5);
+  const rising = rows.slice().filter(row => row.improvement >= 8 && row.latestRank <= 40).sort((a, b) => b.improvement - a.improvement || a.latestRank - b.latestRank).slice(0, 5);
+  const volatile = rows.slice().filter(row => row.rangePct >= 10 && row.top10Rate < .55).sort((a, b) => b.rangePct - a.rangePct).slice(0, 5);
+  const cooling = rows.slice().filter(row => row.improvement <= -8 || (row.firstRank <= 12 && row.latestRank > 25) || row.latestRank > 45).sort((a, b) => a.improvement - b.improvement || b.latestRank - a.latestRank).slice(0, 5);
+  return `<div class="sector-motion-groups">
+    ${xiaokeSectorMotionGroupHtml("主线候选", main, "main")}
+    ${xiaokeSectorMotionGroupHtml("升位加速", rising, "warming")}
+    ${xiaokeSectorMotionGroupHtml("涨幅强但不稳", volatile, "volatile")}
+    ${xiaokeSectorMotionGroupHtml("退潮风险", cooling, "cooling")}
+  </div>`;
+}
+
+function xiaokeSectorRankTone(rank) {
+  const value = Number(rank);
+  if (value <= 10) return "main";
+  if (value <= 25) return "follow";
+  if (value <= 40) return "watch";
+  return "weak";
+}
+
+function xiaokeSectorRankTapeHtml(row = {}, limit = 14) {
+  const points = (row.points || []).slice(-limit);
+  if (!points.length) return `<div class="sector-rank-tape-wrap"><div class="sector-rank-caption">排名轨迹<span>暂无历史排名</span></div></div>`;
+  return `<div class="sector-rank-tape-wrap">
+    <div class="sector-rank-caption">排名轨迹<span>左旧右新，数字越小越强</span></div>
+    <div class="sector-rank-track">${points.map(point => `<b class="sector-rank-pill rank-${xiaokeSectorRankTone(point.rank)}" title="${escapeHtml(point.date)} 第${escapeHtml(point.rank)}">${escapeHtml(point.rank)}</b>`).join("")}</div>
+    <div class="sector-rank-legend"><span><i class="rank-main"></i>前10</span><span><i class="rank-follow"></i>11-25</span><span><i class="rank-watch"></i>26-40</span><span><i class="rank-weak"></i>40后</span></div>
+  </div>`;
+}
+
+const XIAOKE_SECTOR_REAL_KLINE_CACHE = new Map();
+
+function xiaokeSectorBoardCode(row = {}) {
+  const direct = String(row.current?.code || row.code || "").trim().toUpperCase();
+  if (direct) return direct;
+  const points = Array.isArray(row.points) ? row.points : [];
+  for (let index = points.length - 1; index >= 0; index -= 1) {
+    const code = String(points[index]?.code || "").trim().toUpperCase();
+    if (code) return code;
+  }
+  return "";
+}
+
+function xiaokeSectorCanLoadRealKline(row = {}) {
+  return /^BK\d{4,6}$/.test(xiaokeSectorBoardCode(row));
+}
+
+function xiaokeSectorTrendChartHtml(row = {}, limit = 36, options = {}) {
+  const code = xiaokeSectorBoardCode(row);
+  const name = row.name || row.current?.name || code || "板块";
+  const realSource = options.realSource === true;
+  const canLoadReal = !realSource && xiaokeSectorCanLoadRealKline({ ...row, code });
+  const status = realSource ? "real" : canLoadReal ? "pending" : "local";
+  const sourceLabel = options.label || (realSource ? "东方财富板块K线" : canLoadReal ? "本地预览 · 正在换成东方财富K线" : "本地快照趋势");
+  const source = Array.isArray(options.points) && options.points.length
+    ? options.points
+    : Array.isArray(row.trendPoints) && row.trendPoints.length ? row.trendPoints : (row.points || []);
+  const chartAttrs = `data-sector-trend-code="${escapeHtml(code)}" data-sector-trend-name="${escapeHtml(name)}" data-sector-trend-status="${escapeHtml(status)}"`;
+  if (!source.length) {
+    return `<div class="sector-trend-chart ${status}" ${chartAttrs}>
+      <div class="sector-trend-head"><span>${escapeHtml(sourceLabel)}</span><b>-</b></div>
+      <div class="sector-trend-empty">${canLoadReal ? "正在读取东方财富K线..." : "暂无趋势"}</div>
+    </div>`;
+  }
+  const points = source.slice(-limit).map(point => {
+    const close = Number(point.close ?? point.historyClose ?? 100);
+    const open = Number(point.open ?? close);
+    const high = Number(point.high ?? Math.max(open, close));
+    const low = Number(point.low ?? Math.min(open, close));
+    return { ...point, open, high, low, close, pct: Number(point.pct) };
+  }).filter(point => Number.isFinite(point.close) && Number.isFinite(point.open) && Number.isFinite(point.high) && Number.isFinite(point.low));
+  if (!points.length) {
+    return `<div class="sector-trend-chart ${status}" ${chartAttrs}>
+      <div class="sector-trend-head"><span>${escapeHtml(sourceLabel)}</span><b>-</b></div>
+      <div class="sector-trend-empty">暂无趋势</div>
+    </div>`;
+  }
+  const width = 320;
+  const height = 136;
+  const pad = { left: 32, right: 10, top: 12, bottom: 24 };
+  const plotW = width - pad.left - pad.right;
+  const plotH = height - pad.top - pad.bottom;
+  const first = points[0] || {};
+  const latest = points[points.length - 1] || {};
+  const firstClose = Number(first.close ?? first.open ?? 100);
+  const latestClose = Number(latest.close ?? firstClose);
+  const baseline = Number(options.baseline ?? (realSource ? firstClose : 100));
+  const values = points.flatMap(point => [
+    Number(point.high),
+    Number(point.low),
+    Number(point.open),
+    Number(point.close)
+  ]).filter(Number.isFinite);
+  if (Number.isFinite(baseline)) values.push(baseline);
+  const rawMin = Math.min(...values);
+  const rawMax = Math.max(...values);
+  const padding = Math.max((rawMax - rawMin) * .08, Math.abs(rawMax || 100) * .003, .2);
+  const minValue = rawMin - padding;
+  const maxValue = rawMax + padding;
+  const range = Math.max(1, maxValue - minValue);
+  const y = value => pad.top + (maxValue - Number(value)) / range * plotH;
+  const step = plotW / Math.max(1, points.length);
+  const candleW = Math.max(3, Math.min(9, step * .58));
+  const candleHtml = points.map((point, index) => {
+    const open = Number(point.open);
+    const close = Number(point.close);
+    const high = Number(point.high);
+    const low = Number(point.low);
+    const cx = pad.left + index * step + step / 2;
+    const bodyY = Math.min(y(open), y(close));
+    const bodyH = Math.max(2, Math.abs(y(open) - y(close)));
+    const up = close >= open;
+    const cls = up ? "up" : "down";
+    const rankText = Number.isFinite(Number(point.rank)) ? `，排名 ${point.rank}` : "";
+    return `<g class="sector-trend-candle ${cls}">
+      <line x1="${cx.toFixed(1)}" x2="${cx.toFixed(1)}" y1="${y(high).toFixed(1)}" y2="${y(low).toFixed(1)}"></line>
+      <rect x="${(cx - candleW / 2).toFixed(1)}" y="${bodyY.toFixed(1)}" width="${candleW.toFixed(1)}" height="${bodyH.toFixed(1)}" rx="1.5"></rect>
+      <title>${escapeHtml(`${point.date || ""} ${xiaokeSectorSignedPct(point.pct, 2)}，收盘 ${close.toFixed(2)}${rankText}`)}</title>
+    </g>`;
+  }).join("");
+  const trendReturn = firstClose ? (latestClose / firstClose - 1) * 100 : 0;
+  const linePoints = points.map((point, index) => `${(pad.left + index * step + step / 2).toFixed(1)},${y(point.close).toFixed(1)}`).join(" ");
+  const retClass = trendReturn >= 0 ? "up" : "down";
+  return `<div class="sector-trend-chart ${status}" ${chartAttrs}>
+    <div class="sector-trend-head"><span>${escapeHtml(sourceLabel)}</span><b class="${retClass}">${escapeHtml(xiaokeSectorSignedPct(trendReturn, 1))}</b></div>
+    <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(name)} 趋势K线">
+      <rect x="0" y="0" width="${width}" height="${height}" rx="8" fill="rgba(6,11,18,.62)"></rect>
+      <line x1="${pad.left}" x2="${width - pad.right}" y1="${y(baseline).toFixed(1)}" y2="${y(baseline).toFixed(1)}" class="sector-trend-zero"></line>
+      <polyline points="${linePoints}" class="sector-trend-close"></polyline>
+      ${candleHtml}
+      <text x="${pad.left}" y="${height - 7}" class="sector-trend-axis">${escapeHtml(first.date || "")}</text>
+      <text x="${width - pad.right}" y="${height - 7}" text-anchor="end" class="sector-trend-axis">${escapeHtml(latest.date || "")}</text>
+    </svg>
+  </div>`;
+}
+
+function xiaokeSectorRealKlineDays() {
+  const range = xiaokeSectorTrajectoryRange();
+  if (range === "5") return 30;
+  if (range === "10") return 40;
+  if (range === "20") return 70;
+  if (range === "90") return 130;
+  return 220;
+}
+
+function xiaokeSectorRealKlineLimit() {
+  const range = xiaokeSectorTrajectoryRange();
+  if (range === "5") return 10;
+  if (range === "10") return 16;
+  if (range === "20") return 28;
+  if (range === "90") return 58;
+  return 72;
+}
+
+function xiaokeNormalizeSectorRealKlineRows(rows = []) {
+  return (rows || []).map(row => {
+    const close = Number(row.close);
+    const open = Number(row.open ?? close);
+    const high = Number(row.high ?? Math.max(open, close));
+    const low = Number(row.low ?? Math.min(open, close));
+    return {
+      date: row.date,
+      open,
+      high,
+      low,
+      close,
+      pct: Number(row.pct),
+      amount: Number(row.amount),
+      volume: Number(row.volume)
+    };
+  }).filter(row => row.date && Number.isFinite(row.close) && Number.isFinite(row.open) && Number.isFinite(row.high) && Number.isFinite(row.low));
+}
+
+async function xiaokeFetchSectorRealKline(code = "", days = xiaokeSectorRealKlineDays()) {
+  const boardCode = String(code || "").trim().toUpperCase();
+  if (!/^BK\d{4,6}$/.test(boardCode)) return [];
+  const cacheKey = `${boardCode}:${days}`;
+  if (XIAOKE_SECTOR_REAL_KLINE_CACHE.has(cacheKey)) return await XIAOKE_SECTOR_REAL_KLINE_CACHE.get(cacheKey);
+  const request = fetch(`/api/sector-kline?code=${encodeURIComponent(boardCode)}&days=${encodeURIComponent(days)}&t=${Date.now()}`, { cache: "no-store" })
+    .then(async response => {
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) throw new Error(data.error || "东方财富K线获取失败");
+      return xiaokeNormalizeSectorRealKlineRows(data.rows || []);
+    })
+    .catch(error => {
+      XIAOKE_SECTOR_REAL_KLINE_CACHE.delete(cacheKey);
+      throw error;
+    });
+  XIAOKE_SECTOR_REAL_KLINE_CACHE.set(cacheKey, request);
+  const rows = await request;
+  XIAOKE_SECTOR_REAL_KLINE_CACHE.set(cacheKey, Promise.resolve(rows));
+  return rows;
+}
+
+async function xiaokeHydrateSectorTrendCharts(root = document) {
+  const scope = root?.querySelectorAll ? root : document;
+  const nodes = [...scope.querySelectorAll(".sector-trend-chart[data-sector-trend-status='pending'][data-sector-trend-code]")];
+  if (!nodes.length) return;
+  const days = xiaokeSectorRealKlineDays();
+  const limit = xiaokeSectorRealKlineLimit();
+  const codes = [...new Set(nodes.map(node => String(node.dataset.sectorTrendCode || "").trim().toUpperCase()).filter(code => /^BK\d{4,6}$/.test(code)))].slice(0, 18);
+  if (!codes.length) return;
+  const pairs = await Promise.all(codes.map(async code => {
+    try {
+      return [code, await xiaokeFetchSectorRealKline(code, days)];
+    } catch (error) {
+      return [code, []];
+    }
+  }));
+  const rowMap = new Map(pairs);
+  nodes.forEach(node => {
+    const code = String(node.dataset.sectorTrendCode || "").trim().toUpperCase();
+    const rows = rowMap.get(code) || [];
+    if (rows.length) {
+      const name = node.dataset.sectorTrendName || code;
+      node.outerHTML = xiaokeSectorTrendChartHtml({ name, code }, limit, { points: rows, realSource: true, label: "东方财富板块K线" });
+      return;
+    }
+    node.dataset.sectorTrendStatus = "fallback";
+    node.classList.remove("pending");
+    node.classList.add("fallback");
+    const label = node.querySelector(".sector-trend-head span");
+    if (label) label.textContent = "本地快照趋势（东方财富K线暂不可用）";
+  });
+}
+
+function xiaokeSectorLatestPoint(row = {}) {
+  const points = Array.isArray(row.points) ? row.points : [];
+  return points[points.length - 1] || {};
+}
+
+function xiaokeSectorQuoteName(row = {}) {
+  return row.name || row.current?.name || xiaokeSectorLatestPoint(row).name || "";
+}
+
+function xiaokeSectorQuoteCode(row = {}) {
+  return xiaokeSectorBoardCode(row) || String(row.current?.code || xiaokeSectorLatestPoint(row).code || "").trim().toUpperCase();
+}
+
+function xiaokeSectorQuoteSource(row = {}) {
+  return row.current?.source || row.source || xiaokeSectorLatestPoint(row).source || "本地快照";
+}
+
+function xiaokeSectorQuoteTrendFromKline(rows = []) {
+  const clean = xiaokeNormalizeSectorRealKlineRows(rows);
+  const latest = clean[clean.length - 1];
+  const calc = period => {
+    const base = clean[clean.length - 1 - period];
+    if (!latest || !base || !Number.isFinite(base.close) || base.close <= 0) return null;
+    return (latest.close / base.close - 1) * 100;
+  };
+  return {
+    date: latest?.date || "",
+    d5: calc(5),
+    d10: calc(10),
+    d20: calc(20)
+  };
+}
+
+function xiaokeSectorQuotePanelHtml(row = {}, trend = {}, options = {}) {
+  const name = xiaokeSectorQuoteName(row);
+  const code = xiaokeSectorQuoteCode(row);
+  const current = row.current || row;
+  const latestPoint = xiaokeSectorLatestPoint(row);
+  const pct = Number(current.pct ?? latestPoint.pct);
+  const pct60 = Number(current.pct60 ?? latestPoint.pct60);
+  const upCount = Number(current.upCount);
+  const downCount = Number(current.downCount);
+  const leader = current.leader || "";
+  const leaderPct = Number(current.leaderPct);
+  const amount = Number(current.amount);
+  const staleText = options.fresh ? "已实时校准" : /^BK\d{4,6}$/.test(code) ? "等待实时校准" : "本地/自定义板块";
+  const pctClass = Number.isFinite(pct) ? (pct >= 0 ? "up" : "down") : "flat";
+  const trendCell = (label, value) => {
+    const valid = value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value));
+    const cls = valid ? (Number(value) >= 0 ? "up" : "down") : "flat";
+    return `<div><span>${escapeHtml(label)}</span><b class="${cls}">${escapeHtml(xiaokeSectorSignedPct(value, 1))}</b></div>`;
+  };
+  const breadthText = Number.isFinite(upCount) && Number.isFinite(downCount) ? `上涨/下跌 ${upCount}/${downCount}` : "上涨/下跌 -";
+  const leaderText = leader ? `领涨 ${leader}${Number.isFinite(leaderPct) ? ` ${xiaokeSectorSignedPct(leaderPct, 1)}` : ""}` : "领涨 -";
+  const amountText = Number.isFinite(amount) && amount > 0 ? `成交 ${strategyNumber(amount / 100000000, 1, "亿")}` : "";
+  return `<div class="sector-quote-panel" data-sector-quote-name="${escapeHtml(name)}" data-sector-quote-code="${escapeHtml(code)}">
+    <div class="sector-quote-main">
+      <span>今日涨跌</span>
+      <b class="${pctClass}">${escapeHtml(xiaokeSectorSignedPct(pct, 2))}</b>
+      <em>${escapeHtml([code, staleText].filter(Boolean).join(" · "))}</em>
+    </div>
+    <div class="sector-quote-grid">
+      ${trendCell("近5日", trend.d5)}
+      ${trendCell("近10日", trend.d10)}
+      ${trendCell("近20日", trend.d20)}
+      ${trendCell("60日", pct60)}
+    </div>
+    <div class="sector-quote-foot">
+      <span>${escapeHtml([breadthText, leaderText, amountText].filter(Boolean).join(" · "))}</span>
+    </div>
+  </div>`;
+}
+
+async function xiaokeHydrateSectorQuotePanels(root = document) {
+  const scope = root?.querySelectorAll ? root : document;
+  const nodes = [...scope.querySelectorAll(".sector-quote-panel[data-sector-quote-name]")];
+  if (!nodes.length) return;
+  const names = [...new Set(nodes.map(node => String(node.dataset.sectorQuoteName || "").trim()).filter(Boolean))].slice(0, 24);
+  if (!names.length) return;
+  try {
+    const response = await fetch(`/api/sector-quotes?names=${encodeURIComponent(names.join(","))}&t=${Date.now()}`, { cache: "no-store" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.success) throw new Error(data.error || "板块行情获取失败");
+    const quotes = (data.items || []).filter(item => item && item.name);
+    const byQuery = new Map();
+    quotes.forEach(item => {
+      if (item.query) byQuery.set(item.query, item);
+      byQuery.set(item.name, item);
+      if (item.code) byQuery.set(String(item.code).toUpperCase(), item);
+    });
+    const klinePairs = await Promise.all(quotes.map(async quote => {
+      const code = String(quote.code || "").toUpperCase();
+      if (!/^BK\d{4,6}$/.test(code)) return [code, {}];
+      try {
+        const rows = await xiaokeFetchSectorRealKline(code, 35);
+        return [code, xiaokeSectorQuoteTrendFromKline(rows)];
+      } catch {
+        return [code, {}];
+      }
+    }));
+    const trendMap = new Map(klinePairs);
+    nodes.forEach(node => {
+      const name = String(node.dataset.sectorQuoteName || "").trim();
+      const code = String(node.dataset.sectorQuoteCode || "").trim().toUpperCase();
+      const quote = byQuery.get(name) || byQuery.get(code);
+      if (!quote || !/^BK\d{4,6}$/i.test(quote.code || "")) {
+        node.classList.add("fallback");
+        const status = node.querySelector(".sector-quote-main em");
+        if (status) status.textContent = [code, "本地快照"].filter(Boolean).join(" · ");
+        return;
+      }
+      node.outerHTML = xiaokeSectorQuotePanelHtml({ name: quote.name, code: quote.code, current: quote, source: quote.source }, trendMap.get(String(quote.code).toUpperCase()) || {}, { fresh: true });
+    });
+  } catch {
+    nodes.forEach(node => node.classList.add("fallback"));
+  }
+}
+
+function xiaokeSectorDirectConclusion(row = {}) {
+  const trendReturn = Number(row.trendReturn ?? row.rangePct);
+  if (row.latestRank <= 10 && row.top10Rate >= .65 && trendReturn > 0) return "趋势+排名共振：像主线，重点看分歧后能否继续保持前排。";
+  if (row.latestRank <= 10 && row.improvement > 0 && trendReturn > 0) return "正在晋级：排名向上且最新进前10，明天看今日涨跌和宽度能否继续确认。";
+  if (row.improvement >= 15 && row.latestRank <= 30) return "升位很快：先按新启动观察，等前10和趋势都确认。";
+  if (trendReturn >= 12 && row.top10Rate < .5) return "趋势涨得多但排名不稳：有弹性，暂时不能当持续主线。";
+  if (trendReturn < -6 || row.improvement <= -12 || row.latestRank > 45) return "趋势或排名走弱：先按退潮/风险处理。";
+  if (row.latestRank <= 25) return "跟随板块：位置还可以，但需要晋级前10才算主线。";
+  return "普通观察：暂时没有强趋势，先放在后排。";
+}
+
+function xiaokeSectorDirectCardsHtml(rows = []) {
+  const main = rows.filter(row => row.latestRank <= 10 || row.top10Rate >= .55).slice(0, 4);
+  const rising = rows.slice().filter(row => row.improvement >= 8 && row.latestRank <= 40).sort((a, b) => b.improvement - a.improvement || a.latestRank - b.latestRank).slice(0, 3);
+  const gain = rows.slice().filter(row => row.rangePct >= 10).sort((a, b) => b.rangePct - a.rangePct).slice(0, 3);
+  const cooling = rows.slice().filter(row => row.improvement <= -8 || row.latestRank > 45).sort((a, b) => a.improvement - b.improvement || b.latestRank - a.latestRank).slice(0, 3);
+  const cards = xiaokeSectorUniqueMotionRows([main, rising, gain, cooling, rows], 10);
+  return `<section class="sector-direct-section">
+    <div class="sector-motion-subhead"><b>板块实时强弱卡</b><span>先看今日涨跌和近5/10/20日，再看排名轨迹。排名轨迹：青=前10，蓝=11-25，黄=26-40，红=40名以后。</span></div>
+    <div class="sector-direct-grid">${cards.map(row => {
+      const state = xiaokeSectorMotionState(row);
+      const trendReturn = Number(row.trendReturn ?? row.rangePct);
+      const pctClass = trendReturn >= 0 ? "up" : "down";
+      const payload = xiaokeSectorCardPayload(row);
+      const drawerId = xiaokeSectorCardDrawerId(row);
+      return `<article class="sector-direct-card ${escapeHtml(state.cls)}">
+        <div class="sector-direct-head">
+          <div><b>${escapeHtml(row.name)}</b><small>${escapeHtml(state.label)} · ${escapeHtml(state.note)}</small></div>
+          <div class="sector-direct-side"><span>第${escapeHtml(row.latestRank)}</span>${xiaokeSectorReliabilityBadgeHtml(row.current || row)}</div>
+        </div>
+        ${xiaokeSectorQuotePanelHtml(row)}
+        <div class="sector-direct-metrics">
+          <div><span>区间涨跌</span><b class="${pctClass}">${escapeHtml(xiaokeSectorSignedPct(trendReturn, 1))}</b></div>
+          <div><span>名次变化</span><b>${escapeHtml(row.firstRank)} → ${escapeHtml(row.latestRank)}</b></div>
+          <div><span>前10占比</span><b>${Math.round(row.top10Rate * 100)}%</b></div>
+        </div>
+        ${xiaokeSectorRankTapeHtml(row)}
+        <div class="sector-direct-actions">
+          <button class="small-btn primary" onclick='toggleSectorCardConstituents(${JSON.stringify(payload)}, ${JSON.stringify(drawerId)})'>成分股明细</button>
+          <button class="small-btn" onclick='openSectorBoardDetail(${JSON.stringify(payload)})'>完整归因</button>
+        </div>
+        <div id="${escapeHtml(drawerId)}" class="sector-card-drawer"></div>
+        <p>${escapeHtml(xiaokeSectorDirectConclusion(row))}</p>
+      </article>`;
+    }).join("")}</div>
+  </section>`;
+}
+
+function xiaokeSectorDailyChangeText(item, previousMap) {
+  const old = previousMap.get(item.name);
+  if (!old) return "新";
+  const delta = Number(old.rank) - Number(item.rank);
+  if (delta > 0) return `升${delta}`;
+  if (delta < 0) return `降${Math.abs(delta)}`;
+  return "平";
+}
+
+function xiaokeSectorDailyFilmHtml(snapshots = []) {
+  const chronological = (snapshots || []).slice().reverse();
+  const range = xiaokeSectorTrajectoryRange();
+  const dayLimit = range === "all" ? 24 : 20;
+  const days = chronological.slice(-dayLimit);
+  const dayCards = days.map((snapshot, index) => {
+    const previous = chronological[chronological.indexOf(snapshot) - 1] || null;
+    const previousMap = new Map((previous?.items || []).map(item => [item.name, item]));
+    const currentRows = snapshot.items || [];
+    const top = currentRows.slice(0, 5);
+    const top1 = top[0] || {};
+    const newTop10 = currentRows
+      .filter(item => Number(item.rank) <= 10 && (!previousMap.has(item.name) || Number(previousMap.get(item.name).rank) > 10))
+      .slice(0, 3);
+    const rising = currentRows
+      .map(item => ({ item, old: previousMap.get(item.name), delta: previousMap.get(item.name) ? Number(previousMap.get(item.name).rank) - Number(item.rank) : 0 }))
+      .filter(row => row.delta > 0)
+      .sort((a, b) => b.delta - a.delta)[0];
+    const falling = (previous?.items || [])
+      .map(old => {
+        const now = currentRows.find(item => item.name === old.name);
+        return { old, now, drop: now ? Number(now.rank) - Number(old.rank) : 999 };
+      })
+      .filter(row => row.drop > 0 && Number(row.old.rank) <= 25)
+      .sort((a, b) => b.drop - a.drop)[0];
+    return `<article class="sector-day-card ${index === days.length - 1 ? "latest" : ""}">
+      <div class="sector-day-head">
+        <b>${escapeHtml(snapshot.date)}</b>
+        <span>${index === days.length - 1 ? "最新" : `第${index + 1}天`}</span>
+      </div>
+      <div class="sector-day-main">
+        <span>当日主线</span>
+        <b>${escapeHtml(top1.name || "-")}</b>
+        <small class="${Number(top1.pct) >= 0 ? "up" : "down"}">${top1.rank ? `第${top1.rank} · ${escapeHtml(xiaokeSectorSignedPct(top1.pct, 1))}` : "暂无"}</small>
+      </div>
+      <div class="sector-day-top">${top.slice(0, 3).map(item => {
+        const pct = Number(item.pct);
+        return `<div><b>${escapeHtml(item.rank)}.${escapeHtml(item.name)}</b><span class="${pct >= 0 ? "up" : "down"}">${escapeHtml(xiaokeSectorSignedPct(pct, 1))}</span><em>${escapeHtml(xiaokeSectorDailyChangeText(item, previousMap))}</em></div>`;
+      }).join("")}</div>
+      <div class="sector-day-events">
+        <p><span>新进</span>${escapeHtml(newTop10.map(item => item.name).join("、") || "无")}</p>
+        <p><span>升位</span>${rising ? `${escapeHtml(rising.item.name)} +${rising.delta}` : "无"}</p>
+        <p><span>掉队</span>${falling ? `${escapeHtml(falling.old.name)} -${falling.drop === 999 ? "消失" : falling.drop}` : "无"}</p>
+      </div>
+    </article>`;
+  }).join("");
+  return `<section class="sector-daily-film">
+    <div class="sector-motion-subhead"><b>每日主线卡片流</b><span>${range === "all" ? "开始至今时默认展示最近24个交易日，避免信息过载。" : "按交易日从左到右排列，最新在最右侧。"}</span></div>
+    <div class="sector-day-scroll">${dayCards || `<div class="date">暂无每日快照。</div>`}</div>
+  </section>`;
+}
+
+function xiaokeSectorMotionChartHtml(analysisRows = []) {
+  const snapshots = xiaokeSectorSnapshotsForRange();
+  const chronological = snapshots.slice().reverse();
+  if (chronological.length < 2) {
+    return `<section class="panel sector-motion-panel" style="margin-top:12px"><div class="metadata-head"><div><div class="panel-title">旧版主线轨迹图</div><div class="date">当前区间至少需要 2 个交易日快照，才可以画出连续轨迹。</div></div>${xiaokeSectorRangeControlsHtml()}</div></section>`;
+  }
+  const allMotionRows = xiaokeSectorMotionRows(analysisRows, snapshots);
+  const chartRows = xiaokeSectorFocusMotionRows(allMotionRows);
+  if (!allMotionRows.length || !chartRows.length) {
+    return `<section class="panel sector-motion-panel" style="margin-top:12px"><div class="metadata-head"><div><div class="panel-title">旧版主线轨迹图</div><div class="date">当前区间缺少可连续对比的板块记录。</div></div>${xiaokeSectorRangeControlsHtml()}</div></section>`;
+  }
+  const allRanks = chartRows.flatMap(row => row.points.map(point => point.rank));
+  const maxRank = Math.min(80, Math.max(30, 40, ...allRanks));
+  const width = 1080;
+  const height = 388;
+  const pad = { left: 54, right: 112, top: 26, bottom: 42 };
+  const plotW = width - pad.left - pad.right;
+  const plotH = height - pad.top - pad.bottom;
+  const x = index => pad.left + (index / Math.max(1, chronological.length - 1)) * plotW;
+  const y = rank => pad.top + ((Math.min(Math.max(1, Number(rank) || maxRank), maxRank) - 1) / Math.max(1, maxRank - 1)) * plotH;
+  const zone = (start, end, color, label) => {
+    const y1 = y(start);
+    const y2 = y(Math.min(end, maxRank));
+    if (start > maxRank) return "";
+    return `<rect x="${pad.left}" y="${y1}" width="${plotW}" height="${Math.max(1, y2 - y1)}" fill="${color}" opacity=".12"></rect><text x="${pad.left + 8}" y="${y1 + 18}" class="sector-motion-zone">${escapeHtml(label)}</text>`;
+  };
+  const guideRanks = [1, 10, 25, 40, maxRank].filter((rank, index, array) => rank <= maxRank && array.indexOf(rank) === index);
+  const dateIndexes = [...new Set([0, Math.floor((chronological.length - 1) / 2), chronological.length - 1])];
+  const lines = chartRows.map((row, index) => {
+    const sampledPoints = xiaokeSectorSampleMotionPoints(row.points, chronological.length);
+    const points = sampledPoints.map(point => `${x(point.index).toFixed(1)},${y(point.rank).toFixed(1)}`).join(" ");
+    const sampleStep = Math.max(1, Math.ceil(chronological.length / 18));
+    const circles = row.points.filter((point, pointIndex) => pointIndex === row.points.length - 1 || pointIndex === 0 || point.index % sampleStep === 0).slice(-20).map(point => {
+      const pctClass = Number(point.pct) >= 0 ? "up" : "down";
+      return `<circle class="sector-motion-dot ${pctClass}" cx="${x(point.index).toFixed(1)}" cy="${y(point.rank).toFixed(1)}" r="${point.index === chronological.length - 1 ? 4.4 : 3}" style="--line-color:${row.color}"><title>${escapeHtml(row.name)} ${escapeHtml(point.date)} 第${escapeHtml(point.rank)} ${escapeHtml(xiaokeSectorSignedPct(point.pct, 2))}</title></circle>`;
+    }).join("");
+    return `<g>
+      <polyline class="sector-motion-line ${row.bucket === "主线确认" ? "main" : row.bucket === "退潮降温" ? "cooling" : ""}" points="${points}" pathLength="100" style="--line-color:${row.color};--line-delay:${index * 70}ms"></polyline>
+      ${circles}
+    </g>`;
+  }).join("");
+  const latestLabels = chartRows.slice(0, 6).map((row, index) => {
+    const latest = row.points[row.points.length - 1];
+    const labelY = Math.max(pad.top + 13, Math.min(height - pad.bottom - 8, y(latest.rank) + (index % 2 ? 7 : -7)));
+    return `<text x="${pad.left + plotW + 10}" y="${labelY.toFixed(1)}" class="sector-motion-label" fill="${row.color}">${escapeHtml(row.name)} ${escapeHtml(latest.rank)}</text>`;
+  }).join("");
+  const gainLeader = allMotionRows.slice().sort((a, b) => b.rangePct - a.rangePct)[0];
+  const steadyLeader = allMotionRows.slice().sort((a, b) => b.top10Rate - a.top10Rate || a.avgRank - b.avgRank)[0];
+  const risingLeader = allMotionRows.slice().sort((a, b) => b.improvement - a.improvement || a.latestRank - b.latestRank)[0];
+  const top = chartRows[0];
+  const legend = chartRows.map(row => {
+    const state = xiaokeSectorMotionState(row);
+    return `<span class="${escapeHtml(state.cls)}"><i style="background:${row.color}"></i>${escapeHtml(row.name)}<b>${escapeHtml(state.label)} · ${escapeHtml(xiaokeSectorSignedPct(row.rangePct, 1))}</b></span>`;
+  }).join("");
+  const focusChartHtml = `<details class="sector-motion-detail" open>
+    <summary>旧版焦点线图（先显示出来，后续继续优化）</summary>
+    <div class="sector-motion-board">
+      <div class="sector-motion-chart">
+        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="板块排名轨迹图">
+          <rect x="0" y="0" width="${width}" height="${height}" rx="8" fill="rgba(9,14,21,.72)"></rect>
+          ${zone(1, 10, "#19c98b", "主线区")}
+          ${zone(11, 25, "#22c3d6", "跟随区")}
+          ${zone(26, 40, "#f5a623", "观察区")}
+          ${guideRanks.map(rank => `<line x1="${pad.left}" x2="${pad.left + plotW}" y1="${y(rank).toFixed(1)}" y2="${y(rank).toFixed(1)}" class="sector-motion-grid"></line><text x="${pad.left - 12}" y="${(y(rank) + 4).toFixed(1)}" text-anchor="end" class="sector-motion-axis">${rank}</text>`).join("")}
+          ${dateIndexes.map(index => `<line x1="${x(index).toFixed(1)}" x2="${x(index).toFixed(1)}" y1="${pad.top}" y2="${pad.top + plotH}" class="sector-motion-grid vertical"></line><text x="${x(index).toFixed(1)}" y="${height - 16}" text-anchor="${index === 0 ? "start" : index === chronological.length - 1 ? "end" : "middle"}" class="sector-motion-axis">${escapeHtml(chronological[index]?.date || "")}</text>`).join("")}
+          ${lines}
+          ${latestLabels}
+        </svg>
+      </div>
+      <div class="sector-motion-side">
+        ${xiaokeSectorMotionSignalCard("主线", top, top ? `第${top.latestRank}` : "-", top ? `运动分 ${top.mainlineScore}` : "暂无")}
+        ${xiaokeSectorMotionSignalCard("涨幅", gainLeader, gainLeader ? xiaokeSectorSignedPct(gainLeader.rangePct, 1) : "-", gainLeader ? `区间累计` : "暂无")}
+        ${xiaokeSectorMotionSignalCard("持续", steadyLeader, steadyLeader ? `${Math.round(steadyLeader.top10Rate * 100)}%` : "-", steadyLeader ? `前10占比` : "暂无")}
+        ${xiaokeSectorMotionSignalCard("升位", risingLeader, risingLeader ? `${risingLeader.improvement > 0 ? "+" : ""}${risingLeader.improvement}` : "-", risingLeader ? `排名变化` : "暂无")}
+      </div>
+    </div>
+    <div class="sector-motion-legend">${legend}</div>
+  </details>`;
+  return `<section class="panel sector-motion-panel" style="margin-top:12px">
+    <div class="metadata-head">
+      <div>
+        <div class="panel-title">主线轨迹看板</div>
+        <div class="date">${escapeHtml(xiaokeSectorRangeLabel())} · ${chronological[0]?.date || "-"} 至 ${chronological[chronological.length - 1]?.date || "-"} · 参与评估 ${allMotionRows.length} 个板块 · 主线公式 ${escapeHtml(XIAOKE_SECTOR_MAINLINE_FORMULA_VERSION)}。默认按“每日卡片 + 板块轨迹卡”阅读，线图已折叠为辅助。</div>
+      </div>
+      ${xiaokeSectorRangeControlsHtml()}
+    </div>
+    ${xiaokeSectorMotionReadoutHtml(allMotionRows)}
+    ${xiaokeSectorDailyFilmHtml(snapshots)}
+    ${xiaokeSectorDirectCardsHtml(allMotionRows)}
+    ${xiaokeSectorMotionGroupsHtml(allMotionRows)}
+    ${focusChartHtml}
+  </section>`;
+}
+
+function xiaokeSectorAttributionTimelineHtml(limit = 12) {
+  const rows = readSectorAttributionSnapshots().slice(0, limit);
+  return `<section class="panel sector-attribution-timeline" style="margin-top:12px">
+    <div class="metadata-head">
+      <div><div class="panel-title">每日主线归因快照</div><div class="date">保存每个主线板块当天的内部宽度、贡献股、拖累股和活跃成分，用来判断主线是在扩散、轮动还是收缩。</div></div>
+      <div class="review-actions"><button class="small-btn primary" onclick="refreshMainlineAttributionSnapshots()">刷新当前主线归因</button></div>
+    </div>
+    ${rows.length ? `<div class="stock-table-wrap"><table class="stock-table sector-prof-table"><thead><tr><th>日期</th><th>板块</th><th>健康度</th><th>位置</th><th>宽度</th><th>集中度</th><th>核心贡献</th><th>拖累</th><th>操作</th></tr></thead><tbody>${rows.map(item => {
+      const payload = { name: item.name, code: item.code, source: item.source };
+      const previous = xiaokePreviousAttributionSnapshot(item, readSectorAttributionSnapshots());
+      const health = xiaokeSectorAttributionHealth(item, previous);
+      return `<tr>
+        <td><b>${escapeHtml(item.date)}</b></td>
+        <td><b>${escapeHtml(item.name)}</b><div class="date">${escapeHtml(item.code || "")}</div></td>
+        <td>${xiaokeSectorHealthBadgeHtml(health)}<div class="date">${escapeHtml(health.reasons.slice(0, 2).join(" / "))}</div></td>
+        <td>${escapeHtml(item.rank ? `第${item.rank}` : "-")}<div class="date">${escapeHtml(item.bucket || "")}</div></td>
+        <td>${escapeHtml(item.upRate == null ? "-" : item.upRate + "%")}<div class="date">涨${escapeHtml(item.upCount ?? "-")} / 跌${escapeHtml(item.downCount ?? "-")}</div></td>
+        <td>${escapeHtml(item.concentration?.top3Share == null ? "-" : item.concentration.top3Share + "%")}<div class="date">${escapeHtml(item.concentration?.label || "")}</div></td>
+        <td>${escapeHtml(xiaokeSnapshotNames(item.drivers, 3).join("、") || "-")}</td>
+        <td>${escapeHtml(xiaokeSnapshotNames(item.drags, 3).join("、") || "-")}</td>
+        <td><button class="small-btn" onclick='openSectorBoardDetail(${JSON.stringify(payload)})'>归因</button></td>
+      </tr>`;
+    }).join("")}</tbody></table></div>` : `<div class="empty-state"><b>还没有归因快照</b><p>点“刷新当前主线归因”，或进入任意标准板块的“归因”页后会自动保存。</p></div>`}
+  </section>`;
+}
+
+function xiaokeMainlineAttributionCandidates(limit = 5) {
+  const latest = xiaokeSectorSnapshotsForRange()[0]?.items || readSectorSnapshots()[0]?.items || window.xiaokeSectorHomeRowsCache || window.xiaokeSectorMergedRowsCache || [];
+  const rows = xiaokeCoreAnalysisRows(xiaokeSectorAnalysisRows(latest));
+  const groups = [
+    ...rows.filter(row => row.bucket === "主线确认"),
+    ...rows.filter(row => row.bucket === "升温启动" || row.bucket === "新观察"),
+    ...rows.filter(row => row.bucket === "次主线跟随"),
+    ...rows
+  ];
+  const seen = new Set();
+  return groups.filter(row => {
+    const code = String(row.code || row.current?.code || "").trim().toUpperCase();
+    if (!/^BK\d{4,6}$/.test(code) || seen.has(code)) return false;
+    seen.add(code);
+    return true;
+  }).slice(0, limit);
+}
+
+async function refreshMainlineAttributionSnapshots(limit = 5) {
+  const candidates = xiaokeMainlineAttributionCandidates(limit);
+  if (!candidates.length) return showToast("没有可刷新归因的东方财富标准板块，请先刷新板块强弱或回填历史");
+  showToast(`正在刷新 ${candidates.length} 个主线板块归因...`);
+  let saved = 0;
+  for (const analysis of candidates) {
+    const current = analysis.current || {};
+    const code = String(analysis.code || current.code || "").trim().toUpperCase();
+    const name = analysis.name || current.name || code;
+    try {
+      const response = await fetch(`/api/sector-constituents?code=${encodeURIComponent(code)}&t=${Date.now()}`, { cache: "no-store" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) throw new Error(data.error || "成分股获取失败");
+      const remote = (data.items || []).map(item => ({ ...item, quoteKey: xiaokeQuoteKeyFromCode(item.code), sector: name }));
+      const local = xiaokeLocalSectorStocks(name, current.groupChain || current.source || "");
+      if (saveSectorAttributionSnapshot({ ...current, name, code, source: current.source || "东方财富标准板块" }, remote, local, analysis)) saved += 1;
+    } catch (error) {
+      console.warn("刷新归因快照失败", name, error);
+    }
+  }
+  showToast(`已保存 ${saved}/${candidates.length} 个归因快照`);
+  if (xiaokeSectorMovementLabIsOpen()) {
+    window.__xiaokeSectorMovementLabOpen = true;
+    setTimeout(() => openSectorMovementLab(), 120);
+  }
+}
+
+function xiaokeSectorMovementAnalysisHtml(currentRows = []) {
+  const allSnapshots = readSectorSnapshots();
+  const snapshots = xiaokeSectorSnapshotsForRange();
+  const showRuleSettings = xiaokeSectorMovementLabIsOpen();
+  const dateSpan = snapshots.length ? `${snapshots[snapshots.length - 1].date} 至 ${snapshots[0].date}` : "暂无";
+  if (snapshots.length < 2) {
+    return `<section class="panel sector-motion-priority" style="margin-top:12px"><div class="metadata-head"><div><div class="panel-title">板块轨迹与规律</div><div class="date">当前范围：${escapeHtml(xiaokeSectorRangeLabel())}，已保存 ${allSnapshots.length} 条快照；范围内至少要有 2 个交易日记录后，才会自动比较主线、次主线、升温和退潮。</div></div>${xiaokeSectorRangeControlsHtml()}</div></section>`;
+  }
+  const rows = xiaokeSectorAnalysisRows(currentRows);
+  const coreRows = xiaokeCoreAnalysisRows(rows);
+  const sampleRows = xiaokeSampleOnlyAnalysisRows(rows).slice(0, 8);
+  const primary = coreRows.filter(row => row.bucket === "主线确认").slice(0, 8);
+  const secondary = coreRows.filter(row => row.bucket === "次主线跟随").slice(0, 8);
+  const warming = coreRows.filter(row => row.bucket === "升温启动" || row.bucket === "新观察").slice(0, 8);
+  const cooling = coreRows.filter(row => row.bucket === "退潮降温").slice(0, 8);
+  const focus = [...primary.slice(0, 3), ...warming.slice(0, 3)].map(row => row.name).filter(Boolean).join("、") || "等待更多快照";
+  return `
+    <section class="panel sector-motion-priority" style="margin-top:12px">
+      <div class="metadata-head">
+        <div>
+          <div class="panel-title">板块轨迹与规律</div>
+          <div class="date">当前范围：${escapeHtml(xiaokeSectorRangeLabel())}，覆盖 ${escapeHtml(dateSpan)}，范围内 ${snapshots.length} 条 / 总计 ${allSnapshots.length} 条。核心结论只使用东方财富 BK 标准板块，共 ${coreRows.length} 个；本地样本 ${sampleRows.length} 个只辅助盯盘。主线公式 ${escapeHtml(XIAOKE_SECTOR_MAINLINE_FORMULA_VERSION)}。</div>
+        </div>
+        <div class="review-actions sector-head-actions">${xiaokeSectorRangeControlsHtml()}<button class="small-btn primary" onclick="openSectorMovementLab()">打开轨迹规律</button></div>
+      </div>
+      <div class="sector-market-summary">
+        <div><span>主线确认</span><b>${primary.length}</b><small>${primary.slice(0, 3).map(row => row.name).join("、") || "暂无"}</small></div>
+        <div><span>次主线跟随</span><b>${secondary.length}</b><small>${secondary.slice(0, 3).map(row => row.name).join("、") || "暂无"}</small></div>
+        <div><span>升温启动</span><b>${warming.length}</b><small>${warming.slice(0, 3).map(row => row.name).join("、") || "暂无"}</small></div>
+        <div><span>退潮降温</span><b>${cooling.length}</b><small>${cooling.slice(0, 3).map(row => row.name).join("、") || "暂无"}</small></div>
+      </div>
+      <div class="strategy-rule-toolbar">
+        <span class="video-group-badge">明日观察：${escapeHtml(focus)}</span>
+        <span class="date">规律：主线看持续和宽度，次主线看能否晋级，升温看二次确认，退潮看是否反抽失败；本地样本不能代表全板块。</span>
+      </div>
+    </section>
+    ${xiaokeSectorMainlineConclusionHtml(rows)}
+    ${xiaokeSectorMainlineScoreExplainerHtml(coreRows)}
+    ${xiaokeSectorDailyJudgmentHtml(rows)}
+    ${xiaokeSectorMistakeBookHtml()}
+    ${xiaokeSectorRuleAdvisorHtml()}
+    ${showRuleSettings ? xiaokeSectorRuleSettingsHtml() : ""}
+    ${xiaokeSectorLifecyclePanelHtml(rows, snapshots)}
+    ${xiaokeSectorInvalidationPanelHtml(rows, snapshots)}
+    ${xiaokeSectorCandidatePoolHtml(rows, snapshots)}
+    ${xiaokeSectorStockFunnelHtml(rows, snapshots)}
+    ${xiaokeSectorRuleVersionCompareHtml(snapshots)}
+    ${xiaokeSectorMainlineBacktestHtml(snapshots)}
+    ${xiaokeSectorLiquidityConfirmHtml(coreRows)}
+    ${xiaokeSectorAttributionTimelineHtml()}
+    ${xiaokeSectorConcentrationTrendHtml()}
+    ${xiaokeSectorMotionChartHtml(coreRows)}
+    ${xiaokeSectorMovementTable("主线确认", "连续位于前排，优先观察是否继续扩散、分歧后能否回流。", primary)}
+    ${xiaokeSectorMovementTable("升温 / 新启动", "排名明显上移或首次进入前排，第二天重点看宽度和成交额是否跟上。", warming)}
+    ${xiaokeSectorMovementTable("退潮 / 降温", "从前排掉出或连续降温，后续按风险信号处理。", cooling)}
+    ${sampleRows.length ? xiaokeSectorMovementTable("样本观察", "未匹配东方财富标准板块，或只是你的自定义/管理分组样本；不作为主线核心依据。", sampleRows) : ""}
+  `;
+}
+
+function openSectorMovementLab() {
+  window.__xiaokeSectorMovementLabOpen = true;
+  state.view = "sectorStrength";
+  restoredRenderShell();
+  const main = document.getElementById("main");
+  if (!main) return;
+  const renderSeq = Date.now() + Math.random();
+  window.__xiaokeSectorMovementRenderSeq = renderSeq;
+  const snapshotsAll = xiaokeSectorSnapshotsForRange();
+  const snapshots = xiaokeSectorSafeSnapshots(snapshotsAll, xiaokeSectorTrajectoryRange() === "all" ? 66 : 45);
+  const latestRows = (snapshots[0]?.items || xiaokeSectorHomeRows(120)).slice(0, 120);
+  const analysisRows = xiaokeCoreAnalysisRows(xiaokeSectorAnalysisRows(latestRows)).slice(0, 80);
+  const primary = analysisRows.filter(row => row.bucket === "主线确认").slice(0, 8);
+  const secondary = analysisRows.filter(row => row.bucket === "次主线跟随").slice(0, 8);
+  const warming = analysisRows.filter(row => row.bucket === "升温启动" || row.bucket === "新观察").slice(0, 8);
+  const cooling = analysisRows.filter(row => row.bucket === "退潮降温").slice(0, 8);
+  const meta = readSectorBackfillMeta();
+  const sourceWarning = meta.warning || (meta.errors || []).join("；");
+  const summaryCard = (title, list, hint) => `<div><span>${escapeHtml(title)}</span><b>${escapeHtml(list.length)}</b><small>${escapeHtml(list.slice(0, 3).map(row => row.name).join("、") || hint)}</small></div>`;
+  main.innerHTML = `
+    <section class="review-head panel" data-sector-movement-lab="1">
+      <div>
+        <div class="panel-title">板块轨迹规律 · 完整</div>
+        <div class="date">安全入口：同页分段加载，不一次性展开全量回测和大图。当前读取 ${escapeHtml(snapshots.length)} / ${escapeHtml(snapshotsAll.length)} 条快照，最多 ${escapeHtml(analysisRows.length)} 个东方财富标准板块。</div>
+      </div>
+      ${xiaokeSectorControlToolbarHtml()}
+    </section>
+    ${xiaokeSectorControlGridHtml("movement")}
+    <section class="panel">
+      <div class="metadata-head">
+        <div><div class="panel-title">轨迹周期</div><div class="date">这里是完整轨迹页，不是轻量页。先看重点覆盖和主线结论，再看旧版焦点线图、K线预览和分组明细。</div></div>
+        ${xiaokeSectorRangeControlsHtml()}
+      </div>
+      ${sourceWarning ? `<div class="strategy-cache-warning" style="margin-top:10px"><b>历史数据提示：</b>${escapeHtml(sourceWarning)}。历史K线不可用时，本页会降级使用最近快照，不能把缺口板块排除出主线判断。</div>` : ""}
+    </section>
+    <section class="sector-market-summary">
+      <div><span>快照数</span><b>${escapeHtml(snapshots.length)}</b><small>${escapeHtml(xiaokeSectorRangeLabel())}</small></div>
+      ${summaryCard("主线确认", primary, "暂无")}
+      ${summaryCard("升温启动", warming, "暂无")}
+      ${summaryCard("退潮降温", cooling, "暂无")}
+    </section>
+    <div id="sectorMovementFullModules"><section class="panel"><div class="strategy-running"><b>正在分段加载轨迹模块...</b><span>每个模块单独加载，失败不会导致整页消失。</span></div></section></div>`;
+  const mount = document.getElementById("sectorMovementFullModules");
+  const modules = [
+    ["重点板块覆盖", () => xiaokeSectorFocusCoverageHtml(analysisRows.map(row => row.current || row), snapshots)],
+    ["当前主线结论", () => `${xiaokeSectorMainlineConclusionHtml(analysisRows)}${xiaokeSectorMainlineScoreExplainerHtml(analysisRows.slice(0, 40))}`],
+    ["旧版轨迹图和卡片", () => xiaokeSectorMotionChartHtml(analysisRows.slice(0, 40))],
+    ["板块K线预览", () => xiaokeSectorHomeKlinePreviewHtml(latestRows)],
+    ["轨迹分组明细", () => `
+      ${xiaokeSectorMovementTable("主线确认", "连续位于前排，优先观察是否继续扩散、分歧后能否回流。", primary)}
+      ${xiaokeSectorMovementTable("次主线跟随", "位置靠前但持续性略弱，观察能否晋级主线。", secondary)}
+      ${xiaokeSectorMovementTable("升温 / 新启动", "排名明显上移或首次进入前排，第二天看宽度和成交额是否跟上。", warming)}
+      ${xiaokeSectorMovementTable("退潮 / 降温", "从前排掉出或连续降温，按风险信号处理。", cooling)}
+    `],
+    ["专业复盘入口", () => `<section class="panel" style="margin-top:12px;border-color:rgba(90,157,255,.32)"><div class="metadata-head"><div><div class="panel-title">专业复盘模块</div><div class="date">生命周期、盘后验证、资金确认、个股漏斗和错题本仍在本页按需加载，避免点开轨迹就卡死。</div></div><div class="review-actions"><button class="small-btn primary" onclick="loadSectorMovementProfessional('core')">加载核心复盘</button><button class="small-btn" onclick="loadSectorMovementProfessional('all')">加载全部复盘</button></div></div><div id="sectorMovementProfessionalMount"></div></section>`]
+  ];
+  let index = 0;
+  const appendNext = () => {
+    if (window.__xiaokeSectorMovementRenderSeq !== renderSeq || !mount) return;
+    if (index === 0) mount.innerHTML = "";
+    const [title, render] = modules[index] || [];
+    if (!render) {
+      xiaokeHydrateSectorTrendCharts(mount);
+      return;
+    }
+    try {
+      mount.insertAdjacentHTML("beforeend", render() || "");
+    } catch (error) {
+      mount.insertAdjacentHTML("beforeend", `<section class="panel"><div class="strategy-cache-warning"><b>${escapeHtml(title)}加载失败：</b>${escapeHtml(error.message || "未知错误")}</div></section>`);
+    }
+    index += 1;
+    xiaokeSectorIdle(appendNext);
+  };
+  xiaokeSectorIdle(appendNext);
+}
+
+function loadSectorMovementProfessional(mode = "core") {
+  const mount = document.getElementById("sectorMovementProfessionalMount");
+  if (!mount) return;
+  if (mount.dataset.loading === "1") return showToast("专业复盘正在加载");
+  mount.dataset.loading = "1";
+  const snapshots = xiaokeSectorSafeSnapshots(xiaokeSectorSnapshotsForRange(), mode === "all" ? 45 : 25);
+  const latestRows = (snapshots[0]?.items || xiaokeSectorHomeRows(100)).slice(0, mode === "all" ? 120 : 80);
+  const rows = xiaokeCoreAnalysisRows(xiaokeSectorAnalysisRows(latestRows)).slice(0, mode === "all" ? 100 : 70);
+  const modules = [
+    ["主线生命周期", () => xiaokeSectorLifecyclePanelHtml(rows, snapshots)],
+    ["主线失效条件", () => xiaokeSectorInvalidationPanelHtml(rows, snapshots)],
+    ["候选观察池", () => xiaokeSectorCandidatePoolHtml(rows, snapshots)],
+    ["资金/成交额确认层", () => xiaokeSectorLiquidityConfirmHtml(rows, snapshots)],
+    ["盘后自动复盘", () => xiaokeSectorDailyJudgmentHtml(latestRows)]
+  ];
+  if (mode === "all") {
+    modules.push(
+      ["主线到个股漏斗", () => xiaokeSectorStockFunnelHtml(rows, snapshots)],
+      ["主线错题本", () => xiaokeSectorMistakeBookHtml()],
+      ["规则调参建议器", () => xiaokeSectorRuleAdvisorHtml()],
+      ["规则版本对照", () => xiaokeSectorRuleVersionCompareHtml(snapshots)],
+      ["主线命中率复盘", () => xiaokeSectorMainlineBacktestHtml(snapshots)]
+    );
+  }
+  mount.innerHTML = `<div class="strategy-running"><b>正在加载专业复盘...</b><span>只处理最近 ${escapeHtml(snapshots.length)} 条快照。</span></div>`;
+  let index = 0;
+  const appendNext = () => {
+    if (index === 0) mount.innerHTML = "";
+    const [title, render] = modules[index] || [];
+    if (!render) {
+      mount.dataset.loading = "0";
+      showToast("专业复盘已加载");
+      return;
+    }
+    try {
+      mount.insertAdjacentHTML("beforeend", render() || "");
+    } catch (error) {
+      mount.insertAdjacentHTML("beforeend", `<section class="panel"><div class="strategy-cache-warning"><b>${escapeHtml(title)}加载失败：</b>${escapeHtml(error.message || "未知错误")}</div></section>`);
+    }
+    index += 1;
+    xiaokeSectorIdle(appendNext);
+  };
+  xiaokeSectorIdle(appendNext);
+}
+
+function showSectorSourceConnectionGuide() {
+  alert([
+    "行情源连接说明：",
+    "1. 东方财富实时：优先走板块实时列表；列表失败时自动改用单板块 BK 实时Quote校准今日涨跌。",
+    "2. 东方财富K线校准：不需要QMT。点“回填/校准”会从东方财富BK历史K线拉近三个月日线，用来校准历史轨迹。",
+    "3. 国信/QMT：需要本机打开国信QMT/iQuant，先点“准备QMT”，再在QMT里运行 xiaoke_qmt_bridge.py。网页只能读取桥接写出的本地文件。",
+    "4. 回退源：不用连接。它只是主源失败时的临时保护，可信度低于东方财富BK和QMT。"
+  ].join("\n"));
+}
+
+function xiaokeReadSectorSourceQualityHistory() {
+  try {
+    const rows = JSON.parse(localStorage.getItem(XIAOKE_SECTOR_SOURCE_QUALITY_HISTORY_KEY) || "[]");
+    return Array.isArray(rows) ? rows : [];
+  } catch {
+    return [];
+  }
+}
+
+function xiaokeSaveSectorSourceQualityHistory(rows = []) {
+  localStorage.setItem(XIAOKE_SECTOR_SOURCE_QUALITY_HISTORY_KEY, JSON.stringify((rows || []).slice(0, 120)));
+}
+
+function clearSectorSourceQualityHistory() {
+  if (!confirm("清空行情源质量历史？只清质量灯历史，不影响板块快照和策略。")) return;
+  localStorage.removeItem(XIAOKE_SECTOR_SOURCE_QUALITY_HISTORY_KEY);
+  showToast("已清空行情源质量历史");
+  renderSectorStrength({ skipFetch: true });
+}
+
+function xiaokeSectorSourceQualityStatus(rows = [], meta = {}, canUseCache = false) {
+  const list = Array.isArray(rows) ? rows : [];
+  const sourceText = [meta.source, meta.warning, ...list.slice(0, 80).map(row => row.source || row.rankingSource || "")].filter(Boolean).join(" / ");
+  const freshnessRows = list.map(row => xiaokeSectorFreshness(row, meta)).filter(item => item.timestamp);
+  const newest = freshnessRows.slice().sort((a, b) => b.timestamp - a.timestamp)[0] || xiaokeSectorFreshness({}, meta);
+  const staleCount = freshnessRows.filter(item => item.cls === "bad" || item.cls === "warn").length;
+  const modeLabel = xiaokeSectorQuoteModeLabel(meta.quoteMode || xiaokeSectorQuoteMode());
+  const eastmoneyReal = list.filter(row => /东方财富板块$|东方财富板块实时Quote|实时Quote校准/.test(row.source || row.rankingSource || "") && !/历史K线/.test(row.source || "")).length;
+  const kline = list.filter(row => /东方财富.*历史K线|历史K线校准/.test(row.source || row.rankingSource || "")).length;
+  const qmt = list.filter(row => /QMT|国信/.test(row.source || row.rankingSource || "")).length;
+  const fallback = list.filter(row => /新浪|缓存|回退/.test(row.source || row.rankingSource || "")).length;
+  const realOn = eastmoneyReal > 0;
+  const klineOn = kline > 0 || /历史K线校准/.test(sourceText);
+  const qmtOn = qmt > 0;
+  const fallbackOn = fallback > 0 || /新浪|回退/.test(sourceText);
+  const mainCls = realOn ? "good" : klineOn ? "ok" : fallbackOn ? "warn" : "bad";
+  const verdict = realOn ? "最高可信" : klineOn ? "日线可用" : fallbackOn ? "谨慎使用" : "待恢复";
+  const summary = realOn
+    ? "东方财富实时列表或 BK 实时Quote可用，今日涨跌以东方财富口径为准。"
+    : klineOn
+      ? "东方财富实时列表不可用，已用 BK 历史K线校准可匹配板块；适合看日线级强弱，不代表盘中实时。"
+      : fallbackOn
+        ? "当前主要使用回退源，适合临时观察，不建议作为主线核心依据。"
+        : "当前缺少稳定行情源，请刷新或回填历史。";
+  return {
+    date: todayString(),
+    at: new Date().toISOString(),
+    quoteMode: meta.quoteMode || xiaokeSectorQuoteMode(),
+    modeLabel: xiaokeSectorQuoteModeLabel(meta.quoteMode || xiaokeSectorQuoteMode()),
+    source: meta.source || sourceText || "",
+    warning: meta.warning || "",
+    realOn,
+    klineOn,
+    qmtOn,
+    fallbackOn,
+    eastmoneyReal,
+    kline,
+    qmt,
+    fallback,
+    staleCount,
+    total: list.length,
+    cached: Boolean(canUseCache || meta.cached),
+    newestAgeText: newest.ageText,
+    mainCls,
+    verdict,
+    summary
+  };
+}
+
+function xiaokeRecordSectorSourceQuality(status = {}) {
+  try {
+    if (!status || (!status.total && !status.source && !status.warning)) return;
+    const rows = xiaokeReadSectorSourceQualityHistory();
+    const key = `${status.date || todayString()}__${status.quoteMode || xiaokeSectorQuoteMode()}`;
+    const next = {
+      ...status,
+      key,
+      realOn: Boolean(status.realOn),
+      klineOn: Boolean(status.klineOn),
+      qmtOn: Boolean(status.qmtOn),
+      fallbackOn: Boolean(status.fallbackOn)
+    };
+    const filtered = rows.filter(row => row.key !== key);
+    xiaokeSaveSectorSourceQualityHistory([next, ...filtered]);
+  } catch {}
+}
+
+function xiaokeSectorSourceQualityHistoryHtml(current = {}) {
+  const rows = xiaokeReadSectorSourceQualityHistory().slice(0, 7);
+  if (!rows.length) return "";
+  const statusText = row => [
+    row.realOn ? "实时" : "",
+    row.klineOn ? "K线" : "",
+    row.qmtOn ? "QMT" : "",
+    row.fallbackOn ? "回退" : ""
+  ].filter(Boolean).join(" / ") || "无源";
+  return `<div class="sector-source-history">
+    <div class="sector-source-history-head"><b>数据源可信度历史</b><span>最近7次记录，防止某天源断层误判主线</span><button onclick="clearSectorSourceQualityHistory()">清空历史</button></div>
+    <div class="sector-source-history-list">${rows.map(row => `<article class="${escapeHtml(row.mainCls || "bad")}">
+      <b>${escapeHtml(row.date || "-")}</b>
+      <span>${escapeHtml(row.verdict || "-")} · ${escapeHtml(row.modeLabel || "")}</span>
+      <small>${escapeHtml(statusText(row))}；SLA异常 ${escapeHtml(row.staleCount || 0)}；${row.cached ? "缓存" : "实时/校准"}</small>
+    </article>`).join("")}</div>
+  </div>`;
+}
+
+function xiaokeSectorSourceQualityHtml(rows = [], meta = {}, canUseCache = false) {
+  const status = xiaokeSectorSourceQualityStatus(rows, meta, canUseCache);
+  xiaokeRecordSectorSourceQuality(status);
+  const { eastmoneyReal, kline, qmt, fallback, realOn, klineOn, qmtOn, fallbackOn, mainCls, summary, modeLabel, newestAgeText, staleCount, verdict } = status;
+  const sourceLamp = (title, statusText, cls, count, note, actions = "") => `<article class="${cls}">
+    <span><i></i>${escapeHtml(title)}</span>
+    <b>${escapeHtml(statusText)}</b>
+    <small>${escapeHtml(count == null ? note : `${count} 个板块 · ${note}`)}</small>
+    ${actions ? `<div class="sector-source-lamp-actions">${actions}</div>` : ""}
+  </article>`;
+  return `<section class="sector-source-quality ${mainCls}">
+    <div class="sector-source-quality-head">
+      <div><div class="panel-title">行情源质量灯</div><div class="date">${escapeHtml(summary)} 当前口径：${escapeHtml(modeLabel)}；最近更新：${escapeHtml(newestAgeText)}；SLA异常 ${escapeHtml(staleCount)} 个。${canUseCache ? " 当前页面为缓存展示。" : ""}</div></div>
+      <div class="review-actions"><button class="small-btn" onclick="showSectorSourceConnectionGuide()">连接说明</button><span>${escapeHtml(verdict)}</span></div>
+    </div>
+    <div class="sector-source-lamps">
+      ${sourceLamp("东方财富实时", realOn ? "可用" : "未在线", realOn ? "good" : "bad", eastmoneyReal, realOn ? "实时列表或BK Quote校准" : "实时列表/Quote均未返回", `<button onclick="renderSectorStrength({ forceFetch: true })">重试实时</button>`)}
+      ${sourceLamp("东方财富K线校准", klineOn ? "启用" : "未启用", klineOn ? "ok" : "idle", kline, klineOn ? "按BK历史K线校准轨迹" : "用于历史轨迹和回填", `<button onclick="backfillSectorHistorySnapshots(90)">回填/校准</button>`)}
+      ${sourceLamp("国信/QMT", qmtOn ? "参与" : "未参与", qmtOn ? "ok" : "idle", qmt || null, qmtOn ? "本地终端行情参与" : "本页暂未调用QMT", `<button onclick="prepareQmtDailyWarehouse()">准备QMT</button><button onclick="openDataScreening()">数据中心</button>`)}
+      ${sourceLamp("回退源", fallbackOn ? "有回退" : "无", fallbackOn ? "warn" : "good", fallback, fallbackOn ? "只作临时参考" : "未使用新浪/缓存回退", `<button onclick="hideUnmatchedSectorSamples()">隐藏样本</button>`)}
+    </div>
+    ${xiaokeSectorSourceQualityHistoryHtml(status)}
+    <div class="sector-source-connect-note"><b>连接口径：</b>东方财富实时和K线是自动网页接口；QMT是本地桥接，必须在国信终端运行脚本；回退源不是正式数据源，只是断线保护。</div>
+  </section>`;
+}
+
+function xiaokeSectorStrengthLandingHtml(reason = "", active = "") {
+  const note = reason || "总控台模式：所有常用功能都在本页直接点；默认只读快照和本地配置，不自动跑全量重计算，避免页面卡死。";
+  const rows = xiaokeSectorHomeRows(96);
+  try { window.xiaokeSectorHomeRowsCache = rows; } catch {}
+  const snapshots = readSectorSnapshots();
+  const safeRows = rows.slice(0, 80);
+  const safeSnapshots = xiaokeSectorSafeSnapshots(snapshots, 24);
+  const latestSnapshot = snapshots.find(snapshot => snapshot?.items?.length);
+  const rankingMeta = window.xiaokeSectorRankingMeta || window.xiaokeSectorRankingCache?.meta || (latestSnapshot ? {
+    source: latestSnapshot.source || "最近成功快照",
+    warning: "首页默认读取快照，不自动阻塞实时接口。",
+    cached: true,
+    asOf: latestSnapshot.at || latestSnapshot.date || "",
+    quoteMode: latestSnapshot.quoteMode || xiaokeSectorQuoteMode()
+  } : {});
+  const canUseCache = !!latestSnapshot && !window.xiaokeSectorRankingMeta?.source;
+  return `
+    <section class="review-head panel sector-strength-head">
+      <div>
+        <div class="panel-title">每日板块强弱 · 总控台</div>
+        <div class="date">${escapeHtml(note)}</div>
+      </div>
+      ${xiaokeSectorControlToolbarHtml()}
+    </section>
+    ${xiaokeSectorControlGridHtml(active)}
+    ${xiaokeSectorSourceQualityHtml(safeRows, rankingMeta, canUseCache)}
+    <div class="sector-home-layout">
+      ${xiaokeSectorHomeSnapshotPreviewHtml(safeRows, safeSnapshots)}
+      <div class="sector-home-utility-row">
+        ${xiaokeSectorHomeHistoryPreviewHtml(safeSnapshots)}
+        ${safeRows.length ? xiaokeSectorDataAlertsHtml(safeRows, rankingMeta, canUseCache) : ""}
+      </div>
+      ${xiaokeSectorHomeMovementPreviewHtml(safeRows, safeSnapshots)}
+      ${safeRows.length ? xiaokeSectorHomeKlinePreviewHtml(safeRows) : ""}
+      ${safeRows.length ? xiaokeSectorHomeLegacyMotionChartHtml(safeRows) : ""}
+      ${safeRows.length ? xiaokeSectorHomeAttributionPreviewHtml(safeRows, safeSnapshots) : ""}
+      ${safeRows.length ? xiaokeSectorHomeCompareEntryHtml(safeRows) : xiaokeSectorHomeEmptyCompareHtml()}
+    </div>
+    ${xiaokeSectorHomeDeepAnalysisHtml(safeRows, safeSnapshots)}
+    ${xiaokeSectorHomeLazySectionsHtml(safeRows, safeSnapshots)}`;
+}
+
+function xiaokeSectorControlToolbarHtml() {
+  return `<div class="review-actions sector-head-actions">
+    ${xiaokeSectorQuoteModeControlsHtml()}
+    <button class="small-btn primary" onclick="renderSectorStrength({ forceFetch: true, liteTable: true })">刷新今日榜</button>
+    <button class="small-btn" onclick="renderSectorStrength({ useSnapshot: true, skipFetch: true, liteTable: true })">最近快照</button>
+    <button class="small-btn" onclick="openSectorMovementLab()">轨迹规律</button>
+    <button class="small-btn" onclick="openSectorFullAnalysisGate()">完整分析</button>
+    <button class="small-btn" onclick="openSectorBackfillDetail()">快照明细</button>
+    <button class="small-btn" onclick="backfillSectorHistorySnapshots(90)">回填近3月</button>
+    <button class="small-btn" onclick="installCommonSectorTemplates()">补常见细分</button>
+    <button class="small-btn" onclick="importCustomSectorBoards()">导入板块</button>
+    <button class="small-btn" onclick="syncWatchGroupsToSectorStrength()">同步分组</button>
+    <button class="small-btn" onclick="clearSectorSnapshotCache()">清理缓存</button>
+    <button class="small-btn" onclick="openSectorStrengthHome()">总控台</button>
+    <button class="small-btn" onclick="renderDashboard()">返回看板</button>
+  </div>`;
+}
+
+function xiaokeSectorControlGridHtml(active = "") {
+  const card = (key, title, value, desc, onclick) => `<button class="signal-card ${active === key ? "active" : ""}" onclick="${onclick}">
+    <strong>${escapeHtml(title)}</strong><b>${escapeHtml(value)}</b><span>${escapeHtml(desc)}</span>
+  </button>`;
+  return `<section class="signal-grid sector-control-grid">
+    ${card("snapshot", "先看现有数据", "最近快照", "秒开最近成功榜单，不联网、不跑大图", "renderSectorStrength({ useSnapshot: true, skipFetch: true, liteTable: true })")}
+    ${card("refresh", "需要更新时点", "刷新今日榜", "手动拉东方财富/回退行情，生成今日轻量榜", "renderSectorStrength({ forceFetch: true, liteTable: true })")}
+    ${card("movement", "判断主线持续", "轨迹规律", "看谁连续前排、谁升温、谁退潮", "openSectorMovementLab()")}
+    ${card("full", "本页深度区", "完整分析", "不再跳分支页，直接滚到下方深度区", "openSectorFullAnalysisGate()")}
+    ${card("detail", "查历史记录", "快照明细", "按日期看回填和每日快照完整表", "openSectorBackfillDetail()")}
+    ${card("backfill", "补历史轨迹", "回填近3月", "用东方财富历史K线补齐主线轨迹", "backfillSectorHistorySnapshots(90)")}
+    ${card("manage", "维护细分板块", "导入/分组", "CPO/PCB/MLCC/产业链都在下方维护", "openSectorFullAnalysisGate('manage')")}
+    ${card("clean", "页面卡顿时用", "清理缓存", "只清板块快照缓存，不动策略和任务", "clearSectorSnapshotCache()")}
+  </section>`;
+}
+
+function xiaokeSectorHomeRows(limit = 96) {
+  try {
+    const cachedMerged = Array.isArray(window.xiaokeSectorMergedRowsCache) ? window.xiaokeSectorMergedRowsCache : [];
+    const cacheRows = Array.isArray(window.xiaokeSectorRankingCache?.rows) ? window.xiaokeSectorRankingCache.rows : [];
+    const latest = readSectorSnapshots().find(snapshot => snapshot?.items?.length);
+    const baseRows = cachedMerged.length ? cachedMerged : (cacheRows.length ? cacheRows : (latest?.items || []));
+    const rows = baseRows.length
+      ? (baseRows.some(row => row.localOnly || row.localMatched || row.dataBasis) ? baseRows : xiaokeMergeSectorRankingRows(baseRows))
+      : xiaokeCustomSectorRankingRows();
+    return (rows || []).slice(0, limit).map((row, index) => ({ ...row, rank: row.rank || index + 1 }));
+  } catch {
+    return [];
+  }
+}
+
+function xiaokeHydrateSectorHomeVisuals(root = document) {
+  setTimeout(() => {
+    xiaokeHydrateSectorTrendCharts(root);
+    xiaokeHydrateSectorQuotePanels(root);
+  }, 80);
+}
+
+function xiaokeSectorHomeSnapshotPreviewHtml(rows = [], snapshots = readSectorSnapshots()) {
+  const latest = snapshots.find(snapshot => snapshot?.items?.length);
+  const topRows = rows.slice(0, 18);
+  const rowHtml = row => {
+    const rank = row.rank || "-";
+    const role = xiaokeSectorRole(row, Number(rank));
+    const payload = { name: row.name, code: row.code || "", source: row.source || "", groupChain: row.groupChain || "" };
+    return `<tr>
+      <td><b>${escapeHtml(rank)}</b></td>
+      <td><span class="sector-role ${role === "主线" ? "main" : role === "次主线" ? "secondary" : role === "偏弱" ? "weak" : ""}">${escapeHtml(role)}</span></td>
+      <td><b>${escapeHtml(row.name || "-")}</b><div class="date">${escapeHtml(row.code || row.groupChain || row.source || "")}</div></td>
+      <td><b>${escapeHtml(row.score ?? "-")}</b></td>
+      <td class="${Number(row.pct) >= 0 ? "up" : "down"}">${Number.isFinite(Number(row.pct)) ? strategyNumber(row.pct, 2, "%") : "-"}</td>
+      <td>${Number.isFinite(Number(row.pct60)) ? strategyNumber(row.pct60, 2, "%") : "-"}</td>
+      <td>${escapeHtml(row.leader || "-")}</td>
+      <td><button class="small-btn" onclick='openSectorBoardDetail(${JSON.stringify(payload)})'>归因</button></td>
+    </tr>`;
+  };
+  return `<section class="panel" id="sectorStrengthRankPreview">
+    <div class="metadata-head">
+      <div><div class="panel-title">板块强度榜 · 首页预览</div><div class="date">${latest ? `最近快照：${escapeHtml(latest.date)}；展示前${topRows.length}名。` : "尚无快照；先点刷新今日榜或回填近3月。"} 这里看“今天谁强”和“强度分”。</div></div>
+      <div class="review-actions"><button class="small-btn primary" onclick="renderSectorStrength({ useSnapshot: true, skipFetch: true, liteTable: true })">打开轻量榜</button><button class="small-btn" onclick="renderSectorStrength({ forceFetch: true, liteTable: true })">刷新今日榜</button></div>
+    </div>
+    <div class="stock-table-wrap"><table class="sector-home-compact-table"><thead><tr><th>排名</th><th>层级</th><th>板块</th><th>强度</th><th>当日</th><th>60日</th><th>领涨股</th><th>操作</th></tr></thead><tbody>${topRows.map(rowHtml).join("") || `<tr><td colspan="8"><div class="date">暂无可展示榜单。点击“刷新今日榜”生成一次，之后首页会秒开预览。</div></td></tr>`}</tbody></table></div>
+  </section>`;
+}
+
+function xiaokeSectorHomeMotionRows(rows = [], snapshots = readSectorSnapshots(), limit = 30) {
+  const scoped = (snapshots || []).slice(0, 30);
+  const maps = scoped.map(snapshot => ({ date: snapshot.date, map: new Map((snapshot.items || []).map(item => [item.name, item])) }));
+  const latestRows = (rows.length ? rows : (scoped[0]?.items || [])).slice(0, limit);
+  return latestRows.map((row, index) => {
+    const currentRank = Number(row.rank || index + 1);
+    const history = maps.map(item => item.map.get(row.name)).filter(Boolean);
+    const ranks = history.map(item => Number(item.rank)).filter(Number.isFinite);
+    const previous = maps.find(item => item.date !== todayString())?.map.get(row.name);
+    const oldRank = Number(previous?.rank) || null;
+    const top10Count = ranks.filter(rank => rank <= 10).length;
+    const top25Count = ranks.filter(rank => rank <= 25).length;
+    const delta = oldRank ? oldRank - currentRank : 0;
+    const phase = currentRank <= 10 && top10Count >= 2 ? "主线确认"
+      : currentRank <= 25 && top25Count >= 2 ? "次主线跟随"
+      : delta >= 8 && currentRank <= 40 ? "升温启动"
+      : oldRank && oldRank <= 25 && currentRank > 40 ? "退潮降温"
+      : currentRank <= 25 ? "新观察" : "观察";
+    return { ...row, currentRank, oldRank, top10Count, top25Count, delta, phase };
+  }).filter(row => xiaokeIsStandardSector(row));
+}
+
+function xiaokeSectorHomeMovementPreviewHtml(rows = [], snapshots = readSectorSnapshots()) {
+  const motionRows = xiaokeSectorHomeMotionRows(rows, snapshots, 36);
+  const primary = motionRows.filter(row => row.phase === "主线确认").slice(0, 6);
+  const secondary = motionRows.filter(row => row.phase === "次主线跟随").slice(0, 6);
+  const warming = motionRows.filter(row => row.phase === "升温启动" || row.phase === "新观察").slice(0, 6);
+  const cooling = motionRows.filter(row => row.phase === "退潮降温").slice(0, 6);
+  const line = row => `<tr><td><b>${escapeHtml(row.name)}</b><div class="date">${escapeHtml(row.code || "")}</div></td><td>第${escapeHtml(row.currentRank || "-")}</td><td>${row.oldRank ? `第${escapeHtml(row.oldRank)}` : "-"}</td><td>${escapeHtml(row.top10Count)} / ${escapeHtml(row.top25Count)}</td><td>${escapeHtml(row.phase)}</td><td><button class="small-btn" onclick='openSectorBoardDetail(${JSON.stringify({ name: row.name, code: row.code || "", source: row.source || "" })})'>归因</button></td></tr>`;
+  return `<section class="panel" id="sectorHomeMovement">
+    <div class="metadata-head">
+      <div><div class="panel-title">轨迹规律 · 首页预览</div><div class="date">用最近快照看持续性。主线不是只看今天涨幅，而是看多日排名、前10/前25次数和是否退潮。</div></div>
+      <div class="review-actions">${xiaokeSectorRangeControlsHtml()}<button class="small-btn primary" onclick="openSectorMovementLab()">打开轨迹详情</button></div>
+    </div>
+    <section class="sector-market-summary">
+      <div><span>主线确认</span><b>${primary.length}</b><small>${primary.slice(0, 3).map(row => row.name).join("、") || "暂无"}</small></div>
+      <div><span>次主线</span><b>${secondary.length}</b><small>${secondary.slice(0, 3).map(row => row.name).join("、") || "暂无"}</small></div>
+      <div><span>升温</span><b>${warming.length}</b><small>${warming.slice(0, 3).map(row => row.name).join("、") || "暂无"}</small></div>
+      <div><span>退潮</span><b>${cooling.length}</b><small>${cooling.slice(0, 3).map(row => row.name).join("、") || "暂无"}</small></div>
+    </section>
+    <div class="stock-table-wrap"><table class="sector-home-compact-table"><thead><tr><th>板块</th><th>当前</th><th>前次</th><th>前10/25</th><th>判断</th><th>操作</th></tr></thead><tbody>${[...primary, ...secondary, ...warming, ...cooling].slice(0, 14).map(line).join("") || `<tr><td colspan="6"><div class="date">暂无足够轨迹。先点“回填近3月”或等待每日快照。</div></td></tr>`}</tbody></table></div>
+  </section>`;
+}
+
+function xiaokeSectorHomeHistoryPreviewHtml(snapshots = readSectorSnapshots()) {
+  const rows = (snapshots || []).slice(0, 8);
+  return `<section class="panel" id="sectorHomeHistory">
+    <div class="metadata-head">
+      <div><div class="panel-title">历史快照</div><div class="date">这里看每天保存过什么，点明细能进当天完整表。</div></div>
+      <button class="small-btn" onclick="openSectorBackfillDetail()">快照明细</button>
+    </div>
+    <div class="decision-list">${rows.map(snapshot => `<div class="decision-row"><div><b>${escapeHtml(snapshot.date)}</b><span>${escapeHtml((snapshot.items || []).slice(0, 3).map(item => `${item.rank}.${item.name}`).join(" / ") || "暂无前排")}</span></div><button class="small-btn" onclick='openSectorSnapshot(${JSON.stringify(snapshot.date)})'>查看</button></div>`).join("") || `<div class="date">暂无快照，先刷新今日榜或回填近3月。</div>`}</div>
+  </section>`;
+}
+
+function xiaokeSectorHomeKlinePreviewHtml(rows = []) {
+  const standardRows = (rows || []).filter(row => /^BK\d{4,6}$/i.test(row.code || row.current?.code || "")).slice(0, 6);
+  const sampleRows = (rows || []).filter(row => !/^BK\d{4,6}$/i.test(row.code || row.current?.code || "")).slice(0, 4);
+  return `<section class="panel sector-home-kline-panel" id="sectorHomeKlinePreview" style="margin-top:12px">
+    <div class="metadata-head">
+      <div><div class="panel-title">板块K线预览</div><div class="date">这是之前你要的“像股票软件那种板块趋势图”。先显示前6个东方财富BK标准板块；进入后会自动换成东方财富板块K线，失败时保留本地快照趋势。</div></div>
+      <div class="review-actions"><button class="small-btn" onclick="xiaokeHydrateSectorTrendCharts(document)">刷新K线</button><button class="small-btn" onclick="openSectorMovementLab()">轨迹详情</button></div>
+    </div>
+    <div class="sector-home-kline-grid">${standardRows.map(row => {
+      const pct = xiaokeFiniteNumberOrNull(row.pct);
+      const payload = { name: row.name, code: row.code || "", source: row.source || "" };
+      return `<article class="sector-home-kline-card">
+        <div class="sector-home-kline-card-head">
+          <div><b>${escapeHtml(row.name || "-")}</b><span>${escapeHtml(row.code || "")} · 第${escapeHtml(row.rank || "-")} · 强度 ${escapeHtml(row.score ?? "-")}</span></div>
+          <em class="${pct === null ? "flat" : pct >= 0 ? "up" : "down"}">${escapeHtml(xiaokeSectorSignedPct(pct, 2))}</em>
+        </div>
+        ${xiaokeSectorTrendChartHtml(row, 28)}
+        <div class="sector-home-jump-row"><button class="small-btn" onclick='openSectorBoardDetail(${JSON.stringify(payload)})'>归因</button></div>
+      </article>`;
+    }).join("") || `<div class="empty-state"><b>暂无可画K线的东方财富BK板块</b><p>当前只有本地样本或管理分组，不能代表东方财富板块K线。先点“刷新今日榜”或“回填近3月”；若是 CPO/PCB/MLCC 这类细分，需要先在“板块映射字典”锁定到 BK。</p>${sampleRows.length ? `<p>当前样本：${escapeHtml(sampleRows.map(row => row.name).join("、"))}</p>` : ""}</div>`}</div>
+  </section>`;
+}
+
+function xiaokeSectorHomeLegacyMotionChartHtml(rows = []) {
+  const coreRows = xiaokeCoreAnalysisRows(xiaokeSectorAnalysisRows(rows)).slice(0, 40);
+  return `<section id="sectorHomeLegacyMotionChart">
+    ${xiaokeSectorMotionChartHtml(coreRows)}
+  </section>`;
+}
+
+function xiaokeSectorHomeAttributionPreviewHtml(rows = [], snapshots = readSectorSnapshots()) {
+  const saved = readSectorAttributionSnapshots().slice(0, 5);
+  const candidates = xiaokeCoreAnalysisRows(xiaokeSectorAnalysisRows(rows)).slice(0, 5);
+  const candidateLine = candidates.map(row => row.name).filter(Boolean).join("、") || "暂无";
+  return `<section class="panel sector-home-attribution-preview" id="sectorHomeAttributionPreview" style="margin-top:12px;border-color:rgba(245,166,35,.36);background:linear-gradient(180deg,rgba(245,166,35,.07),rgba(12,18,27,.92))">
+    <div class="metadata-head">
+      <div><div class="panel-title">主线归因快照</div><div class="date">这里补上你说的“主线归因未完成”。先刷新当前主线归因，再看贡献股、拖累股、宽度和集中度。</div></div>
+      <div class="review-actions"><button class="small-btn primary" onclick="refreshMainlineAttributionSnapshots()">刷新当前主线归因</button><button class="small-btn" onclick="openSectorMovementLab()">去轨迹规律</button></div>
+    </div>
+    <div class="sector-audit-summary">
+      <article><span>当前候选</span><b>${escapeHtml(candidates.length)}</b><small>${escapeHtml(candidateLine)}</small></article>
+      <article><span>已存归因</span><b>${escapeHtml(saved.length)}</b><small>${escapeHtml(saved[0]?.date || "暂无")}</small></article>
+      <article><span>用途</span><b>扩散/收缩</b><small>判断主线是不是只剩少数票硬撑</small></article>
+    </div>
+    <div class="stock-table-wrap" style="margin-top:10px"><table class="sector-home-compact-table"><thead><tr><th>日期</th><th>板块</th><th>宽度</th><th>集中度</th><th>贡献股</th><th>操作</th></tr></thead><tbody>${saved.map(item => {
+      const payload = { name: item.name, code: item.code || "", source: item.source || "" };
+      return `<tr>
+        <td><b>${escapeHtml(item.date || "-")}</b></td>
+        <td><b>${escapeHtml(item.name || "-")}</b><div class="date">${escapeHtml(item.code || "")}</div></td>
+        <td>${escapeHtml(item.upRate == null ? "-" : item.upRate + "%")}</td>
+        <td>${escapeHtml(item.concentration?.top3Share == null ? "-" : item.concentration.top3Share + "%")}</td>
+        <td>${escapeHtml(xiaokeSnapshotNames(item.drivers, 3).join("、") || "-")}</td>
+        <td><button class="small-btn" onclick='openSectorBoardDetail(${JSON.stringify(payload)})'>归因</button></td>
+      </tr>`;
+    }).join("") || `<tr><td colspan="6"><div class="date">还没有归因快照。点“刷新当前主线归因”后，这里会出现主线内部贡献和拖累。</div></td></tr>`}</tbody></table></div>
+  </section>`;
+}
+
+function xiaokeSectorHomeEmptyCompareHtml() {
+  return `<section id="sectorComparePool" class="panel" style="margin-top:12px;border-color:rgba(34,195,214,.35);background:rgba(34,195,214,.045)">
+    <div class="metadata-head"><div><div class="panel-title">板块对比池</div><div class="date">市场板块、我的细分板块、管理分组产业链三类都会在这里统一选择。当前还没有可用快照，所以先显示维护入口。</div></div><button class="small-btn" onclick="scrollToSectorSection('sectorBoardManageHome')">去维护板块</button></div>
+  </section>`;
+}
+
+function xiaokeSectorHomeCompareEntryHtml(rows = []) {
+  const selected = xiaokeSectorCompareSelectedRows(rows).slice(0, 8);
+  const top = rows.slice(0, 8);
+  const itemHtml = row => `<span class="video-group-badge">${escapeHtml(row.name || "-")} ${escapeHtml(row.rank ? "第" + row.rank : "")}</span>`;
+  return `<section id="sectorComparePool" class="panel" style="margin-top:12px;border-color:rgba(34,195,214,.35);background:rgba(34,195,214,.045)">
+    <div class="metadata-head">
+      <div><div class="panel-title">板块对比池 · 轻量入口</div><div class="date">首屏只展示摘要，完整对比池不再自动展开，避免一次性渲染上百个板块按钮。</div></div>
+      <div class="review-actions"><button class="small-btn primary" onclick="loadSectorComparePoolFull()">展开完整对比池</button><button class="small-btn" onclick="loadSectorBoardManageHome()">维护板块</button></div>
+    </div>
+    <div class="strategy-rule-toolbar">
+      <span class="date">已选：${selected.length ? "" : "未限定，默认使用全市场摘要"}</span>
+      ${(selected.length ? selected : top).map(itemHtml).join("")}
+    </div>
+    <div id="sectorComparePoolFullMount"></div>
+  </section>`;
+}
+
+function loadSectorComparePoolFull() {
+  const mount = document.getElementById("sectorComparePoolFullMount");
+  if (!mount) return;
+  if (mount.dataset.loaded === "1") return;
+  mount.innerHTML = `<div class="strategy-running"><b>正在展开完整对比池...</b><span>这一步会渲染市场板块、我的细分和管理分组。</span></div>`;
+  xiaokeSectorIdle(() => {
+    const rows = xiaokeSectorHomeRows(140);
+    mount.innerHTML = `${xiaokeSectorComparePoolHtml(rows)}${xiaokeSelectedSectorCompareHtml(rows, rows)}`;
+    mount.dataset.loaded = "1";
+  });
+}
+
+function xiaokeSectorHomeDeepAnalysisHtml(rows = [], snapshots = readSectorSnapshots()) {
+  const first = rows[0] || {};
+  const firstPayload = { name: first.name || "", code: first.code || "", source: first.source || "", groupChain: first.groupChain || "" };
+  return `<section class="panel" id="sectorHomeDeepAnalysis">
+    <div class="metadata-head"><div><div class="panel-title">完整分析区 · 快捷入口</div><div class="date">上方是可直接阅读的数据区；这里是操作入口区，只负责快速跳到榜单、轨迹、归因、快照、对比池和维护区。</div></div></div>
+    <div class="sector-home-deep-grid">
+      <article class="good"><b>1. 强度榜</b><span>看今日排名、强度分、涨跌、60日、领涨股。首页上方已有预览，想看大表点轻量榜。</span><div class="sector-home-jump-row"><button class="small-btn" onclick="scrollToSectorSection('sectorStrengthRankPreview')">回到榜单</button><button class="small-btn" onclick="renderSectorStrength({ useSnapshot: true, skipFetch: true, liteTable: true })">轻量榜</button></div></article>
+      <article class="info"><b>2. 轨迹规律</b><span>看主线确认、次主线、升温和退潮。你之前找不到的K线式轨迹，统一放在这里作为历史轨迹详情。</span><div class="sector-home-jump-row"><button class="small-btn primary" onclick="openSectorMovementLab()">轨迹详情</button><button class="small-btn" onclick="backfillSectorHistorySnapshots(90)">补历史</button></div></article>
+      <article class="warn"><b>3. 单板块归因</b><span>想知道某个板块里哪些股票涨跌，点榜单里的“归因”；标准板块按东方财富BK，细分样本只辅助。</span><div class="sector-home-jump-row"><button class="small-btn" ${first.name ? `onclick='openSectorBoardDetail(${JSON.stringify(firstPayload)})'` : "disabled"}>看第1名归因</button></div></article>
+      <article class="purple"><b>4. 快照明细</b><span>按日期核对历史，查看每日前排、排名变化和完整明细。回填近3月后的数据也在这里。</span><div class="sector-home-jump-row"><button class="small-btn" onclick="openSectorBackfillDetail()">快照明细</button></div></article>
+      <article class="info"><b>5. 对比池</b><span>全部 = 市场板块 + 我的细分 + 管理分组产业链。点亮具体板块后，只看它们的单独对比。</span><div class="sector-home-jump-row"><button class="small-btn" onclick="scrollToSectorSection('sectorComparePool')">去对比池</button></div></article>
+      <article class="good"><b>6. 维护板块</b><span>CPO、PCB、MLCC、产业链上游这些都在下方维护；能匹配东方财富BK的，主线以BK为准。</span><div class="sector-home-jump-row"><button class="small-btn" onclick="scrollToSectorSection('sectorBoardManageHome')">去维护</button><button class="small-btn" onclick="installCommonSectorTemplates()">补常见细分</button></div></article>
+      <article class="warn"><b>7. 主线归因快照</b><span>批量刷新当前主线的贡献股、拖累股、宽度和集中度，用来判断主线扩散还是收缩。</span><div class="sector-home-jump-row"><button class="small-btn primary" onclick="refreshMainlineAttributionSnapshots()">刷新主线归因</button><button class="small-btn" onclick="scrollToSectorSection('sectorHomeAttributionPreview')">看快照</button></div></article>
+    </div>
+  </section>`;
+}
+
+function xiaokeSectorHomeProfessionalHtml(rows = [], snapshots = readSectorSnapshots()) {
+  const safeRows = (rows || []).slice(0, 80);
+  const safeSnapshots = xiaokeSectorSafeSnapshots(snapshots, 30);
+  const marketRows = safeRows.filter(row => !xiaokeSectorIsLocalSample(row) || xiaokeIsStandardSector(row));
+  const analysisRows = xiaokeSectorAnalysisRows(safeRows).slice(0, 80);
+  return `<section id="sectorHomeProfessional">
+    ${xiaokeSectorDailyJudgmentHtml(safeRows)}
+    ${xiaokeSectorCloseReviewHtml(safeRows)}
+    ${xiaokeSectorMistakeBookHtml()}
+    ${xiaokeSectorRuleAdvisorHtml()}
+    ${xiaokeSectorLiquidityConfirmHtml(analysisRows, safeSnapshots)}
+    ${xiaokeSectorStockFunnelHtml(analysisRows, safeSnapshots)}
+    ${xiaokeSectorRuleVersionCompareHtml(safeSnapshots)}
+    ${xiaokeSectorMainlineBacktestHtml(safeSnapshots)}
+    ${xiaokeSectorLifecyclePanelHtml(analysisRows, safeSnapshots)}
+    ${xiaokeSectorMappingRegistryHtml(safeRows)}
+    ${xiaokeSectorBkAuditHtml(rows, marketRows)}
+  </section>`;
+}
+
+function xiaokeSectorSafeSnapshots(snapshots = readSectorSnapshots(), limit = 30) {
+  return (snapshots || []).filter(snapshot => snapshot?.items?.length).slice(0, Math.max(3, Number(limit) || 30));
+}
+
+function xiaokeSectorIdle(callback, delay = 35) {
+  if (typeof requestIdleCallback === "function") {
+    requestIdleCallback(callback, { timeout: 450 });
+  } else {
+    setTimeout(callback, delay);
+  }
+}
+
+function xiaokeSectorHomeLazySectionsHtml(rows = [], snapshots = readSectorSnapshots()) {
+  const snapshotMeta = xiaokeSnapshotCountSafe();
+  return `<section id="sectorHomeProfessional" class="panel" style="margin-top:12px;border-color:rgba(90,157,255,.32)">
+    <div class="metadata-head">
+      <div><div class="panel-title">专业复盘区 · 按需加载</div><div class="date">根因修复：首屏不再一次性计算回测、错题本、个股漏斗和映射审计。需要时点下面按钮，系统会在本页分批加载。</div></div>
+      <div class="review-actions">
+        <span class="video-group-badge">快照 ${escapeHtml(snapshotMeta.count)} · ${escapeHtml(Math.round(snapshotMeta.bytes / 1024))} KB</span>
+        <button class="small-btn primary" onclick="loadSectorHomeProfessional('core')">加载专业复盘</button>
+        <button class="small-btn" onclick="loadSectorHomeProfessional('all')">加载全部模块</button>
+      </div>
+    </div>
+    <div class="sector-audit-summary">
+      <article><span>推荐先看</span><b>盘后验证</b><small>主线结论、1/3/5日验证</small></article>
+      <article><span>再看</span><b>资金确认</b><small>成交额是否放大</small></article>
+      <article><span>最后看</span><b>个股漏斗</b><small>龙头、中军、补涨、掉队</small></article>
+    </div>
+    <div id="sectorHomeProfessionalMount"></div>
+  </section>
+  <section id="sectorBoardManageHome" class="panel" style="margin-top:12px;border-color:rgba(34,195,214,.28)">
+    <div class="metadata-head">
+      <div><div class="panel-title">板块维护区 · 按需加载</div><div class="date">CPO/PCB/MLCC/产业链等维护入口保留在本页，但不随首屏自动渲染，避免大量按钮和分组拖慢页面。</div></div>
+      <button class="small-btn" onclick="loadSectorBoardManageHome()">加载维护区</button>
+    </div>
+    <div id="sectorBoardManageHomeMount" class="date">需要编辑、导入或同步分组时再加载。</div>
+  </section>`;
+}
+
+function loadSectorHomeProfessional(mode = "core") {
+  const mount = document.getElementById("sectorHomeProfessionalMount");
+  if (!mount) return openSectorStrengthHome("full");
+  if (mount.dataset.loading === "1") return showToast("专业复盘正在分批加载");
+  mount.dataset.loading = "1";
+  const rows = xiaokeSectorHomeRows(mode === "all" ? 120 : 80);
+  const snapshots = xiaokeSectorSafeSnapshots(readSectorSnapshots(), mode === "all" ? 45 : 25);
+  const safeRows = rows.slice(0, mode === "all" ? 120 : 80);
+  const analysisRows = xiaokeSectorAnalysisRows(safeRows).slice(0, mode === "all" ? 100 : 70);
+  const marketRows = safeRows.filter(row => !xiaokeSectorIsLocalSample(row) || xiaokeIsStandardSector(row));
+  const modules = [
+    ["盘后自动复盘历史对比", () => xiaokeSectorDailyJudgmentHtml(safeRows)],
+    ["盘后自动复盘", () => xiaokeSectorCloseReviewHtml(safeRows)],
+    ["主线错题本", () => xiaokeSectorMistakeBookHtml()],
+    ["规则调参建议器", () => xiaokeSectorRuleAdvisorHtml()],
+    ["资金/成交额确认层", () => xiaokeSectorLiquidityConfirmHtml(analysisRows, snapshots)],
+    ["主线到个股漏斗", () => xiaokeSectorStockFunnelHtml(analysisRows, snapshots)],
+    ["主线生命周期", () => xiaokeSectorLifecyclePanelHtml(analysisRows, snapshots)]
+  ];
+  if (mode === "all") {
+    modules.push(
+      ["规则版本对照", () => xiaokeSectorRuleVersionCompareHtml(snapshots)],
+      ["主线命中率复盘", () => xiaokeSectorMainlineBacktestHtml(snapshots)],
+      ["板块映射字典", () => xiaokeSectorMappingRegistryHtml(safeRows)],
+      ["BK匹配审计表", () => xiaokeSectorBkAuditHtml(safeRows, marketRows)]
+    );
+  }
+  mount.innerHTML = `<div class="strategy-running"><b>正在分批加载专业复盘...</b><span>当前只处理最近 ${escapeHtml(snapshots.length)} 条快照，避免页面卡死。</span></div>`;
+  let index = 0;
+  const appendNext = () => {
+    if (index === 0) mount.innerHTML = "";
+    const [title, render] = modules[index] || [];
+    if (!render) {
+      mount.dataset.loading = "0";
+      showToast("专业复盘已加载");
+      return;
+    }
+    try {
+      const html = render();
+      if (html) mount.insertAdjacentHTML("beforeend", html);
+    } catch (error) {
+      mount.insertAdjacentHTML("beforeend", `<section class="panel"><div class="strategy-cache-warning"><b>${escapeHtml(title)} 加载失败：</b>${escapeHtml(error.message || "未知错误")}</div></section>`);
+    }
+    index += 1;
+    xiaokeSectorIdle(appendNext);
+  };
+  xiaokeSectorIdle(appendNext);
+}
+
+function loadSectorBoardManageHome() {
+  const mount = document.getElementById("sectorBoardManageHomeMount");
+  if (!mount) return;
+  if (mount.dataset.loaded === "1") return scrollToSectorSection("sectorBoardManageHome");
+  mount.innerHTML = `<div class="strategy-running"><b>正在加载板块维护区...</b><span>只在需要编辑时加载，避免拖慢首屏。</span></div>`;
+  xiaokeSectorIdle(() => {
+    const customBoards = restoredCustomSectorBoards();
+    const syncedRows = xiaokeWatchGroupSectorRows();
+    mount.innerHTML = xiaokeCustomSectorEditorHtml(customBoards, syncedRows);
+    mount.dataset.loaded = "1";
+  });
+}
+
+function openSectorStrengthHome(active = "") {
+  state.view = "sectorStrength";
+  restoredRenderShell();
+  const main = document.getElementById("main");
+  if (!main) return;
+  main.innerHTML = xiaokeSectorStrengthLandingHtml("", active);
+  xiaokeHydrateSectorHomeVisuals(main);
+  const target = active === "full" ? "sectorHomeDeepAnalysis" : active === "manage" ? "sectorBoardManageHome" : active === "movement" ? "sectorHomeMovement" : "";
+  if (target) setTimeout(() => scrollToSectorSection(target), 40);
+  if (active === "full") setTimeout(() => loadSectorHomeProfessional("core"), 90);
+  if (active === "manage") setTimeout(() => loadSectorBoardManageHome(), 90);
+}
+
+function xiaokeSectorStrengthLiteHtml(context = {}) {
+  const rows = context.rows || [];
+  const topRows = rows.slice(0, 50);
+  const rankingMeta = context.rankingMeta || {};
+  const quoteMode = context.quoteMode || xiaokeSectorQuoteMode();
+  const sourceName = rankingMeta.source || topRows[0]?.rankingSource || topRows[0]?.source || "快照/缓存";
+  const scoreNote = context.scoreNote || topRows[0]?.scoreMode || "按可用行情字段计算";
+  const sourceText = rankingMeta.warning ? `${sourceName}：${rankingMeta.warning}` : sourceName;
+  const roleNames = ["主线", "次主线", "观察", "偏弱"];
+  const roleSummary = roleNames.map(role => {
+    const group = topRows.filter((row, index) => xiaokeSectorRole(row, row.rank || index + 1) === role);
+    return `<div><span>${role}</span><b>${group.length}</b><small>${group.slice(0, 3).map(row => row.name).join("、") || "暂无"}</small></div>`;
+  }).join("");
+  return `
+    <section class="review-head panel sector-strength-head">
+      <div>
+        <div class="panel-title">每日板块强弱</div>
+        <div class="date">轻量模式：${escapeHtml(scoreNote)}。当前口径：${escapeHtml(xiaokeSectorQuoteModeLabel(quoteMode))}；来源：${escapeHtml(sourceText)}。</div>
+      </div>
+      ${xiaokeSectorControlToolbarHtml()}
+    </section>
+    ${xiaokeSectorControlGridHtml("snapshot")}
+    <section class="sector-market-summary">${roleSummary}</section>
+    ${xiaokeSectorTodayMainlineHtml(topRows)}
+    <section class="panel">
+      <div class="metadata-head">
+        <div>
+          <div class="panel-title">板块强度榜 · 轻量</div>
+          <div class="date">只显示前 ${topRows.length} 名，不加载归因、映射审计、对比池和轨迹大图。需要深度复盘时再点“完整分析”。</div>
+        </div>
+        <span class="video-group-badge">${escapeHtml(context.badge || "轻量展示")}</span>
+      </div>
+      <div class="stock-table-wrap">
+        <table class="stock-table sector-prof-table">
+          <thead><tr><th>排名</th><th>层级</th><th>阶段</th><th>板块</th><th>强度</th><th>当日</th><th>60日</th><th>宽度</th><th>领涨股</th><th>来源</th><th>操作</th></tr></thead>
+          <tbody>${topRows.map((row, index) => {
+            const rank = row.rank || index + 1;
+            const role = xiaokeSectorRole(row, rank);
+            const trajectory = sectorTrajectory(row.name, rank, row);
+            const breadthText = row.breadth === null || row.breadth === undefined ? "-" : `${row.breadth}%`;
+            const payload = { name: row.name, code: row.code || "", source: row.source || "", groupChain: row.groupChain || "" };
+            return `<tr>
+              <td><b>${rank}</b></td>
+              <td><span class="sector-role ${role === "主线" ? "main" : role === "次主线" ? "secondary" : role === "偏弱" ? "weak" : ""}">${role}</span></td>
+              <td><span class="sector-phase phase-${escapeHtml(trajectory.phase)}">${escapeHtml(trajectory.phase)}</span><div class="date">${escapeHtml(trajectory.reason)}</div></td>
+              <td><b>${escapeHtml(row.name)}</b><div class="date">${escapeHtml(row.groupChain || row.code || (row.localOnly ? "本地细分" : ""))}</div></td>
+              <td><b>${escapeHtml(row.score ?? "-")}</b></td>
+              <td class="${Number(row.pct) >= 0 ? "up" : "down"}">${Number.isFinite(Number(row.pct)) ? strategyNumber(row.pct, 2, "%") : "-"}</td>
+              <td>${Number.isFinite(Number(row.pct60)) ? strategyNumber(row.pct60, 2, "%") : "-"}</td>
+              <td>${breadthText}</td>
+              <td>${escapeHtml(row.leader || "-")} <span class="${Number(row.leaderPct) >= 0 ? "up" : "down"}">${Number.isFinite(Number(row.leaderPct)) ? strategyNumber(row.leaderPct, 2, "%") : ""}</span></td>
+              <td>${escapeHtml(row.source || row.rankingSource || row.dataBasis || "-")}</td>
+              <td><button class="small-btn" onclick='openSectorBoardDetail(${JSON.stringify(payload)})'>归因</button></td>
+            </tr>`;
+          }).join("") || `<tr><td colspan="11">暂无板块数据。请点“刷新今日榜”。</td></tr>`}</tbody>
+        </table>
+      </div>
+    </section>`;
+}
+
+function clearSectorSnapshotCache() {
+  if (!confirm("确定清理板块历史快照缓存吗？这会删除本地保存的板块快照，但不会影响视频、策略、每日任务和股票档案。")) return;
+  try {
+    localStorage.removeItem(XIAOKE_SECTOR_SNAPSHOTS_KEY);
+    xiaokeSectorSnapshotsRuntimeCacheRaw = null;
+    xiaokeSectorSnapshotsRuntimeCacheRows = null;
+    window.xiaokeSectorRankingCache = null;
+    window.xiaokeSectorMergedRowsCache = [];
+    showToast("已清理板块快照缓存");
+  } catch {}
+  openSectorStrength();
+}
+
+function openSectorFullAnalysisGate(section = "full") {
+  openSectorStrengthHome(section === "manage" ? "manage" : "full");
+}
+
+function xiaokeSnapshotCountSafe() {
+  try {
+    const raw = localStorage.getItem(XIAOKE_SECTOR_SNAPSHOTS_KEY) || "[]";
+    const matches = raw.match(/"date"\s*:/g);
+    return { count: matches ? matches.length : 0, bytes: raw.length };
+  } catch {
+    return { count: 0, bytes: 0 };
+  }
+}
+
+function openSectorMovementLite() {
+  state.view = "sectorStrength";
+  restoredRenderShell();
+  const main = document.getElementById("main");
+  if (!main) return;
+  const snapshots = xiaokeSectorSnapshotsForRange().slice(0, 30);
+  const latest = snapshots[0]?.items || [];
+  const rows = xiaokeCoreAnalysisRows(xiaokeSectorAnalysisRows(latest)).slice(0, 40);
+  const primary = rows.filter(row => row.bucket === "主线确认").slice(0, 8);
+  const secondary = rows.filter(row => row.bucket === "次主线跟随").slice(0, 8);
+  const warming = rows.filter(row => row.bucket === "升温启动" || row.bucket === "新观察").slice(0, 8);
+  const cooling = rows.filter(row => row.bucket === "退潮降温").slice(0, 8);
+  const groupHtml = (title, list, hint) => `<section class="panel"><div class="metadata-head"><div><div class="panel-title">${escapeHtml(title)}</div><div class="date">${escapeHtml(hint)}</div></div></div><div class="stock-table-wrap"><table class="stock-table sector-prof-table"><thead><tr><th>板块</th><th>当前</th><th>前次</th><th>前10/25</th><th>运动分</th><th>判断</th></tr></thead><tbody>${list.map(row => `<tr><td><b>${escapeHtml(row.name)}</b><div class="date">${escapeHtml(row.code || "")}</div></td><td>第${escapeHtml(row.currentRank || "-")}</td><td>${row.oldRank ? `第${escapeHtml(row.oldRank)}` : "-"}</td><td>${escapeHtml(row.top10Count)} / ${escapeHtml(row.top25Count)}</td><td><b>${escapeHtml(row.motionScore)}</b></td><td>${escapeHtml(row.trajectory?.phase || row.bucket || "-")}</td></tr>`).join("") || `<tr><td colspan="6">暂无</td></tr>`}</tbody></table></div></section>`;
+  main.innerHTML = `
+    <section class="review-head panel" data-sector-movement-lab="1">
+      <div>
+        <div class="panel-title">板块轨迹规律 · 轻量</div>
+        <div class="date">只读取当前范围最多 30 条快照、最多 40 个标准板块，不加载全量图表/回测/归因时间线。</div>
+      </div>
+      ${xiaokeSectorControlToolbarHtml()}
+    </section>
+    ${xiaokeSectorControlGridHtml("movement")}
+    <section class="panel"><div class="metadata-head"><div><div class="panel-title">轨迹周期</div><div class="date">选择5日、10日、20日、近3月或开始至今，下面表格会按当前周期重算。</div></div>${xiaokeSectorRangeControlsHtml()}</div></section>
+    <section class="sector-market-summary">
+      <div><span>快照数</span><b>${snapshots.length}</b><small>${escapeHtml(xiaokeSectorRangeLabel())}</small></div>
+      <div><span>主线确认</span><b>${primary.length}</b><small>${primary.slice(0, 3).map(row => row.name).join("、") || "暂无"}</small></div>
+      <div><span>升温启动</span><b>${warming.length}</b><small>${warming.slice(0, 3).map(row => row.name).join("、") || "暂无"}</small></div>
+      <div><span>退潮降温</span><b>${cooling.length}</b><small>${cooling.slice(0, 3).map(row => row.name).join("、") || "暂无"}</small></div>
+    </section>
+    ${groupHtml("主线确认", primary, "连续位于前排，优先观察是否继续扩散、分歧后能否回流。")}
+    ${groupHtml("次主线跟随", secondary, "位置靠前但持续性略弱，观察能否晋级主线。")}
+    ${groupHtml("升温 / 新启动", warming, "排名明显上移或首次进入前排，第二天看宽度和成交额是否跟上。")}
+    ${groupHtml("退潮 / 降温", cooling, "从前排掉出或连续降温，按风险信号处理。")}`;
+}
+
+renderSectorStrength = async function xiaokeSectorStrengthWorkbenchV2(options = {}) {
+  window.__xiaokeSectorMovementLabOpen = false;
+  state.view = "sectorStrength";
+  restoredRenderShell();
+  const main = document.getElementById("main");
+  if (!main) return;
+  if (options.full && !options.allowHeavy) {
+    openSectorFullAnalysisGate();
+    return;
+  }
+  if (!options.forceFetch && !options.useSnapshot && !options.full && !options.liteTable && !options.scrollToSelected) {
+    main.innerHTML = xiaokeSectorStrengthLandingHtml();
+    xiaokeHydrateSectorHomeVisuals(main);
+    return;
+  }
+  const renderSeq = Date.now() + Math.random();
+  window.__xiaokeSectorStrengthRenderSeq = renderSeq;
+  try {
+    const cache = window.xiaokeSectorRankingCache || {};
+    const cacheAvailable = Array.isArray(cache.rows) && cache.rows.length;
+    const cacheFresh = cacheAvailable && Date.now() - Number(cache.ts || 0) < 30 * 60 * 1000;
+    const quoteMode = xiaokeSectorQuoteMode();
+    const snapshots = readSectorSnapshots();
+    const closeSnapshot = snapshots.find(item => item.date === todayString() && item.items?.length);
+    const latestSnapshot = snapshots.find(item => item.items?.length);
+    const canUseCloseSnapshot = quoteMode === "close" && closeSnapshot?.items?.length && !options.forceFetch;
+    const canUseLatestSnapshot = !!options.skipFetch && latestSnapshot?.items?.length && !options.forceFetch;
+    const canUseCache = canUseCloseSnapshot || canUseLatestSnapshot || (cacheAvailable && (options.skipFetch || !options.forceFetch));
+    if (options.skipFetch && !canUseCache && !options.forceFetch) {
+      main.innerHTML = xiaokeSectorStrengthLandingHtml("当前没有可用快照。为避免页面卡住，首页不会自动阻塞拉取实时行情；需要最新数据时点“刷新今日榜”。", "snapshot");
+      xiaokeHydrateSectorHomeVisuals(main);
+      return;
+    }
+    if (!canUseCache) {
+      main.innerHTML = `<section class="review-head panel"><div><div class="panel-title">每日板块强弱</div><div class="date">正在同步东方财富行业/概念板块，计算强度并准备成分股入口。</div></div><div class="review-actions">${xiaokeSectorQuoteModeControlsHtml()}<button class="small-btn" onclick="renderDashboard()">返回看板</button></div></section><section class="panel"><div class="strategy-running"><b>正在刷新今日榜...</b></div></section>`;
+      setTimeout(() => {
+        if (window.__xiaokeSectorStrengthRenderSeq !== renderSeq) return;
+        const stillLoading = /正在刷新今日榜|正在同步东方财富/.test(main.innerText || "");
+        if (stillLoading) main.innerHTML = sectorCachedRankingHtml("实时行情接口响应超时，已自动切换最近成功快照。可点“刷新今日榜”重试，或切到“收盘快照”。");
+      }, 10500);
+    }
+    const remoteRows = canUseCloseSnapshot
+      ? (closeSnapshot.items || [])
+      : canUseLatestSnapshot
+        ? (latestSnapshot.items || [])
+        : canUseCache
+          ? cache.rows
+          : await xiaokeFetchAllSectorRanking(true);
+    if (window.__xiaokeSectorStrengthRenderSeq !== renderSeq) return;
+    if (canUseCloseSnapshot) window.xiaokeSectorRankingMeta = { source: closeSnapshot.source || "本日收盘快照", warning: "", cached: true, asOf: closeSnapshot.at || "", quoteMode: "close" };
+    else if (canUseLatestSnapshot) window.xiaokeSectorRankingMeta = { source: latestSnapshot.source || "最近成功快照", warning: "实时接口未阻塞页面，先展示最近成功快照。", cached: true, asOf: latestSnapshot.at || latestSnapshot.date || "", quoteMode: quoteMode || "cache" };
+    else if (canUseCache) window.xiaokeSectorRankingMeta = cache.meta || window.xiaokeSectorRankingMeta || {};
+    if (!canUseCache) window.xiaokeSectorRankingCache = { rows: remoteRows, ts: Date.now(), meta: window.xiaokeSectorRankingMeta || {} };
+    const allRows = (canUseCloseSnapshot || canUseLatestSnapshot)
+      ? remoteRows.map((row, index) => ({ ...row, rank: row.rank || index + 1, quoteMode: row.quoteMode || (canUseCloseSnapshot ? "close" : quoteMode) }))
+      : xiaokeMergeSectorRankingRows(remoteRows);
+    window.xiaokeSectorMergedRowsCache = allRows;
+    const rows = xiaokeFilterSectorRowsForCompare(allRows).map((row, index) => ({ ...row, rank: index + 1 }));
+    if (!canUseCloseSnapshot && !canUseLatestSnapshot && !canUseCache) saveSectorSnapshot(allRows);
+    const topRows = rows.slice(0, 60);
+    const scoreNote = topRows[0]?.scoreMode || "按可用行情字段计算";
+    const rankingMeta = window.xiaokeSectorRankingMeta || {};
+    const sourceName = rankingMeta.source || topRows[0]?.rankingSource || topRows[0]?.source || "";
+    const lightweight = !!options.liteTable || (!!options.skipFetch && !options.full);
+    if (lightweight && !options.full) {
+      main.innerHTML = xiaokeSectorStrengthLiteHtml({
+        rows,
+        allRows,
+        rankingMeta,
+        quoteMode,
+        scoreNote,
+        badge: canUseCloseSnapshot ? "收盘快照" : canUseLatestSnapshot || canUseCache ? "缓存/快照" : "今日刷新"
+      });
+      return;
+    }
+    const sourceQuality = xiaokeSectorSourceQualityHtml(allRows, rankingMeta, canUseCache);
+    const dataAlerts = xiaokeSectorDataAlertsHtml(allRows, rankingMeta, canUseCache && !cacheFresh);
+    const redlineAlerts = xiaokeSectorRedlineAlertsHtml(allRows, rankingMeta);
+    const sourceDiffAudit = xiaokeSectorSourceDiffAuditHtml(allRows);
+    const bkAudit = xiaokeSectorBkAuditHtml(allRows, remoteRows);
+    const mappingAudit = xiaokeSectorMappingRegistryHtml(allRows);
+    const sourceAlertText = /历史K线校准/.test(sourceName)
+      ? `东方财富实时列表失败，已启用东方财富 BK 历史K线校准${rankingMeta.warning ? `（${escapeHtml(rankingMeta.warning)}）` : ""}。这适合日线级强弱判断，不等同盘中实时。`
+      : `当前实时板块使用 ${escapeHtml(sourceName || "回退行情")}；东方财富接口未成功校准${rankingMeta.warning ? `（${escapeHtml(rankingMeta.warning)}）` : ""}。今日涨跌以当前回退源展示，主线核心仍优先看东方财富 BK 历史/可匹配板块。`;
+    const sourceAlert = !canUseCloseSnapshot && (rankingMeta.warning || (sourceName && !/东方财富/.test(sourceName)))
+      ? `<section class="strategy-cache-warning" style="margin-top:-4px"><b>行情源提示：</b>${sourceAlertText}</section>`
+      : "";
+    const customBoards = restoredCustomSectorBoards();
+    const syncedGroupRows = xiaokeWatchGroupSectorRows();
+    main.innerHTML = `
+      <section class="review-head panel sector-strength-head"><div><div class="panel-title">每日板块强弱</div><div class="date">强度分 = ${escapeHtml(scoreNote)}。当前口径：${escapeHtml(xiaokeSectorQuoteModeLabel(quoteMode))}；主线公式 ${escapeHtml(XIAOKE_SECTOR_MAINLINE_FORMULA_VERSION)}。</div></div><div class="review-actions sector-head-actions">${xiaokeSectorQuoteModeControlsHtml()}<button class="small-btn" onclick="renderSectorStrength({ forceFetch: true })">刷新今日榜</button><button class="small-btn primary" onclick="openSectorMovementLab()">轨迹规律</button><button class="small-btn" onclick="installCommonSectorTemplates()">补常见细分</button><button class="small-btn" onclick="importCustomSectorBoards()">导入图片/PDF/表格</button><button class="small-btn" onclick="syncWatchGroupsToSectorStrength()">同步管理分组</button><button class="small-btn" onclick="renderDashboard()">返回看板</button></div></section>
+      ${sourceQuality}
+      ${dataAlerts}
+      ${redlineAlerts}
+      ${sourceDiffAudit}
+      ${sourceAlert}
+      ${xiaokeSectorQuickNavHtml()}
+      ${xiaokeSectorTodayMainlineHtml(rows)}
+      ${xiaokeSectorMainlineScoreExplainerHtml(rows)}
+      ${xiaokeSectorCloseReviewHtml(rows)}
+      ${xiaokeSectorDailyJudgmentHtml(rows)}
+      ${xiaokeSectorMistakeBookHtml()}
+      ${xiaokeSectorRuleAdvisorHtml()}
+      <section class="sector-market-summary">${["主线","次主线","观察","偏弱"].map(role => { const group=topRows.filter((row,index)=>xiaokeSectorRole(row,index+1)===role); return `<div><span>${role}</span><b>${group.length}</b><small>${group.slice(0,3).map(row=>row.name).join("、") || "暂无"}</small></div>`; }).join("")}</section>
+      ${xiaokeSectorComparePoolHtml(allRows)}
+      ${mappingAudit}
+      ${bkAudit}
+      ${xiaokeSelectedSectorCompareHtml(rows, allRows)}
+      ${xiaokeSectorMovementAnalysisHtml(rows)}
+      <section class="panel"><div class="metadata-head"><div><div class="panel-title">板块强度榜</div><div class="date">候选池 ${allRows.length} 个，当前参与对比 ${rows.length} 个；显示前60名。点“归因”可查标准板块贡献/拖累、市场成分和本地样本。</div></div><span class="video-group-badge">${todayString()}${canUseCloseSnapshot ? " 收盘快照" : canUseCache ? " 缓存展示" : " 快照已保存"}</span></div>
+        <div class="stock-table-wrap"><table class="stock-table sector-prof-table"><thead><tr><th>排名</th><th>层级</th><th>阶段</th><th>板块</th><th>强度</th><th>当日</th><th>60日</th><th>上涨/下跌</th><th>宽度</th><th>领涨股</th><th>可信度/来源</th><th>操作</th></tr></thead><tbody>${topRows.map((row,index)=>{ const rank=row.rank || index+1; const delta=xiaokeSectorRankDelta(row.name,rank); const role=xiaokeSectorRole(row,rank); const trajectory=sectorTrajectory(row.name,rank,row); const breadthText=row.breadth===null||row.breadth===undefined?'-':`${row.breadth}%`; const advanceText=row.upCount===null||row.upCount===undefined||row.downCount===null||row.downCount===undefined?'-':`${row.upCount} / ${row.downCount}`; const payload={name:row.name,code:row.code||"",source:row.source||"",groupChain:row.groupChain||""}; return `<tr><td><b>${rank}</b> <span class="${delta.cls}">${delta.text}</span></td><td><span class="sector-role ${role==='主线'?'main':role==='次主线'?'secondary':role==='偏弱'?'weak':''}">${role}</span></td><td><span class="sector-phase phase-${escapeHtml(trajectory.phase)}">${escapeHtml(trajectory.phase)}</span><div class="date">${escapeHtml(trajectory.reason)}</div></td><td><b>${escapeHtml(row.name)}</b><div class="date">${escapeHtml(row.groupChain || row.code || (row.localOnly ? '本地细分' : ''))}</div></td><td><b>${row.score}</b></td><td class="${Number(row.pct)>=0?'up':'down'}">${Number.isFinite(Number(row.pct)) ? strategyNumber(row.pct,2,'%') : '-'}</td><td>${Number.isFinite(Number(row.pct60)) ? strategyNumber(row.pct60,2,'%') : '-'}</td><td>${advanceText}</td><td>${breadthText}</td><td>${escapeHtml(row.leader || '-')} <span class="${Number(row.leaderPct)>=0?'up':'down'}">${Number.isFinite(Number(row.leaderPct)) ? strategyNumber(row.leaderPct,2,'%') : ''}</span></td><td>${xiaokeSectorSourceCellHtml(row, rankingMeta)}</td><td><button class="small-btn" onclick='openSectorBoardDetail(${JSON.stringify(payload)})'>归因</button></td></tr>`;}).join("")}</tbody></table></div></section>
+      <section id="sectorSnapshotDetail" class="panel" style="margin-top:12px;border-color:rgba(141,92,246,.45);background:linear-gradient(180deg,rgba(141,92,246,.10),rgba(18,24,31,.88))"><div class="metadata-head"><div><div class="panel-title"><span style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:5px;background:rgba(141,92,246,.18);border:1px solid rgba(141,92,246,.45);color:#e5d8ff;margin-right:8px">紫色明细区</span>最近板块快照</div><div class="date">回填和每日保存后的对比数据都在这里；点日期可看当天完整表格。</div></div><div class="review-actions"><button class="small-btn" onclick="openSectorBackfillDetail()">查看回填明细</button><button class="small-btn" onclick="openSectorMovementLab()">对比全部快照</button></div></div>${sectorSnapshotHistoryHtml()}</section>
+      ${xiaokeCustomSectorEditorHtml(customBoards, syncedGroupRows)}`;
+    xiaokeHydrateSectorHomeVisuals(main);
+    if (options.scrollToSelected) setTimeout(() => scrollToSectorSection("sectorSelectedCompareData"), 80);
+  } catch (error) {
+    if (window.__xiaokeSectorStrengthRenderSeq !== renderSeq) return;
+    main.innerHTML = sectorCachedRankingHtml(error.message);
+  }
+};
+
 setTimeout(() => xiaokeAutoRefreshDailySectorSnapshot(), 2600);
+setTimeout(() => xiaokeAutoGenerateSectorCloseReview(), 3600);
 
 restoredStockProfileCard = function xiaokeTrueFinalStockProfileCard(row = {}) {
   const item = row.item || {};
@@ -14647,6 +21869,7 @@ window.importCurrentVideoComments = importCurrentVideoComments;
 window.importCurrentVideoInteractions = importCurrentVideoInteractions;
 window.fetchCurrentVideoComments = fetchCurrentVideoComments;
 window.transcribeVideo = transcribeVideo;
+window.xiaokeRepairVideoAudio = xiaokeRepairVideoAudio;
 window.startVideoBackgroundQueue = startVideoBackgroundQueue;
 window.loadMoreLibraryVideos = loadMoreLibraryVideos;
 window.autoFillVisibleStockProfiles = autoFillVisibleStockProfiles;
@@ -14662,6 +21885,41 @@ globalThis.openModelFramework = openModelFramework;
 globalThis.renderSectorStrength = renderSectorStrength;
 globalThis.addCustomSectorBoard = addCustomSectorBoard;
 globalThis.editCustomSectorBoard = editCustomSectorBoard;
+globalThis.importCustomSectorBoards = importCustomSectorBoards;
+globalThis.installCommonSectorTemplates = installCommonSectorTemplates;
+globalThis.openSectorBoardDetail = openSectorBoardDetail;
+globalThis.openSectorBoardHistory = openSectorBoardHistory;
+globalThis.openSectorSnapshot = openSectorSnapshot;
+globalThis.openSectorMovementLab = openSectorMovementLab;
+globalThis.openSectorMovementLite = openSectorMovementLite;
+globalThis.loadSectorMovementProfessional = loadSectorMovementProfessional;
+globalThis.openSectorFullAnalysisGate = openSectorFullAnalysisGate;
+globalThis.clearSectorSnapshotCache = clearSectorSnapshotCache;
+globalThis.refreshMainlineAttributionSnapshots = refreshMainlineAttributionSnapshots;
+globalThis.readSectorAttributionSnapshots = readSectorAttributionSnapshots;
+globalThis.generateSectorCloseReview = generateSectorCloseReview;
+globalThis.copySectorCloseReviewText = copySectorCloseReviewText;
+globalThis.exportSectorCloseReviewMarkdown = exportSectorCloseReviewMarkdown;
+globalThis.copySectorCloseReviewToDailyReview = copySectorCloseReviewToDailyReview;
+globalThis.xiaokeAutoGenerateSectorCloseReview = xiaokeAutoGenerateSectorCloseReview;
+globalThis.generateSectorDailyJudgment = generateSectorDailyJudgment;
+globalThis.copySectorDailySummary = copySectorDailySummary;
+globalThis.refreshSectorMistakeBook = refreshSectorMistakeBook;
+globalThis.copySectorMistakeBook = copySectorMistakeBook;
+globalThis.applySectorRuleAdvisorPatch = applySectorRuleAdvisorPatch;
+globalThis.saveSectorCandidatePoolFromCurrent = saveSectorCandidatePoolFromCurrent;
+globalThis.clearSectorCandidatePool = clearSectorCandidatePool;
+globalThis.refreshMainlineStockFunnel = refreshMainlineStockFunnel;
+globalThis.updateSectorRuleSetting = updateSectorRuleSetting;
+globalThis.resetSectorRuleSettings = resetSectorRuleSettings;
+globalThis.applySectorRulePreset = applySectorRulePreset;
+globalThis.toggleSectorCardConstituents = toggleSectorCardConstituents;
+globalThis.showSectorSourceConnectionGuide = showSectorSourceConnectionGuide;
+globalThis.hideSectorCompareBoard = hideSectorCompareBoard;
+globalThis.hideUnmatchedSectorSamples = hideUnmatchedSectorSamples;
+globalThis.restoreHiddenSectorCompareBoards = restoreHiddenSectorCompareBoards;
+globalThis.editSectorCompareBoard = editSectorCompareBoard;
+globalThis.enableAllSectorCompareSources = enableAllSectorCompareSources;
 globalThis.editFrameworkRule = editFrameworkRule;
 
 function xiaokeVideoDouyinUrl(video = {}) {
@@ -14740,13 +21998,56 @@ function xiaokeDouyinStatusHtml() {
   if (!job || !job.status || job.status === "idle") return "";
   const color = job.status === "failed" ? "var(--red)" : (job.status === "done" ? "var(--green)" : "var(--gold)");
   const errors = (job.errors || []).slice(-2).map(row => `<div class="date">${escapeHtml(row.error || "")}</div>`).join("");
+  const note = job.note ? `<div class="date" style="color:var(--green)">${escapeHtml(job.note)}</div>` : "";
+  const savedParts = [
+    `真实视频 ${Number(job.saved || 0)}`,
+    Number(job.metadataSaved || 0) ? `详情 ${Number(job.metadataSaved || 0)}` : "",
+    `评论 ${Number(job.commentsSaved || 0)}`,
+    `互动 ${Number(job.interactionsSaved || 0)}`,
+    Number(job.commentsFailed || 0) ? `评论失败 ${Number(job.commentsFailed || 0)}` : ""
+  ].filter(Boolean).join(" · ");
   return `<section class="panel" style="border-color:${color};margin-bottom:12px">
     <div class="metadata-head">
-      <div><div class="panel-title">抖音同步：${escapeHtml(job.status)}</div><div class="date">进度 ${Number(job.done || 0)} / ${Number(job.total || 0)}，已保存 ${Number(job.saved || 0)}，失败 ${Number(job.failed || 0)}${job.current ? ` · ${escapeHtml(job.current)}` : ""}</div></div>
-      <button class="small-btn" onclick="pollDouyinSyncStatus(true)">刷新进度</button>
+      <div><div class="panel-title">抖音同步：${escapeHtml(job.status)}</div><div class="date">进度 ${Number(job.done || 0)} / ${Number(job.total || 0)} · ${escapeHtml(savedParts)} · 失败 ${Number(job.failed || 0)}${job.current ? ` · ${escapeHtml(job.current)}` : ""}</div></div>
+      <div class="review-actions">
+        ${job.status === "failed" ? `<button class="small-btn" onclick="startDouyinCookieLogin()">打开登录窗口</button>` : ""}
+        ${job.status === "running" ? `<button class="small-btn danger-btn" onclick="stopDouyinSyncJob()">停止同步</button>` : ""}
+        ${job.status !== "running" && Number(job.failed || 0) > 0 ? `<button class="small-btn" onclick="retryDouyinFailedSync()">重试失败项</button>` : ""}
+        <button class="small-btn" onclick="pollDouyinSyncStatus(true)">刷新进度</button>
+      </div>
     </div>
+    ${note}
     ${errors}
   </section>`;
+}
+
+async function retryDouyinFailedSync() {
+  showToast("正在重试上次失败的视频...");
+  try {
+    const response = await fetch("/api/douyin-sync-retry-failed", { method: "POST" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.success) throw new Error(data.error || "重试失败项启动失败");
+    state.douyinSyncJob = data.job || { status: "running" };
+    if (state.view === "library") renderLibrary();
+    pollDouyinSyncStatus(true);
+  } catch (error) {
+    showToast("重试失败：" + (error.message || "请检查抖音登录状态"));
+  }
+}
+window.retryDouyinFailedSync = retryDouyinFailedSync;
+
+async function stopDouyinSyncJob() {
+  try {
+    const response = await fetch("/api/douyin-sync-stop", { method: "POST" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.success) throw new Error(data.error || "停止失败");
+    state.douyinSyncJob = data.job || { status: "idle" };
+    clearTimeout(state.douyinSyncTimer);
+    showToast("已停止抖音同步");
+    if (state.view === "library") renderLibrary();
+  } catch (error) {
+    showToast("停止同步失败：" + (error.message || "请稍后再试"));
+  }
 }
 
 async function pollDouyinSyncStatus(forceRender = false) {
@@ -14855,7 +22156,7 @@ renderLibrary = function xiaokeDouyinRenderLibrary() {
           <option value="likes" ${state.sort === "likes" ? "selected" : ""}>按点赞</option>
           <option value="title" ${state.sort === "title" ? "selected" : ""}>按标题</option>
         </select>
-        <button class="small-btn" onclick="startDouyinBloggerSync()">同步博主视频</button>
+        <button class="small-btn" onclick="startDouyinBloggerSync()">同步最新视频</button>
         <button class="small-btn" onclick="xiaokeFetchDouyinStatus().then(()=>renderLibrary())">抓取状态</button>
         <button class="small-btn" onclick="openImport()">导入</button>
         <button class="small-btn" onclick="renderDashboard()">返回看板</button>
@@ -14975,19 +22276,31 @@ function xiaokeVideoQualityFlags(video = {}) {
   const title = quickVideoTitle(video);
   const transcript = getVideoDetailTranscript(video);
   const hasTranscript = !isEmptyTranscript(transcript) && String(transcript || "").trim().length > 30;
-  const hasAnalysis = Boolean(readVideoAnalyses()[video.id] || readStructuredAnalyses()[video.id]);
+  const savedAnalysis = readVideoAnalyses()[video.id] || "";
+  const structuredAnalysis = readStructuredAnalyses()[video.id] || null;
+  const hasAnalysis = Boolean(savedAnalysis || structuredAnalysis);
+  const model = hasAnalysis ? analysisModel(video, savedAnalysis, structuredAnalysis) : null;
+  const score = model && Number.isFinite(Number(model.score)) ? Math.round(Number(model.score)) : null;
+  const grade = score !== null ? (model.grade || xiaokeAiGrade(score)) : "";
   const hasComments = finalVideoComments(video).length > 0 || finalVideoInteractions(video).length > 0;
   const hasSource = Boolean(xiaokeVideoDouyinUrl(video) || video.videoUrl || video.documentUrl || video.originalUrl);
+  const metricsMissing = xiaokeVideoMetricsMissing(video);
   return {
     title,
+    model,
+    score,
+    grade,
+    scoreLabel: score !== null ? `${grade} ${score}分` : "",
     hasTranscript,
     hasAnalysis,
     hasComments,
     hasSource,
     labels: [
-      hasTranscript ? "" : "待转写",
+      xiaokeVideoMissingAudio(video) ? "缺音频" : "",
+      xiaokeVideoMissingAudio(video) || hasTranscript ? "" : "待转写",
       hasAnalysis ? "" : "待AI",
       hasComments ? "" : "待评论",
+      metricsMissing ? "赞评转未同步" : "",
       hasSource ? "" : "缺来源"
     ].filter(Boolean)
   };
@@ -15178,18 +22491,76 @@ function startLibraryFullSync(options = {}) {
   }
   max = Math.max(1, Math.min(all.length, Number(max || all.length)));
   const targets = all.slice(0, max);
-  showToast(`开始后台补全 ${targets.length} 条：评论/互动/AI`);
+  showToast(`开始后台补全 ${targets.length} 条：标题/转写/评论/互动/AI`);
   runLibraryFullSyncQueue(targets, { comments: true, ai: true, delayMs: options.delayMs || 1200 });
+}
+
+function xiaokeDouyinIdsFromJob(job = {}) {
+  const values = [];
+  const add = value => {
+    const text = String(value || "");
+    if (!text) return;
+    values.push(text);
+    const match = text.match(/\d{10,}/);
+    if (match) values.push(match[0]);
+    if (text.startsWith("meta_")) values.push(text.slice(5));
+  };
+  add(job.sourceUrl);
+  add(job.current);
+  (job.savedItems || []).forEach(item => {
+    add(item.id);
+    add(item.sourceId);
+    add(item.awemeId);
+    add(item.url);
+  });
+  (job.errors || []).forEach(item => add(item.url));
+  return new Set(uniqueClean(values).filter(Boolean));
+}
+
+function xiaokeVideosFromDouyinJob(job = {}) {
+  const ids = xiaokeDouyinIdsFromJob(job);
+  const rows = restoredAllLibraryVideos();
+  let matched = rows.filter(video => xiaokeVideoIdKeys(video).some(key => ids.has(key)));
+  if (!matched.length && Number(job.saved || job.metadataSaved || 0) > 0) {
+    const count = Math.max(1, Math.min(50, Number(job.saved || job.metadataSaved || job.total || 10)));
+    matched = rows
+      .filter(video => xiaokeVideoDouyinUrl(video) || video.isMetadata || video.local)
+      .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
+      .slice(0, count);
+  }
+  return matched.filter(video => !xiaokeIsBookDocument(video));
+}
+
+async function xiaokeRunAfterDouyinSync(job = {}) {
+  if (window.__xiaokeAfterDouyinSyncRunning) return;
+  window.__xiaokeAfterDouyinSyncRunning = true;
+  try {
+    if (typeof scanMetadataVideos === "function") await scanMetadataVideos();
+    if (typeof restoredImportLocalVideosNow === "function") await restoredImportLocalVideosNow();
+    else if (typeof scanLocalVideos === "function") await scanLocalVideos();
+    const merged = await xiaokeMergeDouyinSideDataFromServer();
+    const targets = xiaokeVideosFromDouyinJob(job);
+    if (merged) showToast(`已合并评论/互动 ${merged} 组`);
+    for (const video of targets.slice(0, 20)) {
+      if (video.videoUrl && isGenericVideoTitle(getVideoTextOverride(video).title || video.title)) {
+        try { await syncVideoTitleFromFrame(video.id); } catch {}
+      }
+    }
+    if (state.view === "library") renderLibrary();
+    if (targets.length) {
+      showToast(`最新视频已入库 ${targets.length} 条；需要标题/转写/评论/互动/AI 时，再点“一键补全”。`);
+    }
+  } finally {
+    window.__xiaokeAfterDouyinSyncRunning = false;
+  }
 }
 
 pollDouyinSyncStatus = async function xiaokePollDouyinSyncStatus(forceRender = false) {
   const job = await xiaokeOriginalPollDouyinSyncStatus(forceRender);
   if (job && job.status === "done") {
-    const merged = await xiaokeMergeDouyinSideDataFromServer();
-    if (merged && forceRender) showToast(`已合并抖音评论/互动 ${merged} 组`);
     if (state.xiaokeRunAiAfterDouyinSync) {
       state.xiaokeRunAiAfterDouyinSync = false;
-      startLibraryFullSync({ auto: true, max: Math.min(Number(job.saved || job.total || 20), 50), delayMs: 1000 });
+      await xiaokeRunAfterDouyinSync(job);
     }
   }
   return job;
@@ -15203,17 +22574,17 @@ startDouyinBloggerSync = async function xiaokeSafeBloggerSync() {
   if (limitText == null) return;
   const limit = Math.max(1, Math.min(50, Number(limitText) || 20));
   localStorage.setItem("xiaoke_last_douyin_sync_limit", String(limit));
-  showToast("已提交抖音后台同步：视频 + 高赞评论 + 博主互动；完成后会自动补 AI");
+  showToast("已提交抖音后台同步：先抓真实视频；视频入库后可一键补标题/转写/评论/互动/AI。");
   try {
     const response = await fetch("/api/douyin-sync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: url.trim(), limit, download: true, comments: true })
+      body: JSON.stringify({ url: url.trim(), limit, download: true, comments: false })
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.success) throw new Error(data.error || "启动同步失败");
     state.douyinSyncJob = data.job;
-    state.xiaokeRunAiAfterDouyinSync = true;
+    state.xiaokeRunAiAfterDouyinSync = false;
     if (state.view === "library") renderLibrary();
     pollDouyinSyncStatus(true);
   } catch (error) {
@@ -15225,7 +22596,7 @@ videoCardHtml = function xiaokeManagedVideoCardHtml(video = {}) {
   const quality = xiaokeVideoQualityFlags(video);
   const idArg = JSON.stringify(video.id);
   const media = video.thumbnail
-    ? `<img src="${escapeHtml(video.thumbnail)}" alt="" style="width:100%;height:100%;object-fit:cover">`
+    ? `<img src="${escapeHtml(video.thumbnail)}" alt="" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display='none';const v=this.parentElement&&this.parentElement.querySelector('video');if(v)v.style.display='block'">${video.videoUrl ? `<video src="${escapeHtml(video.videoUrl)}" muted preload="metadata" style="display:none"></video>` : ""}`
     : video.videoUrl ? `<video src="${escapeHtml(video.videoUrl)}" muted preload="metadata"></video>` : `<div class="poster">${video.isDocument ? "书" : "链"}</div>`;
   const badge = video.isMetadata ? "元数据" : video.local ? "本地" : video.isDocument ? "书籍" : "样例";
   const groups = typeof videoGroupsFor === "function" ? videoGroupsFor(video.id).slice(0, 2) : [];
@@ -15233,6 +22604,7 @@ videoCardHtml = function xiaokeManagedVideoCardHtml(video = {}) {
     <article class="video-card" data-video-id="${escapeHtml(video.id)}" onclick='openDetail(${idArg})'>
       <div class="thumb">${media}<span class="play">${video.isMetadata ? "↗" : "▶"}</span></div>
       <div class="vc-body">
+        ${xiaokeScoreBadgeHtml(quality)}
         <div class="metadata-head" style="align-items:flex-start;gap:8px">
           <h3 style="margin:0;min-width:0">${escapeHtml(quality.title)}</h3>
           <div class="review-actions" style="flex:0 0 auto;gap:4px">
@@ -15240,7 +22612,6 @@ videoCardHtml = function xiaokeManagedVideoCardHtml(video = {}) {
             <button class="mini-btn danger-btn" title="删除" onclick='event.stopPropagation();deleteVideo(${idArg})'>删</button>
           </div>
         </div>
-        <div class="metrics"><span>赞 <strong>${escapeHtml(video.likes || 0)}</strong></span><span>评 ${escapeHtml(video.comments || 0)}</span><span>转 ${escapeHtml(video.shares || 0)}</span></div>
         <div class="date" style="margin-top:7px">${escapeHtml(badge)} · ${escapeHtml(video.date || "-")}</div>
         ${quality.labels.length ? `<div class="video-group-row">${quality.labels.map(label => `<span class="video-group-badge">${escapeHtml(label)}</span>`).join("")}</div>` : ""}
         ${groups.length ? `<div class="video-group-row">${groups.map(name => `<span class="video-group-badge">${escapeHtml(name)}</span>`).join("")}</div>` : ""}
@@ -15275,8 +22646,8 @@ renderLibrary = function xiaokeManagedLibraryRender() {
           <option value="likes" ${state.sort === "likes" ? "selected" : ""}>按点赞</option>
           <option value="title" ${state.sort === "title" ? "selected" : ""}>按标题</option>
         </select>
-        <button class="small-btn" onclick="startDouyinBloggerSync()">自动同步博主</button>
-        <button class="small-btn" onclick="startLibraryFullSync()">同步全部评论/互动/AI</button>
+        <button class="small-btn" onclick="startDouyinBloggerSync()">手动同步最新视频</button>
+        <button class="small-btn" onclick="startLibraryFullSync()">补全标题/转写/评论/AI</button>
         <button class="small-btn" onclick="Promise.all([pollDouyinCookieStatus(true),pollDouyinSyncStatus(true)]).then(()=>renderLibrary())">抓取状态</button>
         <button class="small-btn" onclick="openImport()">导入</button>
         <button class="small-btn" onclick="renderDashboard()">返回看板</button>
@@ -15314,13 +22685,40 @@ function xiaokeHasVideoAI(video = {}) {
   return Boolean(readVideoAnalyses()[video.id] || readStructuredAnalyses()[video.id]);
 }
 
+function xiaokeNeedsVideoTitle(video = {}) {
+  if (!video || !video.videoUrl || xiaokeIsBookDocument(video)) return false;
+  const overrideTitle = getVideoTextOverride(video).title;
+  const rawTitle = overrideTitle !== undefined ? overrideTitle : video.title;
+  return isGenericVideoTitle(rawTitle || quickVideoTitle(video));
+}
+
+function xiaokeVideoMissingAudio(video = {}) {
+  return Boolean(video && video.videoUrl && video.hasAudio === false && !getVideoDetailTranscript(video));
+}
+
+function xiaokeCanRepairVideoAudio(video = {}) {
+  return Boolean(xiaokeVideoMissingAudio(video) && xiaokeVideoDouyinUrl(video));
+}
+
+function xiaokeNeedsVideoTranscript(video = {}) {
+  return Boolean(video && video.videoUrl && (video.hasAudio !== false || xiaokeCanRepairVideoAudio(video)) && !xiaokeIsBookDocument(video) && !getVideoDetailTranscript(video));
+}
+
+function xiaokeVideoReadyForAi(video = {}) {
+  return !xiaokeVideoMissingAudio(video) && !xiaokeNeedsVideoTitle(video) && !xiaokeNeedsVideoTranscript(video);
+}
+
 function xiaokeNeedsBulkWork(video = {}, options = {}) {
+  const titleEnabled = options.title !== false;
+  const transcriptEnabled = options.transcript !== false;
   const commentsEnabled = options.comments !== false;
   const aiEnabled = options.ai !== false;
   const sourceUrl = xiaokeVideoDouyinUrl(video);
+  const missingTitle = titleEnabled && xiaokeNeedsVideoTitle(video);
+  const missingTranscript = transcriptEnabled && xiaokeNeedsVideoTranscript(video);
   const missingComments = commentsEnabled && Boolean(sourceUrl) && !finalVideoComments(video).length && !finalVideoInteractions(video).length;
   const missingAi = aiEnabled && !xiaokeHasVideoAI(video);
-  return Boolean(missingComments || missingAi);
+  return Boolean(missingTitle || missingTranscript || missingComments || missingAi);
 }
 
 function xiaokeSelectBulkTargets(videos = [], options = {}) {
@@ -15331,7 +22729,7 @@ function xiaokeSelectBulkTargets(videos = [], options = {}) {
 
 function configureDouyinBloggerSource() {
   const current = localStorage.getItem(XIAOKE_DOUYIN_BLOGGER_URL_KEY) || "";
-  const next = prompt(`设置「${XIAOKE_DEFAULT_BLOGGER_NAME}」抖音主页/合集链接。\n\n这里只保存一次，之后点“自动同步博主”会直接使用。`, current);
+  const next = prompt(`设置「${XIAOKE_DEFAULT_BLOGGER_NAME}」抖音主页/合集链接。\n\n这里只保存一次，之后点“手动同步最新视频”会直接使用。`, current);
   if (next == null) return;
   const url = next.trim();
   if (!url) {
@@ -15358,17 +22756,17 @@ startDouyinBloggerSync = async function xiaokeSafeBloggerSyncV2(options = {}) {
   }
   const limit = Math.max(1, Math.min(50, Number(options.limit || localStorage.getItem(XIAOKE_DOUYIN_SYNC_LIMIT_KEY) || 20)));
   localStorage.setItem(XIAOKE_DOUYIN_SYNC_LIMIT_KEY, String(limit));
-  showToast(`已提交「${XIAOKE_DEFAULT_BLOGGER_NAME}」后台同步：最多 ${limit} 条，完成后补评论/互动/AI`);
+  showToast(`已提交「${XIAOKE_DEFAULT_BLOGGER_NAME}」最新视频同步：最多 ${limit} 条；视频入库后可一键补标题/转写/评论/互动/AI。`);
   try {
     const response = await fetch("/api/douyin-sync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url, limit, download: true, comments: true })
+      body: JSON.stringify({ url, limit, download: true, comments: false })
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.success) throw new Error(data.error || "启动同步失败");
     state.douyinSyncJob = data.job;
-    state.xiaokeRunAiAfterDouyinSync = true;
+    state.xiaokeRunAiAfterDouyinSync = false;
     if (state.view === "library") renderLibrary();
     pollDouyinSyncStatus(true);
   } catch (error) {
@@ -15426,17 +22824,110 @@ function xiaokeVideoGroupControls(video = {}) {
   return `<div class="video-group-row">${badges}<button class="video-add-group" onclick='event.stopPropagation();addVideoToGroup(${JSON.stringify(video.id)})'>+板块</button></div>`;
 }
 
+function xiaokeScoreStatusText(grade) {
+  if (grade === "A") return "重点优先";
+  if (grade === "B") return "次重点";
+  if (grade === "C") return "普通观察";
+  return "低优先";
+}
+
+function xiaokeScoreBadgeHtml(quality = {}) {
+  if (!quality || !Number.isFinite(Number(quality.score))) return "";
+  const score = Math.round(Number(quality.score));
+  const grade = String(quality.grade || xiaokeAiGrade(score) || "D").toUpperCase();
+  const safeGrade = ["A", "B", "C", "D"].includes(grade) ? grade : "D";
+  const status = xiaokeScoreStatusText(safeGrade);
+  return `
+    <div class="video-score-badge grade-${safeGrade.toLowerCase()}" title="AI素材评分：${escapeHtml(status)}">
+      <b>${escapeHtml(safeGrade)}</b>
+      <span>${escapeHtml(String(score))}分</span>
+      <em>${escapeHtml(status)}</em>
+    </div>
+  `;
+}
+
+function xiaokeMetricHasValue(value) {
+  const text = String(value ?? "").trim();
+  if (!text || text === "-" || text === "--") return false;
+  return xiaokeMetricToNumber(text) > 0;
+}
+
+function xiaokeVideoMetricsMissing(video = {}) {
+  return Boolean(
+    xiaokeVideoDouyinUrl(video)
+    && !xiaokeMetricHasValue(video.likes)
+    && !xiaokeMetricHasValue(video.comments)
+    && !xiaokeMetricHasValue(video.shares)
+  );
+}
+
+function xiaokeVideoMetricText(value, missing = false) {
+  if (xiaokeMetricHasValue(value)) return String(value).trim();
+  return missing ? "待同步" : "0";
+}
+
+function xiaokeVideoMetricsHtml(video = {}) {
+  const missing = xiaokeVideoMetricsMissing(video);
+  const commentCount = typeof finalVideoComments === "function" ? finalVideoComments(video).length : 0;
+  const interactionCount = typeof finalVideoInteractions === "function" ? finalVideoInteractions(video).length : 0;
+  const commentsText = xiaokeMetricHasValue(video.comments)
+    ? String(video.comments).trim()
+    : commentCount
+      ? `${commentCount}条`
+      : xiaokeVideoMetricText(video.comments, missing);
+  return `
+    <div class="metrics video-metrics ${missing ? "missing" : ""}">
+      <span>赞 <strong>${escapeHtml(xiaokeVideoMetricText(video.likes, missing))}</strong></span>
+      <span>评 <strong>${escapeHtml(commentsText)}</strong></span>
+      <span>转 <strong>${escapeHtml(xiaokeVideoMetricText(video.shares, missing))}</strong></span>
+      ${interactionCount ? `<span>互动 <strong>${escapeHtml(String(interactionCount))}条</strong></span>` : ""}
+      ${missing ? `<span class="metric-alert">互动数据未同步</span>` : ""}
+    </div>
+  `;
+}
+
+function xiaokeVideoSyncItems(video = {}, quality = {}) {
+  const sourceUrl = xiaokeVideoDouyinUrl(video);
+  const commentCount = typeof finalVideoComments === "function" ? finalVideoComments(video).length : 0;
+  const interactionCount = typeof finalVideoInteractions === "function" ? finalVideoInteractions(video).length : 0;
+  const hasTitle = !xiaokeNeedsVideoTitle(video);
+  const hasTranscript = Boolean(quality.hasTranscript);
+  const hasAnalysis = Boolean(quality.hasAnalysis);
+  const metricMissing = xiaokeVideoMetricsMissing(video);
+  return [
+    { key: "title", label: "标题", state: hasTitle ? "done" : "todo", text: hasTitle ? "完成" : "未完成" },
+    { key: "transcript", label: "转写", state: xiaokeVideoMissingAudio(video) ? "blocked" : (hasTranscript ? "done" : "todo"), text: xiaokeVideoMissingAudio(video) ? "缺音频" : (hasTranscript ? "完成" : "未完成") },
+    { key: "comments", label: "评论", state: commentCount ? "done" : (sourceUrl ? "todo" : "blocked"), text: commentCount ? `${commentCount}条` : (sourceUrl ? "未完成" : "无源") },
+    { key: "interaction", label: "互动", state: interactionCount ? "done" : (sourceUrl ? "todo" : "blocked"), text: interactionCount ? `${interactionCount}条` : (sourceUrl ? "未完成" : "无源") },
+    { key: "ai", label: "AI", state: hasAnalysis ? "done" : "todo", text: hasAnalysis ? "完成" : "未完成" },
+    { key: "metrics", label: "赞评转", state: metricMissing ? "todo" : "done", text: metricMissing ? "未同步" : "已显示" }
+  ];
+}
+
+function xiaokeVideoSyncStatusHtml(video = {}, quality = {}) {
+  return `
+    <div class="video-sync-row">
+      ${xiaokeVideoSyncItems(video, quality).map(item => `
+        <span class="video-sync-chip ${escapeHtml(item.state)}" title="${escapeHtml(item.label)}：${escapeHtml(item.text)}">
+          <b>${escapeHtml(item.label)}</b>${escapeHtml(item.text)}
+        </span>
+      `).join("")}
+    </div>
+  `;
+}
+
 videoCardHtml = function xiaokeManagedVideoCardHtmlV2(video = {}) {
   const quality = xiaokeVideoQualityFlags(video);
   const idArg = JSON.stringify(video.id);
   const media = video.thumbnail
-    ? `<img src="${escapeHtml(video.thumbnail)}" alt="" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover">`
+    ? `<img src="${escapeHtml(video.thumbnail)}" alt="" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display='none';const v=this.parentElement&&this.parentElement.querySelector('video');if(v)v.style.display='block'">${video.videoUrl ? `<video src="${escapeHtml(video.videoUrl)}" muted preload="none" style="display:none"></video>` : ""}`
     : video.videoUrl ? `<video src="${escapeHtml(video.videoUrl)}" muted preload="none"></video>` : `<div class="poster">${video.isDocument ? "书" : "链"}</div>`;
   const badge = video.isMetadata ? "元数据" : video.local ? "本地" : video.isDocument ? "书籍" : "样例";
   return `
     <article class="video-card" data-video-id="${escapeHtml(video.id)}" onclick='openDetail(${idArg})'>
       <div class="thumb">${media}<span class="play">${video.isMetadata ? "↗" : "▶"}</span></div>
       <div class="vc-body">
+        ${xiaokeScoreBadgeHtml(quality)}
         <div class="metadata-head" style="align-items:flex-start;gap:8px">
           <h3 style="margin:0;min-width:0">${escapeHtml(quality.title)}</h3>
           <div class="review-actions" style="flex:0 0 auto;gap:4px">
@@ -15444,7 +22935,6 @@ videoCardHtml = function xiaokeManagedVideoCardHtmlV2(video = {}) {
             <button class="mini-btn danger-btn" title="删除素材" onclick='event.stopPropagation();deleteVideo(${idArg})'>删</button>
           </div>
         </div>
-        <div class="metrics"><span>赞 <strong>${escapeHtml(video.likes || 0)}</strong></span><span>评 ${escapeHtml(video.comments || 0)}</span><span>转 ${escapeHtml(video.shares || 0)}</span></div>
         <div class="date" style="margin-top:7px">${escapeHtml(badge)} · ${escapeHtml(video.date || "-")}</div>
         ${quality.labels.length ? `<div class="video-group-row">${quality.labels.map(label => `<span class="video-group-badge">${escapeHtml(label)}</span>`).join("")}</div>` : ""}
         ${xiaokeVideoGroupControls(video)}
@@ -15566,7 +23056,7 @@ startLibraryFullSync = function startLibraryFullSyncV2(options = {}) {
   if (!candidates.length) return showToast("当前筛选没有需要补全的视频；如需重跑请点强制重跑。");
   max = Math.max(1, Math.min(candidates.length, Number(max || candidates.length)));
   const targets = candidates.slice(0, max);
-  showToast(`开始后台补全 ${targets.length} 条：跳过已完成项，只处理缺评论/互动/AI的视频`);
+  showToast(`开始后台补全 ${targets.length} 条：跳过已完成项，只处理缺标题/转写/评论/互动/AI 的视频`);
   runLibraryFullSyncQueue(targets, { comments: true, ai: true, forceComments: force, forceAi: force, delayMs: options.delayMs || 1200 });
 };
 
@@ -15613,8 +23103,8 @@ renderLibrary = function xiaokeManagedLibraryRenderV2() {
         </select>
         <button class="small-btn" onclick="createManualVideoRecord()">+新增视频</button>
         <button class="small-btn" onclick="configureDouyinBloggerSource()">设置博主来源</button>
-        <button class="small-btn" onclick="startDouyinBloggerSync()">自动同步博主</button>
-        <button class="small-btn" onclick="startLibraryFullSync()">同步全部评论/互动/AI</button>
+        <button class="small-btn" onclick="startDouyinBloggerSync()">手动同步最新视频</button>
+        <button class="small-btn" onclick="startLibraryFullSync()">补全标题/转写/评论/AI</button>
         <button class="small-btn" onclick="Promise.all([pollDouyinCookieStatus(true),pollDouyinSyncStatus(true)]).then(()=>renderLibrary())">抓取状态</button>
         <button class="small-btn" onclick="openImport()">导入</button>
         <button class="small-btn" onclick="renderDashboard()">返回看板</button>
@@ -15649,19 +23139,25 @@ function xiaokeBulkJobPercent(job = {}) {
 }
 
 function xiaokeBulkNeedText(video = {}) {
+  const job = typeof xiaokeReadBulkJob === "function" ? xiaokeReadBulkJob() : {};
+  const modeConfig = typeof xiaokeBulkModeOptions === "function" ? xiaokeBulkModeOptions(job.mode || "all") : { comments: false, ai: true };
   const needs = [];
-  if (xiaokeVideoDouyinUrl(video) && !finalVideoComments(video).length && !finalVideoInteractions(video).length) needs.push("评论/互动");
-  if (!xiaokeHasVideoAI(video)) needs.push("AI");
+  if (xiaokeVideoMissingAudio(video)) needs.push("缺音频");
+  if (xiaokeNeedsVideoTitle(video)) needs.push("标题");
+  if (xiaokeNeedsVideoTranscript(video)) needs.push("转写");
+  if (modeConfig.comments && xiaokeVideoDouyinUrl(video) && !finalVideoComments(video).length && !finalVideoInteractions(video).length) needs.push("评论/互动");
+  if (modeConfig.ai && !xiaokeHasVideoAI(video)) needs.push("AI");
   if (!needs.length) return "已完整";
   return needs.join("、");
 }
 
 function xiaokeBulkStatusFor(video = {}, job = {}) {
+  const modeConfig = typeof xiaokeBulkModeOptions === "function" ? xiaokeBulkModeOptions(job.mode || "all") : { comments: false, ai: true };
   const completed = new Set(job.completedIds || []);
   const errors = (job.errors || []).filter(row => row.id === video.id);
   if (errors.length) return "有错误";
   if (completed.has(video.id)) return "已处理";
-  if (!xiaokeNeedsBulkWork(video, { comments: true, ai: true })) return "已完整";
+  if (!xiaokeNeedsBulkWork(video, { comments: modeConfig.comments, ai: modeConfig.ai })) return "已完整";
   return "待处理";
 }
 
@@ -15687,7 +23183,7 @@ function openLibraryBulkQueue() {
     <section class="review-head panel">
       <div>
         <div class="panel-title">批量补全队列</div>
-        <div class="date">用于查看评论/互动/AI 补全进度。默认跳过已完成素材，避免重复识别。</div>
+        <div class="date">用于查看标题、转写、AI 补全进度。默认跳过已完成素材，避免重复识别；评论/互动需要单独启动。</div>
       </div>
       <div class="review-actions">
         ${job.status === "running" ? `<button class="small-btn" onclick="cancelLibraryFullSync();openLibraryBulkQueue()">暂停</button>` : ""}
@@ -15787,8 +23283,8 @@ renderLibrary = function xiaokeManagedLibraryRenderV3() {
         <button class="small-btn" onclick="bulkAssignFilteredVideosToGroup()">批量分组</button>
         <button class="small-btn" onclick="openLibraryBulkQueue()">队列详情</button>
         <button class="small-btn" onclick="configureDouyinBloggerSource()">设置博主来源</button>
-        <button class="small-btn" onclick="startDouyinBloggerSync()">自动同步博主</button>
-        <button class="small-btn" onclick="startLibraryFullSync()">同步全部评论/互动/AI</button>
+        <button class="small-btn" onclick="startDouyinBloggerSync()">手动同步最新视频</button>
+        <button class="small-btn" onclick="startLibraryFullSync()">补全标题/转写/评论/AI</button>
         <button class="small-btn" onclick="Promise.all([pollDouyinCookieStatus(true),pollDouyinSyncStatus(true)]).then(()=>renderLibrary())">抓取状态</button>
         <button class="small-btn" onclick="openImport()">导入</button>
         <button class="small-btn" onclick="renderDashboard()">返回看板</button>
@@ -15811,6 +23307,7 @@ globalThis.renderLibrary = renderLibrary;
 
 const XIAOKE_BLOGGER_SOURCES_KEY = "xiaoke_douyin_blogger_sources_v2";
 const XIAOKE_ACTIVE_BLOGGER_SOURCE_KEY = "xiaoke_active_douyin_blogger_source_v2";
+const XIAOKE_MODEL_TEACHER_DOUYIN_PROFILE_URL = "https://www.douyin.com/user/MS4wLjABAAAAK713M9d8PGNb_WiMYf7yKhOI5y60H4uELJK2guDjJT0";
 
 function xiaokeExtractDouyinUrls(text = "") {
   return [...new Set(String(text || "")
@@ -15825,7 +23322,14 @@ function xiaokeReadBloggerSources() {
     if (Array.isArray(rows) && rows.length) return rows.filter(row => row && row.name);
   } catch {}
   const oldUrl = localStorage.getItem(XIAOKE_DOUYIN_BLOGGER_URL_KEY) || "";
-  return oldUrl ? [{ id: "blogger_legacy", name: XIAOKE_DEFAULT_BLOGGER_NAME, url: oldUrl, note: "旧来源迁移" }] : [];
+  const isVideo = /\/video\//i.test(oldUrl) || /modal_id=|aweme_id=/i.test(oldUrl);
+  return oldUrl ? [{
+    id: "blogger_legacy",
+    name: XIAOKE_DEFAULT_BLOGGER_NAME,
+    url: isVideo ? "" : oldUrl,
+    sampleUrl: isVideo ? oldUrl : "",
+    note: isVideo ? "旧记录是单条视频，只能补这一条；请补博主主页后才能追新" : "旧来源迁移"
+  }] : [];
 }
 
 function xiaokeSaveBloggerSources(rows = []) {
@@ -15840,8 +23344,8 @@ function xiaokeSaveBloggerSources(rows = []) {
     }))
     .filter(row => row.name);
   localStorage.setItem(XIAOKE_BLOGGER_SOURCES_KEY, JSON.stringify(clean));
-  const firstLinked = clean.find(row => row.url || row.sampleUrl);
-  if (firstLinked) localStorage.setItem(XIAOKE_DOUYIN_BLOGGER_URL_KEY, firstLinked.url || firstLinked.sampleUrl);
+  const firstLinked = clean.find(row => row.url);
+  if (firstLinked) localStorage.setItem(XIAOKE_DOUYIN_BLOGGER_URL_KEY, firstLinked.url);
   return clean;
 }
 
@@ -15882,6 +23386,16 @@ function xiaokeBloggerLinkKind(row = {}) {
   if (/\/user\/|sec_uid|user\/self|@/i.test(raw)) return "主页";
   if (/v\.douyin\.com/i.test(raw)) return "短链";
   return "抖音链接";
+}
+
+function xiaokeIsSingleVideoDouyinSource(value = "") {
+  return /\/video\//i.test(String(value || "")) || /modal_id=|aweme_id=/i.test(String(value || ""));
+}
+
+function xiaokeDiscoverableBloggerUrl(row = {}) {
+  const url = String(row.url || "").trim();
+  if (!url || xiaokeIsSingleVideoDouyinSource(url)) return "";
+  return xiaokeExtractDouyinUrls(url)[0] || url;
 }
 
 function xiaokeBloggerSourceRowHtml(row = {}, index = 0) {
@@ -16070,17 +23584,17 @@ startDouyinBloggerSync = async function xiaokeSafeBloggerSyncV3(options = {}) {
   const limit = Math.max(1, Math.min(50, Number(options.limit || localStorage.getItem(XIAOKE_DOUYIN_SYNC_LIMIT_KEY) || 20)));
   localStorage.setItem(XIAOKE_DOUYIN_SYNC_LIMIT_KEY, String(limit));
   localStorage.setItem(XIAOKE_DOUYIN_BLOGGER_URL_KEY, extracted);
-  showToast(`已提交「${source.name || XIAOKE_DEFAULT_BLOGGER_NAME}」后台同步：最多 ${/\/video\//i.test(extracted) ? 1 : limit} 条`);
+  showToast(`已提交「${source.name || XIAOKE_DEFAULT_BLOGGER_NAME}」最新视频同步：最多 ${/\/video\//i.test(extracted) ? 1 : limit} 条，只保存可播放的真实视频。`);
   try {
     const response = await fetch("/api/douyin-sync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: extracted, limit, download: true, comments: true })
+      body: JSON.stringify({ url: extracted, limit, download: true, comments: false })
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.success) throw new Error(data.error || "启动同步失败");
     state.douyinSyncJob = data.job;
-    state.xiaokeRunAiAfterDouyinSync = true;
+    state.xiaokeRunAiAfterDouyinSync = false;
     if (state.view === "library") renderLibrary();
     pollDouyinSyncStatus(true);
   } catch (error) {
@@ -16102,7 +23616,7 @@ function xiaokeBloggerSourcesHtml() {
       </div>
       <div class="analysis-actions" style="margin:0">
         <button class="small-btn" onclick="configureDouyinBloggerSource()">管理来源</button>
-        ${activeSource && (activeSource.url || activeSource.sampleUrl) ? `<button class="open-btn" style="width:auto;padding:0 16px" onclick='syncDouyinBloggerSource(${JSON.stringify(activeSource.id)})'>同步当前</button>` : ""}
+        ${activeSource && (activeSource.url || activeSource.sampleUrl) ? `<button class="open-btn" style="width:auto;padding:0 16px" onclick='syncDouyinBloggerSource(${JSON.stringify(activeSource.id)})'>同步最新视频</button>` : ""}
       </div>
     </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:10px">
@@ -16341,6 +23855,26 @@ function manualMultiAssignFilteredVideosToGroups() {
   showToast(`已加入 ${groups.length} 个分组：${videos.length} 条`);
 }
 
+function xiaokeScoreGuideHtml() {
+  return `
+    <section class="panel xiaoke-score-guide">
+      <div class="metadata-head" style="align-items:flex-start">
+        <div>
+          <div class="panel-title">AI评分口径</div>
+          <div class="date">这是视频素材的复盘优先级，不是买卖建议。颜色按重要程度排：红色最重要，其次黄、蓝、绿。</div>
+        </div>
+        <div class="score-legend">
+          <span class="score-legend-pill grade-a"><b>A</b> 85-100 重点优先</span>
+          <span class="score-legend-pill grade-b"><b>B</b> 70-84 次重点</span>
+          <span class="score-legend-pill grade-c"><b>C</b> 55-69 普通观察</span>
+          <span class="score-legend-pill grade-d"><b>D</b> 0-54 低优先</span>
+        </div>
+      </div>
+      <div class="date score-rule-text">分数 = 基础完整度 + 转写正文 + 标题质量 + AI分析质量 + 评论/互动 + 点赞热度 + 板块/标的关联；缺音频、缺来源、标题乱码、信息太少会扣分。</div>
+    </section>
+  `;
+}
+
 renderLibrary = function xiaokeManagedLibraryRenderV4() {
   state.view = "library";
   restoredRenderShell();
@@ -16372,8 +23906,8 @@ renderLibrary = function xiaokeManagedLibraryRenderV4() {
         <button class="small-btn" onclick="manualMultiAssignFilteredVideosToGroups()">手动多选分组</button>
         <button class="small-btn" onclick="openLibraryBulkQueue()">队列详情</button>
         <button class="small-btn" onclick="configureDouyinBloggerSource()">设置博主来源</button>
-        <button class="small-btn" onclick="startDouyinBloggerSync()">自动同步博主</button>
-        <button class="small-btn" onclick="startLibraryFullSync()">同步全部评论/互动/AI</button>
+        <button class="small-btn" onclick="startDouyinBloggerSync()">手动同步最新视频</button>
+        <button class="small-btn" onclick="startLibraryFullSync()">补全标题/转写/评论/AI</button>
         <button class="small-btn" onclick="Promise.all([pollDouyinCookieStatus(true),pollDouyinSyncStatus(true)]).then(()=>renderLibrary())">抓取状态</button>
         <button class="small-btn" onclick="openImport()">导入</button>
         <button class="small-btn" onclick="renderDashboard()">返回看板</button>
@@ -16382,6 +23916,7 @@ renderLibrary = function xiaokeManagedLibraryRenderV4() {
     ${xiaokeBloggerSourcesHtml()}
     ${xiaokeDouyinStatusHtml()}
     ${xiaokeBulkStatusHtml()}
+    ${xiaokeScoreGuideHtml()}
     ${librarySearchHtml()}
     ${videos.length
       ? `<section class="video-grid">${visible.map(videoCardHtml).join("")}</section>${videos.length > visible.length ? `<div class="analysis-actions"><button class="small-btn" onclick="loadMoreLibraryVideos()">加载更多</button></div>` : ""}`
@@ -16798,9 +24333,9 @@ Object.assign(globalThis, {
 // Stable background queue: resumable, mode-aware, and skips work that is already complete.
 function xiaokeBulkModeOptions(mode = "all") {
   const value = String(mode || "all");
-  if (value === "comments") return { mode: value, comments: true, ai: false, label: "评论/互动" };
-  if (value === "ai") return { mode: value, comments: false, ai: true, label: "AI分析" };
-  return { mode: "all", comments: true, ai: true, label: "评论/互动/AI" };
+  if (value === "comments") return { mode: value, title: false, transcript: false, comments: true, ai: false, label: "评论/互动" };
+  if (value === "ai") return { mode: value, title: false, transcript: false, comments: false, ai: true, label: "AI分析" };
+  return { mode: "all", title: true, transcript: true, comments: true, ai: true, label: "标题/转写/评论/AI" };
 }
 
 function xiaokeBulkModeLabel(jobOrMode = "all") {
@@ -16813,14 +24348,16 @@ function xiaokeBulkNormalizeStatus(status = "") {
 }
 
 function xiaokeBulkBuildTargets(videos = [], options = {}) {
-  const force = Boolean(options.force || options.forceComments || options.forceAi);
+  const force = Boolean(options.force || options.forceTitle || options.forceTranscript || options.forceComments || options.forceAi);
   const rows = [];
   const stats = { total: videos.length, skippedComplete: 0, skippedNoWork: 0, skippedNoSource: 0 };
   for (const video of videos) {
     const sourceUrl = xiaokeVideoDouyinUrl(video);
+    const needsTitle = options.title !== false && xiaokeNeedsVideoTitle(video);
+    const needsTranscript = options.transcript !== false && xiaokeNeedsVideoTranscript(video);
     const needsComments = options.comments !== false && Boolean(sourceUrl) && !finalVideoComments(video).length && !finalVideoInteractions(video).length;
     const needsAi = options.ai !== false && !xiaokeHasVideoAI(video);
-    if (!force && !needsComments && !needsAi) {
+    if (!force && !needsTitle && !needsTranscript && !needsComments && !needsAi) {
       stats.skippedComplete += 1;
       continue;
     }
@@ -16862,6 +24399,7 @@ runLibraryFullSyncQueue = async function runLibraryFullSyncQueueStable(targets =
   const modeConfig = xiaokeBulkModeOptions(options.mode || "all");
   const previous = options.resume ? xiaokeReadBulkJob() : {};
   const completed = new Set(options.resume ? (previous.completedIds || []) : []);
+  const failedIds = new Set(options.resume ? (previous.failedIds || []) : []);
   const targetIds = Array.isArray(options.targetIds) && options.targetIds.length
     ? options.targetIds
     : targets.map(video => video.id).filter(Boolean);
@@ -16872,12 +24410,15 @@ runLibraryFullSyncQueue = async function runLibraryFullSyncQueueStable(targets =
     mode: modeConfig.mode,
     total: baseTotal,
     done: completed.size,
+    titles: options.resume ? Number(previous.titles || 0) : 0,
+    transcripts: options.resume ? Number(previous.transcripts || 0) : 0,
     comments: options.resume ? Number(previous.comments || 0) : 0,
     interactions: options.resume ? Number(previous.interactions || 0) : 0,
     ai: options.resume ? Number(previous.ai || 0) : 0,
     skipped: options.resume ? Number(previous.skipped || 0) : 0,
     errors: options.resume ? (previous.errors || []) : [],
     completedIds: [...completed],
+    failedIds: [...failedIds],
     targetIds,
     current: "",
     startedAt: options.resume ? previous.startedAt : new Date().toISOString(),
@@ -16893,12 +24434,14 @@ runLibraryFullSyncQueue = async function runLibraryFullSyncQueueStable(targets =
     const title = quickVideoTitle(video);
     xiaokeWriteBulkJob({ current: title });
     const sourceUrl = xiaokeVideoDouyinUrl(video);
+    const needsTitle = Boolean(options.forceTitle) || (modeConfig.title && xiaokeNeedsVideoTitle(video));
+    const needsTranscript = Boolean(options.forceTranscript) || (modeConfig.transcript && xiaokeNeedsVideoTranscript(video));
     const needsComments = Boolean(options.forceComments) || (modeConfig.comments && Boolean(sourceUrl) && !finalVideoComments(video).length && !finalVideoInteractions(video).length);
     const needsAi = Boolean(options.forceAi) || (modeConfig.ai && !xiaokeHasVideoAI(video));
     let hadError = false;
     let didWork = false;
 
-    if (!needsComments && !needsAi) {
+    if (!needsTitle && !needsTranscript && !needsComments && !needsAi) {
       const job = xiaokeReadBulkJob();
       completed.add(video.id);
       xiaokeWriteBulkJob({
@@ -16907,6 +24450,46 @@ runLibraryFullSyncQueue = async function runLibraryFullSyncQueueStable(targets =
         completedIds: [...completed]
       });
       continue;
+    }
+
+    if (needsTitle) {
+      try {
+        const madeTitle = await syncVideoTitleFromFrame(video.id, Boolean(options.forceTitle));
+        if (madeTitle) {
+          didWork = true;
+          xiaokeWriteBulkJob({ titles: Number(xiaokeReadBulkJob().titles || 0) + 1 });
+        } else {
+          throw new Error("没有识别到可用标题");
+        }
+      } catch (error) {
+        hadError = true;
+        failedIds.add(video.id);
+        const job = xiaokeReadBulkJob();
+        xiaokeWriteBulkJob({
+          errors: [...(job.errors || []), { id: video.id, title, step: "title", error: String(error.message || error).slice(0, 260), at: new Date().toISOString() }].slice(-80),
+          failedIds: [...failedIds]
+        });
+      }
+    }
+
+    if (needsTranscript) {
+      try {
+        const transcript = await transcribeVideo(video.id);
+        if (transcript) {
+          didWork = true;
+          xiaokeWriteBulkJob({ transcripts: Number(xiaokeReadBulkJob().transcripts || 0) + 1 });
+        } else {
+          throw new Error("没有识别到可用转写");
+        }
+      } catch (error) {
+        hadError = true;
+        failedIds.add(video.id);
+        const job = xiaokeReadBulkJob();
+        xiaokeWriteBulkJob({
+          errors: [...(job.errors || []), { id: video.id, title, step: "transcript", error: String(error.message || error).slice(0, 260), at: new Date().toISOString() }].slice(-80),
+          failedIds: [...failedIds]
+        });
+      }
     }
 
     if (needsComments) {
@@ -16924,15 +24507,19 @@ runLibraryFullSyncQueue = async function runLibraryFullSyncQueueStable(targets =
         }
       } catch (error) {
         hadError = true;
+        failedIds.add(video.id);
         const job = xiaokeReadBulkJob();
         xiaokeWriteBulkJob({
-          errors: [...(job.errors || []), { id: video.id, title, step: "comments", error: String(error.message || error).slice(0, 260), at: new Date().toISOString() }].slice(-50)
+          errors: [...(job.errors || []), { id: video.id, title, step: "comments", error: String(error.message || error).slice(0, 260), at: new Date().toISOString() }].slice(-80),
+          failedIds: [...failedIds]
         });
       }
     }
 
     if (needsAi) {
       try {
+        if (xiaokeVideoMissingAudio(video)) throw new Error("本地视频缺音频，AI 延后，需重新同步或补正文");
+        if (!xiaokeVideoReadyForAi(video)) throw new Error("缺标题或转写，AI 延后，先补齐素材正文");
         const made = await xiaokeGenerateVideoAIQuiet(video, Boolean(options.forceAi));
         if (made) {
           didWork = true;
@@ -16940,16 +24527,17 @@ runLibraryFullSyncQueue = async function runLibraryFullSyncQueueStable(targets =
         }
       } catch (error) {
         hadError = true;
+        failedIds.add(video.id);
         const job = xiaokeReadBulkJob();
         xiaokeWriteBulkJob({
-          errors: [...(job.errors || []), { id: video.id, title, step: "ai", error: String(error.message || error).slice(0, 260), at: new Date().toISOString() }].slice(-50)
+          errors: [...(job.errors || []), { id: video.id, title, step: "ai", error: String(error.message || error).slice(0, 260), at: new Date().toISOString() }].slice(-80),
+          failedIds: [...failedIds]
         });
       }
     }
 
-    const stillNeeds = xiaokeNeedsBulkWork(video, { comments: modeConfig.comments, ai: modeConfig.ai });
-    if (!hadError || !stillNeeds || didWork) completed.add(video.id);
-    xiaokeWriteBulkJob({ done: completed.size, completedIds: [...completed] });
+    completed.add(video.id);
+    xiaokeWriteBulkJob({ done: completed.size, completedIds: [...completed], failedIds: [...failedIds] });
     if (state.view === "library" && completed.size % 3 === 0) renderLibrary();
     if (state.view === "libraryBulkQueue" && completed.size % 3 === 0) openLibraryBulkQueue();
     await new Promise(resolve => setTimeout(resolve, Number(options.delayMs || 1200)));
@@ -16957,14 +24545,13 @@ runLibraryFullSyncQueue = async function runLibraryFullSyncQueueStable(targets =
 
   const paused = Boolean(window.__xiaokeCancelLibraryFullSync);
   const latest = xiaokeReadBulkJob();
-  const failed = Array.isArray(latest.errors) && latest.errors.length;
-  const status = paused ? "paused" : failed && completed.size < Number(latest.total || 0) ? "failed" : "done";
-  xiaokeWriteBulkJob({ status, current: "", finishedAt: new Date().toISOString(), done: completed.size, completedIds: [...completed] });
+  const status = paused ? "paused" : "done";
+  xiaokeWriteBulkJob({ status, current: "", finishedAt: new Date().toISOString(), done: completed.size, completedIds: [...completed], failedIds: [...failedIds] });
   window.__xiaokeCancelLibraryFullSync = false;
   await xiaokeMergeDouyinSideDataFromServer();
   if (state.view === "library") renderLibrary();
   if (state.view === "libraryBulkQueue") openLibraryBulkQueue();
-  showToast(status === "done" ? "批量补全完成" : status === "paused" ? "批量补全已暂停，可继续未完成" : "批量补全有失败项，可更新登录后继续未完成");
+  showToast(status === "done" ? (failedIds.size ? `批量补全跑完，失败 ${failedIds.size} 条已记录，可稍后单独重试` : "批量补全完成") : "批量补全已暂停，可继续未完成");
 };
 
 function startLibraryFullSyncMode(mode = "all", options = {}) {
@@ -16975,9 +24562,13 @@ function startLibraryFullSyncMode(mode = "all", options = {}) {
   if (!all.length) return showToast("当前筛选没有视频");
   const force = Boolean(options.force);
   const build = xiaokeBulkBuildTargets(all, {
+    title: modeConfig.title,
+    transcript: modeConfig.transcript,
     comments: modeConfig.comments,
     ai: modeConfig.ai,
     force,
+    forceTitle: force && modeConfig.title,
+    forceTranscript: force && modeConfig.transcript,
     forceComments: force && modeConfig.comments,
     forceAi: force && modeConfig.ai
   });
@@ -16988,8 +24579,12 @@ function startLibraryFullSyncMode(mode = "all", options = {}) {
   showToast(`开始后台补全 ${targets.length} 条${modeConfig.label}，已完成的会自动跳过`);
   return runLibraryFullSyncQueue(targets, {
     mode: modeConfig.mode,
+    title: modeConfig.title,
+    transcript: modeConfig.transcript,
     comments: modeConfig.comments,
     ai: modeConfig.ai,
+    forceTitle: force && modeConfig.title,
+    forceTranscript: force && modeConfig.transcript,
     forceComments: force && modeConfig.comments,
     forceAi: force && modeConfig.ai,
     force,
@@ -17008,7 +24603,7 @@ resumeLibraryFullSync = function resumeLibraryFullSyncStable() {
   const modeConfig = xiaokeBulkModeOptions(job.mode || "all");
   const completed = new Set(job.completedIds || []);
   const pool = xiaokeBulkReadTargetPool(job).filter(video => !completed.has(video.id));
-  const build = xiaokeBulkBuildTargets(pool, { comments: modeConfig.comments, ai: modeConfig.ai });
+  const build = xiaokeBulkBuildTargets(pool, { title: modeConfig.title, transcript: modeConfig.transcript, comments: modeConfig.comments, ai: modeConfig.ai });
   if (!build.targets.length) {
     xiaokeWriteBulkJob({ status: "done", current: "", done: Number(job.total || completed.size), completedIds: [...completed] });
     if (state.view === "library") renderLibrary();
@@ -17019,6 +24614,8 @@ resumeLibraryFullSync = function resumeLibraryFullSyncStable() {
   return runLibraryFullSyncQueue(build.targets, {
     resume: true,
     mode: modeConfig.mode,
+    title: modeConfig.title,
+    transcript: modeConfig.transcript,
     comments: modeConfig.comments,
     ai: modeConfig.ai,
     targetIds: Array.isArray(job.targetIds) ? job.targetIds : build.targets.map(video => video.id),
@@ -17026,26 +24623,53 @@ resumeLibraryFullSync = function resumeLibraryFullSyncStable() {
   });
 };
 
+function retryLibraryBulkFailures() {
+  const job = xiaokeReadBulkJob();
+  const failedIds = new Set([...(job.failedIds || []), ...(job.errors || []).map(row => row.id).filter(Boolean)]);
+  if (!failedIds.size) return showToast("当前队列没有失败项");
+  const modeConfig = xiaokeBulkModeOptions(job.mode || "all");
+  const targets = xiaokeBulkReadTargetPool(job).filter(video => failedIds.has(video.id));
+  if (!targets.length) return showToast("失败项已经不在当前素材库里");
+  showToast(`开始重试 ${targets.length} 条失败素材`);
+  return runLibraryFullSyncQueue(targets, {
+    mode: modeConfig.mode,
+    title: modeConfig.title,
+    transcript: modeConfig.transcript,
+    comments: modeConfig.comments,
+    ai: modeConfig.ai,
+    forceTitle: modeConfig.title,
+    forceTranscript: modeConfig.transcript,
+    forceComments: modeConfig.comments,
+    forceAi: modeConfig.ai,
+    targetIds: targets.map(video => video.id),
+    delayMs: 1200
+  });
+}
+
+globalThis.retryLibraryBulkFailures = retryLibraryBulkFailures;
+
 xiaokeBulkStatusHtml = function xiaokeBulkStatusHtmlStable() {
   const job = xiaokeReadBulkJob();
   const status = xiaokeBulkNormalizeStatus(job.status);
   if (!status || status === "idle") return "";
   const errors = Array.isArray(job.errors) ? job.errors : [];
   const lastError = errors[errors.length - 1];
+  const failedCount = Array.isArray(job.failedIds) ? job.failedIds.length : errors.length;
   const canResume = ["paused", "cancelled", "failed", "done"].includes(status);
   const modeLabel = xiaokeBulkModeLabel(job);
   return `<section class="panel" style="margin-bottom:12px;border-color:${status === "running" ? "rgba(25,201,139,.45)" : "rgba(255,176,64,.45)"}">
     <div class="metadata-head">
       <div>
         <div class="panel-title">批量补全：${escapeHtml(status)} · ${escapeHtml(modeLabel)}</div>
-        <div class="date">进度 ${Number(job.done || 0)} / ${Number(job.total || 0)} · 评论 ${Number(job.comments || 0)} · 互动 ${Number(job.interactions || 0)} · AI ${Number(job.ai || 0)} · 跳过 ${Number(job.skipped || 0)}${job.current ? ` · 正在处理：${escapeHtml(job.current)}` : ""}</div>
+        <div class="date">进度 ${Number(job.done || 0)} / ${Number(job.total || 0)} · 标题 ${Number(job.titles || 0)} · 转写 ${Number(job.transcripts || 0)} · 评论 ${Number(job.comments || 0)} · 互动 ${Number(job.interactions || 0)} · AI ${Number(job.ai || 0)} · 跳过 ${Number(job.skipped || 0)} · 失败 ${Number(failedCount || 0)}${job.current ? ` · 正在处理：${escapeHtml(job.current)}` : ""}</div>
       </div>
       <div class="review-actions">
         ${status === "running" ? `<button class="small-btn" onclick="cancelLibraryFullSync()">暂停</button>` : ""}
         ${canResume ? `<button class="small-btn" onclick="resumeLibraryFullSync()">继续未完成</button>` : ""}
+        ${failedCount ? `<button class="small-btn" onclick="retryLibraryBulkFailures()">重试失败项</button>` : ""}
         <button class="small-btn" onclick="startLibraryFullSyncMode('comments')">只补评论/互动</button>
         <button class="small-btn" onclick="startLibraryFullSyncMode('ai')">只补AI</button>
-        <button class="small-btn" onclick="startLibraryFullSyncMode('all')">全量补缺</button>
+        <button class="small-btn" onclick="startLibraryFullSyncMode('all')">补标题/转写/评论/AI</button>
         <button class="small-btn" onclick="openLibraryBulkQueue()">队列详情</button>
         <button class="small-btn" onclick="renderLibrary()">刷新</button>
       </div>
@@ -17060,23 +24684,26 @@ openLibraryBulkQueue = function openLibraryBulkQueueStable() {
   state.view = "libraryBulkQueue";
   restoredRenderShell();
   const job = xiaokeReadBulkJob();
+  const modeConfig = xiaokeBulkModeOptions(job.mode || "all");
   const status = xiaokeBulkNormalizeStatus(job.status);
   const rows = xiaokeBulkReadTargetPool(job).slice(0, 160);
   const completed = new Set(job.completedIds || []);
   const errorsById = new Map((job.errors || []).map(row => [row.id, row]));
+  const failedCount = new Set([...(job.failedIds || []), ...(job.errors || []).map(row => row.id).filter(Boolean)]).size;
   const main = document.getElementById("main");
   if (!main) return;
   main.innerHTML = `
     <section class="review-head panel">
       <div>
         <div class="panel-title">批量补全队列</div>
-        <div class="date">按素材缺口补评论/互动/AI。已完成素材自动跳过，失败项保留，更新抖音登录后可继续。</div>
+        <div class="date">按素材缺口补标题、转写、评论/互动和 AI。已完成素材自动跳过；如果评论受抖音登录态影响，可以单独点“只补评论/互动”重试。</div>
       </div>
       <div class="review-actions">
         ${status === "running" ? `<button class="small-btn" onclick="cancelLibraryFullSync()">暂停</button>` : `<button class="small-btn" onclick="resumeLibraryFullSync()">继续未完成</button>`}
+        ${failedCount ? `<button class="small-btn" onclick="retryLibraryBulkFailures()">重试失败项</button>` : ""}
         <button class="small-btn" onclick="startLibraryFullSyncMode('comments')">只补评论/互动</button>
         <button class="small-btn" onclick="startLibraryFullSyncMode('ai')">只补AI</button>
-        <button class="small-btn" onclick="startLibraryFullSyncMode('all')">全量补缺</button>
+        <button class="small-btn" onclick="startLibraryFullSyncMode('all')">补标题/转写/评论/AI</button>
         <button class="small-btn" onclick="clearLibraryBulkJob()">清空记录</button>
         <button class="small-btn" onclick="renderLibrary()">返回素材库</button>
       </div>
@@ -17091,7 +24718,7 @@ openLibraryBulkQueue = function openLibraryBulkQueueStable() {
           <tbody>
             ${rows.map(video => {
               const error = errorsById.get(video.id);
-              const statusText = error ? "失败待重试" : completed.has(video.id) ? "已完成" : xiaokeNeedsBulkWork(video, { comments: (job.mode || "all") !== "ai", ai: (job.mode || "all") !== "comments" }) ? "待处理" : "已完整";
+              const statusText = error ? "失败待重试" : completed.has(video.id) ? "已完成" : xiaokeNeedsBulkWork(video, { comments: modeConfig.comments, ai: modeConfig.ai }) ? "待处理" : "已完整";
               return `<tr>
                 <td>${escapeHtml(statusText)}</td>
                 <td>${escapeHtml(compactPlainText(quickVideoTitle(video), 42))}</td>
@@ -17112,6 +24739,7 @@ Object.assign(globalThis, {
   startLibraryFullSync,
   startLibraryFullSyncMode,
   resumeLibraryFullSync,
+  retryLibraryBulkFailures,
   xiaokeBulkStatusHtml,
   openLibraryBulkQueue
 });
@@ -17157,14 +24785,20 @@ function xiaokeSourceVideoCandidates(limit = 10) {
 
 function xiaokeHydrateBloggerSourcesFromVideos() {
   const rows = xiaokeReadBloggerSources();
-  const hasLinked = rows.some(row => xiaokeLooksLikeDouyinUrl(xiaokeSourceUrlFromRow(row)));
+  const hasLinked = rows.some(row => xiaokeLooksLikeDouyinUrl(xiaokeDiscoverableBloggerUrl(row)));
   if (hasLinked) return rows;
   const candidates = xiaokeSourceVideoCandidates(3);
-  if (!candidates.length) return rows;
   const next = rows.length ? rows.slice() : [{ id: "source_" + Date.now(), name: XIAOKE_DEFAULT_BLOGGER_NAME, url: "", sampleUrl: "", note: "", active: true }];
   const first = next[0];
-  first.sampleUrl = first.sampleUrl || candidates[0].url;
-  first.note = first.note || `从已有素材自动发现：${compactPlainText(candidates[0].title, 24)}`;
+  if (xiaokeIsSingleVideoDouyinSource(first.url)) {
+    first.sampleUrl = first.sampleUrl || first.url;
+    first.url = "";
+  }
+  first.url = first.url || XIAOKE_MODEL_TEACHER_DOUYIN_PROFILE_URL;
+  if (candidates.length) first.sampleUrl = first.sampleUrl || candidates[0].url;
+  first.note = first.note || (candidates.length
+    ? `已自动补模型先生主页；旧素材单条视频仅作参考：${compactPlainText(candidates[0].title, 24)}`
+    : "已自动补模型先生主页，可直接同步追新。");
   first.active = true;
   xiaokeSaveBloggerSources(next);
   localStorage.setItem(XIAOKE_ACTIVE_BLOGGER_SOURCE_KEY, first.id);
@@ -17182,8 +24816,8 @@ function xiaokeSetBloggerSyncLimit(value) {
 function xiaokeFindActiveBloggerSource(options = {}) {
   const rows = xiaokeHydrateBloggerSourcesFromVideos();
   const activeId = options.sourceId || localStorage.getItem(XIAOKE_ACTIVE_BLOGGER_SOURCE_KEY);
-  return rows.find(row => row.id === activeId && xiaokeLooksLikeDouyinUrl(xiaokeSourceUrlFromRow(row)))
-    || rows.find(row => xiaokeLooksLikeDouyinUrl(xiaokeSourceUrlFromRow(row)))
+  return rows.find(row => row.id === activeId && xiaokeLooksLikeDouyinUrl(xiaokeDiscoverableBloggerUrl(row)))
+    || rows.find(row => xiaokeLooksLikeDouyinUrl(xiaokeDiscoverableBloggerUrl(row)))
     || null;
 }
 
@@ -17204,13 +24838,18 @@ async function xiaokeStartDouyinCookieWindow() {
 
 async function xiaokeStartDouyinSourceSync(source, options = {}) {
   if (!source) {
-    showToast("还没有可同步的博主来源。请点“设置博主来源”，粘贴抖音主页、合集或任意作品链接。");
+    showToast("还没有可追新的博主来源。请点“设置博主来源”，粘贴抖音主页或合集链接。");
     configureDouyinBloggerSource();
     return null;
   }
-  const url = xiaokeSourceUrlFromRow(source);
+  const url = options.allowSingleVideo ? xiaokeSourceUrlFromRow(source) : xiaokeDiscoverableBloggerUrl(source);
   if (!xiaokeLooksLikeDouyinUrl(url)) {
-    showToast(`「${source.name || XIAOKE_DEFAULT_BLOGGER_NAME}」缺少抖音链接。只填昵称无法抓取，请补主页/合集/作品链接。`);
+    const sample = xiaokeSourceUrlFromRow(source);
+    if (xiaokeIsSingleVideoDouyinSource(sample)) {
+      showToast(`「${source.name || XIAOKE_DEFAULT_BLOGGER_NAME}」现在只有单条视频链接，只会同步这一条，不能追到 6 月的新作品。请补抖音主页/合集链接。`);
+    } else {
+      showToast(`「${source.name || XIAOKE_DEFAULT_BLOGGER_NAME}」缺少抖音主页/合集链接。只填昵称无法抓取。`);
+    }
     configureDouyinBloggerSource();
     return null;
   }
@@ -17218,17 +24857,17 @@ async function xiaokeStartDouyinSourceSync(source, options = {}) {
   xiaokeSetBloggerSyncLimit(limit);
   localStorage.setItem(XIAOKE_ACTIVE_BLOGGER_SOURCE_KEY, source.id);
   localStorage.setItem(XIAOKE_DOUYIN_BLOGGER_URL_KEY, url);
-  showToast(`已提交「${source.name || XIAOKE_DEFAULT_BLOGGER_NAME}」同步：最多 ${/\/video\//i.test(url) ? 1 : limit} 条，后台低频执行。`);
+  showToast(`已提交「${source.name || XIAOKE_DEFAULT_BLOGGER_NAME}」最新视频同步：最多 ${limit} 条，只保存可播放的真实视频。`);
   try {
     const response = await fetch("/api/douyin-sync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url, limit, download: true, comments: true })
+      body: JSON.stringify({ url, limit, download: true, comments: false })
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.success) throw new Error(data.error || data.detail || "启动同步失败");
     state.douyinSyncJob = data.job;
-    state.xiaokeRunAiAfterDouyinSync = true;
+    state.xiaokeRunAiAfterDouyinSync = false;
     if (state.view === "library") renderLibrary();
     pollDouyinSyncStatus(true);
     return data.job;
@@ -17250,9 +24889,9 @@ startDouyinBloggerSync = function startDouyinBloggerSyncStable(options = {}) {
 };
 
 function xiaokeSyncAllBloggerSources() {
-  const rows = xiaokeHydrateBloggerSourcesFromVideos().filter(row => xiaokeLooksLikeDouyinUrl(xiaokeSourceUrlFromRow(row)));
+  const rows = xiaokeHydrateBloggerSourcesFromVideos().filter(row => xiaokeLooksLikeDouyinUrl(xiaokeDiscoverableBloggerUrl(row)));
   if (!rows.length) {
-    showToast("还没有可同步来源。请先在“设置博主来源”里粘贴抖音主页、合集或作品链接。");
+    showToast("还没有可追新的来源。请先在“设置博主来源”里粘贴模型先生抖音主页或合集链接。单条视频不能自动追新。");
     configureDouyinBloggerSource();
     return;
   }
@@ -17268,7 +24907,7 @@ async function xiaokeStartNextBloggerSourceInQueue() {
   const nextId = queue.shift();
   xiaokeSaveBloggerSyncQueue(queue);
   const source = rows.find(row => row.id === nextId);
-  if (!source || !xiaokeLooksLikeDouyinUrl(xiaokeSourceUrlFromRow(source))) {
+  if (!source || !xiaokeLooksLikeDouyinUrl(xiaokeDiscoverableBloggerUrl(source))) {
     setTimeout(xiaokeStartNextBloggerSourceInQueue, 500);
     return;
   }
@@ -17289,20 +24928,21 @@ function xiaokeBloggerSourcesHtmlStable() {
   const rows = xiaokeHydrateBloggerSourcesFromVideos();
   const queue = xiaokeReadBloggerSyncQueue();
   const activeId = localStorage.getItem(XIAOKE_ACTIVE_BLOGGER_SOURCE_KEY);
-  const linkedRows = rows.filter(row => xiaokeLooksLikeDouyinUrl(xiaokeSourceUrlFromRow(row)));
+  const linkedRows = rows.filter(row => xiaokeLooksLikeDouyinUrl(xiaokeDiscoverableBloggerUrl(row)));
   const activeSource = rows.find(row => row.id === activeId) || linkedRows[0] || rows[0];
   const sourceCards = rows.map(row => {
-    const linked = xiaokeLooksLikeDouyinUrl(xiaokeSourceUrlFromRow(row));
+    const discoverable = xiaokeLooksLikeDouyinUrl(xiaokeDiscoverableBloggerUrl(row));
+    const singleVideo = !discoverable && xiaokeIsSingleVideoDouyinSource(xiaokeSourceUrlFromRow(row));
     const active = row.id === activeId || (!activeId && activeSource && row.id === activeSource.id);
     return `<div class="mini-stat" style="display:block;min-height:86px;border-color:${active ? "rgba(23,209,154,.65)" : "rgba(64,76,102,.55)"}">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
         <strong>${escapeHtml(row.name || XIAOKE_DEFAULT_BLOGGER_NAME)}</strong>
-        <span class="${linked ? "status-done" : "status-pending"}">${linked ? "可同步" : "待补链接"}</span>
+        <span class="${discoverable ? "status-done" : "status-pending"}">${discoverable ? "可追新" : (singleVideo ? "单条视频" : "待补主页")}</span>
       </div>
       <div class="date" style="margin-top:6px">${escapeHtml(xiaokeBloggerLinkKind(row))}${row.note ? " · " + escapeHtml(compactPlainText(row.note, 28)) : ""}</div>
       <div class="analysis-actions" style="justify-content:flex-start;margin-top:8px">
         <button class="small-btn" onclick='xiaokeSetActiveBloggerSource(${JSON.stringify(row.id)})'>设为当前</button>
-        ${linked ? `<button class="small-btn" onclick='syncDouyinBloggerSource(${JSON.stringify(row.id)})'>同步</button>` : `<button class="small-btn" onclick="configureDouyinBloggerSource()">补链接</button>`}
+        ${discoverable ? `<button class="small-btn" onclick='syncDouyinBloggerSource(${JSON.stringify(row.id)})'>同步追新</button>` : `<button class="small-btn" onclick="configureDouyinBloggerSource()">补主页</button>`}
       </div>
     </div>`;
   }).join("");
@@ -17310,7 +24950,7 @@ function xiaokeBloggerSourcesHtmlStable() {
     <div class="metadata-head">
       <div>
         <div class="panel-title">博主来源</div>
-        <div class="date">已保存 ${rows.length} 个来源，${linkedRows.length} 个可同步。只保存“模型先生”昵称不能定位主页，必须至少有一个主页/合集/作品链接。</div>
+        <div class="date">已保存 ${rows.length} 个来源，${linkedRows.length} 个可追新。同步博主必须用主页/合集链接；单条视频只能补单条，不能发现 6 月新作品。</div>
       </div>
       <div class="analysis-actions" style="margin:0">
         <label class="date" style="display:flex;align-items:center;gap:6px">每个来源最多
@@ -17319,7 +24959,7 @@ function xiaokeBloggerSourcesHtmlStable() {
         </label>
         <button class="small-btn" onclick="configureDouyinBloggerSource()">设置博主来源</button>
         <button class="small-btn" onclick="xiaokeStartDouyinCookieWindow()">打开登录窗口</button>
-        ${linkedRows.length ? `<button class="open-btn" style="width:auto;padding:0 16px" onclick="startDouyinBloggerSync()">同步当前</button><button class="small-btn" onclick="xiaokeSyncAllBloggerSources()">同步全部来源</button>` : ""}
+        ${linkedRows.length ? `<button class="open-btn" style="width:auto;padding:0 16px" onclick="startDouyinBloggerSync()">同步最新视频</button><button class="small-btn" onclick="xiaokeSyncAllBloggerSources()">同步全部来源</button>` : ""}
       </div>
     </div>
     ${rows.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;margin-top:10px">${sourceCards}</div>` : `<div class="empty-review" style="margin-top:10px">还没有来源。点“设置博主来源”，粘贴模型先生主页、合集或任意视频链接。以后会记住，不用重复填。</div>`}
@@ -17511,9 +25151,11 @@ function xiaokeWriteMaterialPipeline(patch = {}) {
 
 function xiaokeMaterialPipelineTargets() {
   return restoredAllLibraryVideos().filter(video => !xiaokeIsBookDocument(video)).filter(video => {
-    const missingTranscript = Boolean(video.videoUrl) && !getVideoDetailTranscript(video);
+    const missingTitle = xiaokeNeedsVideoTitle(video);
+    const missingTranscript = xiaokeNeedsVideoTranscript(video);
+    const missingComments = Boolean(xiaokeVideoDouyinUrl(video)) && !finalVideoComments(video).length && !finalVideoInteractions(video).length;
     const missingAi = !xiaokeHasVideoAI(video);
-    return missingTranscript || missingAi;
+    return missingTitle || missingTranscript || missingComments || missingAi;
   });
 }
 
@@ -17530,7 +25172,9 @@ async function runProfessionalMaterialPipeline(targets = []) {
   const stored = xiaokeReadMaterialPipeline();
   const previous = ["paused", "running"].includes(stored.status) ? stored : {};
   const completed = new Set(previous.completedIds || []);
+  let titleDone = Number(previous.titleDone || 0);
   let transcriptDone = Number(previous.transcriptDone || 0);
+  let commentDone = Number(previous.commentDone || 0);
   let aiDone = Number(previous.aiDone || 0);
   let failed = Number(previous.failed || 0);
   xiaokeWriteMaterialPipeline({
@@ -17538,7 +25182,9 @@ async function runProfessionalMaterialPipeline(targets = []) {
     total: targets.length,
     targetIds: targets.map(video => video.id),
     completedIds: [...completed],
+    titleDone,
     transcriptDone,
+    commentDone,
     aiDone,
     failed,
     startedAt: previous.startedAt || new Date().toISOString(),
@@ -17551,13 +25197,28 @@ async function runProfessionalMaterialPipeline(targets = []) {
     const title = quickVideoTitle(video);
     xiaokeWriteMaterialPipeline({ current: title });
     let itemFailed = false;
-    if (video.videoUrl && !getVideoDetailTranscript(video)) {
+    if (xiaokeNeedsVideoTitle(video)) {
+      const nextTitle = await syncVideoTitleFromFrame(video.id);
+      if (nextTitle) titleDone += 1;
+      else itemFailed = true;
+    }
+    if (xiaokeNeedsVideoTranscript(video)) {
       const transcript = await transcribeVideo(video.id);
       if (transcript) transcriptDone += 1;
       else itemFailed = true;
     }
+    if (xiaokeVideoDouyinUrl(video) && !finalVideoComments(video).length && !finalVideoInteractions(video).length) {
+      try {
+        const result = await xiaokeFetchVideoCommentsQuiet(video, false);
+        if (result && !result.skipped) commentDone += 1;
+      } catch {
+        itemFailed = true;
+      }
+    }
     if (!xiaokeHasVideoAI(video)) {
       try {
+        if (xiaokeVideoMissingAudio(video)) throw new Error("缺音频，AI 延后");
+        if (!xiaokeVideoReadyForAi(video)) throw new Error("缺标题或转写，AI 延后");
         const result = await xiaokeGenerateVideoAIQuiet(video, false);
         if (result) aiDone += 1;
       } catch {
@@ -17569,7 +25230,9 @@ async function runProfessionalMaterialPipeline(targets = []) {
     xiaokeWriteMaterialPipeline({
       completedIds: [...completed],
       done: completed.size,
+      titleDone,
       transcriptDone,
+      commentDone,
       aiDone,
       failed,
       current: title
@@ -17597,12 +25260,14 @@ function startProfessionalMaterialPipeline(options = {}) {
       done: 0,
       completedIds: [],
       targetIds: [],
+      titleDone: 0,
       transcriptDone: 0,
+      commentDone: 0,
       aiDone: 0,
       failed: 0,
       finishedAt: new Date().toISOString()
     });
-    showToast("所有可处理素材都已有转写或 AI 分析");
+    showToast("所有可处理素材都已补齐标题、转写、评论或 AI");
     return;
   }
   if (options.restart) localStorage.removeItem(XIAOKE_MATERIAL_PIPELINE_KEY);
@@ -17614,7 +25279,7 @@ function xiaokeMaterialPipelineStatusHtml() {
   if (!job.status || job.status === "idle") return "";
   return `<section class="panel" style="margin-bottom:12px;border-color:${job.status === "running" ? "var(--gold)" : "rgba(23,209,154,.45)"}">
     <div class="metadata-head">
-      <div><div class="panel-title">转写与 AI 队列：${escapeHtml(job.status)}</div><div class="date">进度 ${Number(job.done || 0)}/${Number(job.total || 0)} · 转写 ${Number(job.transcriptDone || 0)} · AI ${Number(job.aiDone || 0)} · 失败 ${Number(job.failed || 0)}${job.current ? ` · ${escapeHtml(job.current)}` : ""}</div></div>
+      <div><div class="panel-title">素材补全队列：${escapeHtml(job.status)}</div><div class="date">进度 ${Number(job.done || 0)}/${Number(job.total || 0)} · 标题 ${Number(job.titleDone || 0)} · 转写 ${Number(job.transcriptDone || 0)} · 评论 ${Number(job.commentDone || 0)} · AI ${Number(job.aiDone || 0)} · 失败 ${Number(job.failed || 0)}${job.current ? ` · ${escapeHtml(job.current)}` : ""}</div></div>
       <div class="review-actions">${job.status === "running" ? `<button class="small-btn" onclick="pauseProfessionalMaterialPipeline()">暂停</button>` : `<button class="small-btn" onclick="startProfessionalMaterialPipeline()">继续未完成</button>`}</div>
     </div>
   </section>`;
@@ -17624,15 +25289,76 @@ const xiaokePreviousLibrarySearchHtmlPipeline = librarySearchHtml;
 librarySearchHtml = function xiaokeLibrarySearchHtmlPipeline() {
   return xiaokePreviousLibrarySearchHtmlPipeline().replace(
     '<button class="small-btn" onclick="startVideoBackgroundQueue(\'analysis\')">后台 AI 分析</button>',
-    '<button class="small-btn" onclick="startVideoBackgroundQueue(\'analysis\')">后台 AI 分析</button><button class="open-btn" style="width:auto;padding:0 14px" onclick="startProfessionalMaterialPipeline()">补全转写 + AI</button>'
+    '<button class="small-btn" onclick="startVideoBackgroundQueue(\'analysis\')">后台 AI 分析</button><button class="open-btn" style="width:auto;padding:0 14px" onclick="startProfessionalMaterialPipeline()">补全标题/转写/评论/AI</button>'
   ) + xiaokeMaterialPipelineStatusHtml();
 };
 
 // Final guards for check-in navigation, document queues, startup sync and local placeholders.
+const XIAOKE_REJECTED_VIDEO_IDS = new Set([
+  "7656361330445765931"
+]);
+
+function xiaokeExtractKnownVideoId(video = {}) {
+  const text = [video.id, video.sourceId, video.filename, video.originalUrl, video.videoUrl, video.title]
+    .map(value => String(value || ""))
+    .join(" ");
+  return (text.match(/\d{16,22}/) || [])[0] || "";
+}
+
+function xiaokeIsKnownNonModelVideo(video = {}) {
+  const id = xiaokeExtractKnownVideoId(video);
+  const title = String(video.title || "");
+  return XIAOKE_REJECTED_VIDEO_IDS.has(id) || /语文总是考的差|老师总是考的差|考的差/i.test(title);
+}
+
+function xiaokeHasPlayableVideoMedia(video = {}) {
+  return Boolean(video.videoUrl || video.documentUrl || (video.isDocument && video.originalUrl));
+}
+
 function xiaokeIsBookDocument(video = {}) {
   const haystack = [video.title, video.filename, video.topic, video.focus, video.author, video.mimeType, video.type]
     .map(value => String(value || "").toLowerCase()).join(" ");
   return Boolean(video.isDocument || video.documentUrl || /\.pdf\b|\.docx?\b|\.epub\b|书籍|本地文档|pdf文档/.test(haystack));
+}
+
+function xiaokeVideoTitleKey(video = {}) {
+  const title = stripVideoBrandText(video.title || quickVideoTitle(video) || "");
+  if (!title || isGenericVideoTitle(title)) return "";
+  return title.replace(/\s+/g, "").toLowerCase().slice(0, 80);
+}
+
+function xiaokePlayableVideoScore(video = {}) {
+  return (video.videoUrl ? 1000 : 0)
+    + (video.thumbnail ? 180 : 0)
+    + (getVideoDetailTranscript(video) ? 120 : 0)
+    + (xiaokeVideoDouyinUrl(video) ? 80 : 0)
+    + (Number(video.likes || 0) ? 20 : 0)
+    + (String(video.filename || "").includes("\\mm_app\\videos") ? 10 : 0);
+}
+
+function xiaokeDedupeLibraryVideos(videos = []) {
+  const best = new Map();
+  const loose = [];
+  (videos || []).forEach(video => {
+    const id = xiaokeExtractKnownVideoId(video);
+    const title = xiaokeVideoTitleKey(video);
+    const key = id ? `id:${id}` : (title ? `title:${title}` : "");
+    if (!key) {
+      loose.push(video);
+      return;
+    }
+    const current = best.get(key);
+    if (!current || xiaokePlayableVideoScore(video) > xiaokePlayableVideoScore(current)) best.set(key, video);
+  });
+  const picked = new Set(best.values());
+  return (videos || []).filter(video => picked.has(video) || (!xiaokeExtractKnownVideoId(video) && !xiaokeVideoTitleKey(video) && loose.includes(video)));
+}
+
+function xiaokeShouldHideNoVideoCard(video = {}) {
+  if (!video || xiaokeIsBookDocument(video)) return false;
+  if (video.videoUrl) return false;
+  if (xiaokeIsKnownNonModelVideo(video)) return true;
+  return true;
 }
 
 function xiaokeLooksGarbledTitle(value = "") {
@@ -17641,23 +25367,71 @@ function xiaokeLooksGarbledTitle(value = "") {
 }
 
 function xiaokeIsDisposableLocalPlaceholder(video = {}) {
+  if (xiaokeIsKnownNonModelVideo(video)) return true;
   if (!video.local && !video.userAdded) return false;
   const title = String(video.title || "").trim();
   const generic = /^(本地视频已导入|本地视频|待识别标题)$/i.test(title)
     || title.includes("本地视频已导入");
   const duration = Number(video.duration || video.durationSeconds || 0);
   const emptyMetrics = !Number(video.likes || 0) && !Number(video.comments || 0) && !Number(video.shares || 0);
-  return generic && emptyMetrics && (!duration || duration <= 16);
+  const emptyShell = !xiaokeHasPlayableVideoMedia(video) && !video.thumbnail;
+  return (generic && emptyMetrics && (!duration || duration <= 16)) || (generic && emptyShell);
+}
+
+function xiaokeIsMetadataOnlyPlaceholder(video = {}) {
+  if (xiaokeIsKnownNonModelVideo(video)) return true;
+  if (!video || !video.isMetadata) return false;
+  const hasPlayable = Boolean(video.videoUrl || video.thumbnail);
+  const title = String(video.title || "").trim();
+  const genericTitle = !title || /抖音视频|待补充|待识别标题/i.test(title) || xiaokeLooksGarbledTitle(title);
+  const emptyMetrics = !Number(video.likes || 0) && !Number(video.comments || 0) && !Number(video.shares || 0);
+  return !hasPlayable && (genericTitle || emptyMetrics);
 }
 
 const xiaokeRestoredAllLibraryVideosBase = restoredAllLibraryVideos;
 restoredAllLibraryVideos = function restoredAllLibraryVideosClean() {
-  return xiaokeRestoredAllLibraryVideosBase().filter(video => !xiaokeIsDisposableLocalPlaceholder(video));
+  const rows = xiaokeRestoredAllLibraryVideosBase().filter(video =>
+    !xiaokeIsDisposableLocalPlaceholder(video)
+    && !xiaokeIsMetadataOnlyPlaceholder(video)
+    && !xiaokeShouldHideNoVideoCard(video)
+  );
+  return xiaokeDedupeLibraryVideos(rows);
 };
 
 const xiaokeLibraryVideosBase = libraryVideos;
 libraryVideos = function libraryVideosClean() {
-  return xiaokeLibraryVideosBase().filter(video => !xiaokeIsDisposableLocalPlaceholder(video));
+  const rows = xiaokeLibraryVideosBase().filter(video =>
+    !xiaokeIsDisposableLocalPlaceholder(video)
+    && !xiaokeIsMetadataOnlyPlaceholder(video)
+    && !xiaokeShouldHideNoVideoCard(video)
+  );
+  return xiaokeDedupeLibraryVideos(rows);
+};
+
+function xiaokePruneBadVideoRecords() {
+  const before = (state.videos || []).length;
+  state.videos = (state.videos || []).filter(video => {
+    const bad = xiaokeIsKnownNonModelVideo(video) || xiaokeIsDisposableLocalPlaceholder(video) || xiaokeIsMetadataOnlyPlaceholder(video);
+    if (bad && video && video.id) {
+      try {
+        markVideoDeleted(video.id);
+        cleanupVideoRecords(video.id);
+      } catch {}
+    }
+    return !bad;
+  });
+  if ((state.videos || []).length !== before) {
+    try {
+      saveUserVideos(state.videos || []);
+      clearVideoRuntimeCache();
+    } catch {}
+  }
+}
+
+const xiaokeRenderLibraryCleanBase = renderLibrary;
+renderLibrary = function renderLibraryWithBadVideoPrune() {
+  xiaokePruneBadVideoRecords();
+  return xiaokeRenderLibraryCleanBase();
 };
 
 const xiaokeVideoCardDisplayTitleBase = videoCardDisplayTitle;
@@ -17735,6 +25509,15 @@ async function xiaokeSyncBloggerOnceOnStartup() {
   if (sessionStorage.getItem(XIAOKE_STARTUP_SYNC_SESSION_KEY)) return;
   sessionStorage.setItem(XIAOKE_STARTUP_SYNC_SESSION_KEY, new Date().toISOString());
   await new Promise(resolve => setTimeout(resolve, 2200));
+  const status = await xiaokeFetchDouyinStatus(true);
+  if (status && status.sync && status.sync.status === "running") {
+    const updatedAt = new Date(status.sync.updatedAt || status.sync.startedAt || 0).getTime();
+    if (updatedAt && Date.now() - updatedAt < 15 * 60 * 1000) return;
+  }
+  if (status && !status.cookiesLoginReady) {
+    if (state.view === "library") showToast("抖音登录态未就绪，已暂停自动同步；点“打开登录窗口”完成登录后再同步。");
+    return;
+  }
   const source = xiaokeFindActiveBloggerSource();
   if (!source) return;
   try {
@@ -17746,6 +25529,7 @@ async function xiaokeSyncBloggerOnceOnStartup() {
 }
 
 function xiaokeRepairLegacyBackgroundJobs() {
+  xiaokePruneBadVideoRecords();
   const videosById = new Map(restoredAllLibraryVideos().map(video => [video.id, video]));
   const job = xiaokeReadBulkJob();
   if (job && job.status) {
@@ -17775,7 +25559,7 @@ function xiaokeRepairLegacyBackgroundJobs() {
   }
 }
 
-setTimeout(xiaokeSyncBloggerOnceOnStartup, 1200);
+// 手动同步：打开小可课堂只刷新页面和状态，不自动启动抖音抓取。
 setTimeout(xiaokeRepairLegacyBackgroundJobs, 2600);
 
 Object.assign(globalThis, {
@@ -17922,23 +25706,25 @@ function renderDataScreening() {
   main.innerHTML = `
     <section class="review-head panel">
       <div>
-        <div class="panel-title">数据筛选</div>
-        <div class="date">这里专门做同花顺式条件选股、数据质量检查和候选列表；股票档案看证据，量化工作台做回测验证。</div>
+        <div class="panel-title">数据中心</div>
+        <div class="date">这里分成三块：数据仓库负责日线/周线/月线和质量检查，条件选股负责规则筛选，结果列表负责保存候选并送去股票档案或量化验证。</div>
       </div>
       <div class="review-actions">
         <button class="small-btn" onclick="loadInvestmentDataQuality()">刷新质量</button>
         <button class="small-btn" onclick="syncQmtUniverseCodes()">同步全市场QMT</button>
+        <button class="small-btn primary" onclick="prepareQmtDailyWarehouse()">准备QMT日线仓库</button>
+        <button class="small-btn primary" onclick="buildQmtDerivedWarehouses()">生成周/月线</button>
         <button class="small-btn" onclick="runNaturalStockScreenFrontend(true)">刷新并筛选</button>
         <button class="small-btn" onclick="openStockProfiles()">打开股票档案</button>
-        <button class="small-btn" onclick="openQuantWorkbenchWindow()">打开量化工作台</button>
+        <button class="small-btn" onclick="openQuantWorkbench()">打开量化</button>
         <button class="small-btn" onclick="renderDashboard()">返回看板</button>
       </div>
     </section>
     <section class="panel" style="margin-bottom:12px">
       <div class="metadata-head">
         <div>
-          <div class="panel-title">数据质量中心</div>
-          <div class="date">先判断数据是否足够支撑筛选，再看候选排名。</div>
+          <div class="panel-title">数据仓库</div>
+          <div class="date">管理 QMT 日线、周线、月线和数据质量。日线用于短中期技术条件，周线/月线用于趋势过滤和结果分层。</div>
         </div>
       </div>
       <div id="investmentDataQuality"></div>
@@ -17946,8 +25732,8 @@ function renderDataScreening() {
     <section class="panel natural-screen-panel" style="margin-bottom:12px">
       <div class="metadata-head">
         <div>
-          <div class="panel-title">同花顺式自然语言选股</div>
-          <div class="date">输入 MACD、KDJ、RSI、BOLL、量比、5/10/20/60日线、换手率、竞价金额等条件。</div>
+          <div class="panel-title">条件选股</div>
+          <div class="date">输入 MACD、KDJ、RSI、BOLL、量比、5/10/20/60日线、周线/月线趋势、换手率、竞价金额等条件。</div>
         </div>
         <div class="table-actions">
           <label class="date">技术扫描上限 <select id="naturalScreenLimit" class="small-select"><option value="all" selected>全市场</option><option value="500">500</option><option value="1000">1000</option><option value="3000">3000</option><option value="6000">6000</option></select> 只</label>
@@ -17962,7 +25748,7 @@ function renderDataScreening() {
     <section class="panel" style="margin-top:12px">
       <div class="metadata-head">
         <div>
-          <div class="panel-title">筛选结果</div>
+          <div class="panel-title">结果列表</div>
           <div class="date">候选股可以继续进入股票档案补证据，或者送到量化工作台做验证。</div>
         </div>
         <button class="small-btn" onclick="exportNaturalScreenCsv()">导出自然语言结果</button>
@@ -17985,6 +25771,7 @@ function renderDataScreening() {
 
 renderStrategy = function xiaokeManualStrategyPage() {
   state.view = "strategy";
+  xiaokeEnsureLegacyNotesRecovered();
   restoredRenderShell();
   const data = readStrategy();
   const main = document.getElementById("main");
@@ -17996,8 +25783,9 @@ renderStrategy = function xiaokeManualStrategyPage() {
         <div class="date">长期可编辑的交易策略手册：记录你的主线判断、仓位规则、风险边界和禁做事项。</div>
       </div>
       <div class="review-actions">
+        <button class="small-btn primary" onclick="restoreRecoveredStrategy()">恢复旧策略</button>
         <button class="small-btn" onclick="localStorage.removeItem(STRATEGY_KEY);renderStrategy()">恢复默认</button>
-        <button class="small-btn" onclick="openDataScreening()">打开数据筛选</button>
+        <button class="small-btn" onclick="openDataScreening()">打开数据中心</button>
         <button class="small-btn" onclick="renderDashboard()">返回看板</button>
       </div>
     </section>
@@ -18020,17 +25808,9 @@ const xiaokeDataScreeningPreviousRenderTopChips = renderTopChips;
 renderTopChips = function xiaokeDataScreeningTopChips() {
   const chips = document.getElementById("topChips");
   if (!chips) return;
-  const systemChips = [
-    ["我的策略", "strategy"],
-    ["数据筛选", "dataScreening"],
-    ["每日复盘", "dailyReview"],
-    ["每日打卡", "dailyCheckin"],
-    ["板块强弱", "sectorStrength"],
-    ["模型框架", "modelFramework"],
-    ["股票档案", "stockProfiles"],
-    ["能力中心", "pipelineCenter"],
-    ["管理分组", "videoGroupManager"]
-  ].map(([label, view]) => `<a class="${state.view === view ? "chip active review-chip" : "chip review-chip"}" style="display:inline-flex;align-items:center;text-decoration:none" href="?view=${view}">${label}</a>`).join("");
+  const systemChips = orderedSystemNavItems(false)
+    .map(item => `<button type="button" data-view="${escapeHtml(item.view)}" class="${state.view === item.view ? "chip active review-chip" : "chip review-chip"}" style="${groupColorStyle(item.color)}display:inline-flex;align-items:center" onclick="xiaokeNavigateTopView(${escapeHtml(JSON.stringify(item.view))})">${escapeHtml(item.label)}</button>`)
+    .join("");
   const seenTags = new Set();
   const uniqueTags = allVideoTags().filter(tag => {
     const key = String(tag.name || tag.originalName || "").trim().toLowerCase();
@@ -18043,22 +25823,195 @@ renderTopChips = function xiaokeDataScreeningTopChips() {
     const label = finalTagLabel(tag);
     const count = tagCount(tag);
     const cls = name === state.activeTag ? "chip active" : tag.type === "sector" && count > 15 ? "chip gold" : "chip";
-    return `<a class="${cls}" title="${escapeHtml(label)}（${count}条）" style="display:inline-flex;align-items:center;text-decoration:none" href="?tag=${encodeURIComponent(name)}">${escapeHtml(label)}(${count})</a>`;
+    return `<button type="button" data-tag="${escapeHtml(name)}" class="${cls}" title="${escapeHtml(label)}（${count}条）" style="display:inline-flex;align-items:center" onclick="xiaokeNavigateTag(${escapeHtml(JSON.stringify(name))})">${escapeHtml(label)}(${count})</button>`;
   }).join("");
   chips.innerHTML = systemChips + tagChips;
 };
+
+function xiaokeUpdateRoute(params = {}, replace = false) {
+  try {
+    const url = new URL(location.href);
+    url.search = "";
+    Object.entries(params || {}).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, value);
+    });
+    const next = `${url.pathname}${url.search}${url.hash || ""}`;
+    if (`${location.pathname}${location.search}${location.hash}` !== next) {
+      history[replace ? "replaceState" : "pushState"]({}, "", next);
+    }
+  } catch {}
+}
+
+function xiaokeClearNavSearch() {
+  state.search = "";
+  const input = document.getElementById("searchInput");
+  if (input) input.value = "";
+}
+
+function xiaokeOpenView(view = "dashboard", options = {}) {
+  const nextView = String(view || "dashboard");
+  if (!options.skipRoute) xiaokeUpdateRoute(nextView === "dashboard" ? {} : { view: nextView }, !!options.replace);
+  state.activeTag = firstVisibleVideoTagName();
+  xiaokeClearNavSearch();
+  if (nextView === "dashboard") return renderDashboard();
+  if (nextView === "strategy") return openStrategy();
+  if (nextView === "dailyReview") return openDailyReview();
+  if (nextView === "dailyCheckin") return openDailyCheckin();
+  if (nextView === "sectorStrength") return renderSectorStrength({ skipFetch: true });
+  if (nextView === "modelFramework") return openModelFramework();
+  if (nextView === "stockProfiles") return openStockProfiles();
+  if (nextView === "pipelineCenter") return openPipelineCenter();
+  if (nextView === "videoGroupManager") return openVideoGroupManager();
+  if (nextView === "dataScreening") return openDataScreening();
+  if (nextView === "quantWorkbench") return openQuantWorkbench();
+  if (nextView === "featureList") return openFeatureList();
+  if (nextView === "library") return openVideoLibrary();
+  state.view = nextView;
+  return render();
+}
+
+function xiaokeNavigateTopView(view) {
+  return xiaokeOpenView(view);
+}
+
+function xiaokeOpenTagRoute(name = "全部") {
+  const tagName = String(name || "全部");
+  xiaokeClearNavSearch();
+  return filterByTag(tagName);
+}
+
+function xiaokeNavigateTag(name) {
+  const tagName = String(name || "全部");
+  xiaokeUpdateRoute(tagName === firstVisibleVideoTagName() ? {} : { tag: tagName });
+  return xiaokeOpenTagRoute(tagName);
+}
+
+function xiaokeApplyRouteFromLocation(options = {}) {
+  const params = new URLSearchParams(location.search || "");
+  const tag = params.get("tag");
+  const view = params.get("view");
+  if (tag) {
+    if (options.replace) xiaokeUpdateRoute({ tag }, true);
+    xiaokeOpenTagRoute(tag);
+    return true;
+  }
+  if (view) {
+    xiaokeOpenView(view, { skipRoute: true });
+    if (options.replace) xiaokeUpdateRoute({ view }, true);
+    return true;
+  }
+  return false;
+}
+
+if (!window.__xiaokeRoutePopstateInstalled) {
+  window.__xiaokeRoutePopstateInstalled = true;
+  window.addEventListener("popstate", () => xiaokeApplyRouteFromLocation());
+}
+
+function openQuantWorkbench() {
+  state.view = "quantWorkbench";
+  state.search = "";
+  const input = document.getElementById("searchInput");
+  if (input) input.value = "";
+  renderQuantWorkbench();
+}
+
+function renderQuantWorkbench() {
+  state.view = "quantWorkbench";
+  restoredRenderShell();
+  const main = document.getElementById("main");
+  if (!main) return;
+  let savedReport = null;
+  let savedRotation = null;
+  let savedBacktest = null;
+  let savedMatrix = null;
+  try { savedReport = state.lastQuantReport || JSON.parse(localStorage.getItem(QUANT_REPORT_KEY) || "null"); } catch {}
+  try { savedRotation = state.lastQuantRotation || JSON.parse(localStorage.getItem(QUANT_ROTATION_KEY) || "null"); } catch {}
+  try { savedBacktest = state.lastQuantRotationBacktest || JSON.parse(localStorage.getItem(QUANT_ROTATION_BACKTEST_KEY) || "null"); } catch {}
+  try { savedMatrix = state.lastQuantRotationMatrix || JSON.parse(localStorage.getItem(QUANT_ROTATION_MATRIX_KEY) || "null"); } catch {}
+  const pool = readStockComparePool().join(", ");
+  main.innerHTML = `
+    <section class="review-head panel">
+      <div>
+        <div class="panel-title">量化</div>
+        <div class="date">把多股对比、轻量回测、轮动评分、风控仓位和参数矩阵集中到这里。股票档案只看证据，数据中心找候选，量化负责验证。</div>
+      </div>
+      <div class="review-actions">
+        <button class="small-btn" onclick="openDataScreening()">返回数据中心</button>
+        <button class="small-btn" onclick="showDataSourceHealth()">数据源状态</button>
+        <button class="small-btn" onclick="syncQmtUniverseCodes()">同步 QMT</button>
+        <button class="small-btn" onclick="openQuantWorkbenchWindow()">独立窗口</button>
+        <button class="small-btn" onclick="renderDashboard()">返回看板</button>
+      </div>
+    </section>
+    <section class="panel" id="institutionalProbePanel" style="margin-bottom:12px">
+      <div class="metadata-head">
+        <div>
+          <div class="panel-title">量化数据源</div>
+          <div class="date">数据源状态、QMT 桥接、公开行情回退和机构终端检测直接并入本页，不再套独立页面滚动。</div>
+        </div>
+        <div class="review-actions">
+          <button class="small-btn" onclick="showDataSourceHealth()">刷新数据源</button>
+          <button class="small-btn" onclick="probeInstitutionalTerminals(false)">机构终端测试</button>
+          <button class="small-btn primary" onclick="openDataScreening()">去数据中心管理K线</button>
+        </div>
+      </div>
+      <div class="date">正在检测机构终端与公开数据源...</div>
+    </section>
+    <section class="panel">
+      <div class="metadata-head">
+        <div>
+          <div class="panel-title">量化输入</div>
+          <div class="date">输入股票名或代码，逗号分隔；留空时会自动使用对比池。</div>
+        </div>
+        <div class="review-actions">
+          <button class="small-btn" onclick="fillQuantInputFromComparePool()">载入对比池</button>
+          <button class="small-btn primary" onclick="runQuantReportFromInput()">一键量化报告</button>
+        </div>
+      </div>
+      <textarea id="quantInput" class="strategy-textarea natural-query-textarea" placeholder="例如：中际旭创, 新易盛, 沪电股份, 工业富联">${escapeHtml(pool)}</textarea>
+      <div class="strategy-rule-toolbar">
+        <label><span>回测天数</span><input id="backtestDays" value="260"></label>
+        <label><span>策略</span><select id="backtestStrategy"><option value="ma_cross">均线交叉</option><option value="momentum">动量</option><option value="breakout">突破</option></select></label>
+        <label><span>短均线</span><input id="backtestShort" value="5"></label>
+        <label><span>长均线</span><input id="backtestLong" value="20"></label>
+        <label><span>TopN</span><input id="quantTopN" value="5"></label>
+        <label><span>回撤预算%</span><input id="quantRiskBudget" value="25"></label>
+        <label><span>换仓周期</span><select id="quantRebalancePeriod"><option value="monthly">月度</option><option value="weekly">周度</option><option value="quarterly">季度</option></select></label>
+      </div>
+      <input id="backtestInput" value="${escapeHtml(pool)}" style="display:none">
+      <div class="review-actions" style="margin-top:10px">
+        <button class="small-btn" onclick="runQuantRotationFromInput()">轮动评分</button>
+        <button class="small-btn" onclick="runQuantRotationBacktestFromInput()">历史轮动回测</button>
+        <button class="small-btn" onclick="runQuantRotationMatrixFromInput()">参数矩阵</button>
+        <button class="small-btn" onclick="runQuantRiskPlanFromInput()">风控仓位</button>
+        <button class="small-btn primary" onclick="runQuantReportFromInput()">一键报告</button>
+      </div>
+    </section>
+    <section class="panel" style="margin-top:12px"><div id="quantReportResult">${savedReport ? renderQuantReportResult(savedReport) : '<div class="date">暂无量化报告，点击“一键量化报告”生成。</div>'}</div></section>
+    <section class="dash-grid" style="margin-top:12px">
+      <div class="panel"><div class="panel-title">轮动评分</div><div id="quantRotationResult">${savedRotation ? renderQuantRotationResult(savedRotation) : '<div class="date">等待运行。</div>'}</div></div>
+      <div class="panel"><div class="panel-title">风控仓位</div><div id="quantRiskPlanResult">${savedReport ? renderQuantRiskPlanResult(savedReport) : '<div class="date">等待运行。</div>'}</div></div>
+    </section>
+    <section class="panel" style="margin-top:12px"><div class="panel-title">历史轮动回测</div><div id="quantRotationBacktestResult">${savedBacktest ? renderQuantRotationBacktestResult(savedBacktest) : '<div class="date">等待运行。</div>'}</div></section>
+    <section class="panel" style="margin-top:12px"><div class="panel-title">参数矩阵</div><div id="quantRotationMatrixResult">${savedMatrix ? renderQuantRotationMatrixResult(savedMatrix) : '<div class="date">等待运行。</div>'}</div></section>
+  `;
+  setTimeout(() => showDataSourceHealth(), 0);
+}
 
 const xiaokeDataScreeningPreviousRender = render;
 render = function xiaokeDataScreeningRender() {
   if (typeof xiaokeDailyCheckinStylePatch === "function") xiaokeDailyCheckinStylePatch();
   if (state.view === "dataScreening") return renderDataScreening();
+  if (state.view === "quantWorkbench") return renderQuantWorkbench();
   return xiaokeDataScreeningPreviousRender();
 };
 
 const xiaokeDataScreeningPreviousRestoredRouteTopChip = typeof restoredRouteTopChip === "function" ? restoredRouteTopChip : null;
 restoredRouteTopChip = function xiaokeDataScreeningRouteTopChip(label) {
   const text = String(label || "").replace(/\(\d+\)\s*$/, "").trim();
-  if (text === "数据筛选") return openDataScreening();
+  if (text === "数据筛选" || text === "数据中心") return openDataScreening();
+  if (text === "量化") return openQuantWorkbench();
   return xiaokeDataScreeningPreviousRestoredRouteTopChip ? xiaokeDataScreeningPreviousRestoredRouteTopChip(label) : filterByTag(text || "全部");
 };
 
@@ -18069,6 +26022,10 @@ restoredRouteHash = function xiaokeDataScreeningRouteHash() {
     openDataScreening();
     return true;
   }
+  if (hash === "view=quantWorkbench") {
+    openQuantWorkbench();
+    return true;
+  }
   return xiaokeDataScreeningPreviousRestoredRouteHash ? xiaokeDataScreeningPreviousRestoredRouteHash() : false;
 };
 
@@ -18077,18 +26034,517 @@ init = async function xiaokeDataScreeningInit() {
   await xiaokeDataScreeningPreviousInit();
   const params = new URLSearchParams(location.search || "");
   if (params.get("view") === "dataScreening") openDataScreening();
+  if (params.get("view") === "quantWorkbench") openQuantWorkbench();
 };
 
 Object.assign(globalThis, {
   openDataScreening,
-  renderDataScreening
+  renderDataScreening,
+  openQuantWorkbench,
+  renderQuantWorkbench,
+  pinSystemNavItem,
+  moveSystemNavItem,
+  toggleSystemNavItem,
+  resetSystemNavItems,
+  renameSystemNavItem,
+  cycleSystemNavColor,
+  setSectorTrajectoryRange,
+  backfillSectorHistorySnapshots,
+  openSectorBackfillDetail,
+  scrollToSectorSection,
+  toggleSectorCompareSource,
+  toggleSectorCompareBoard,
+  clearSectorCompareSelection,
+  hideSectorCompareBoard,
+  hideUnmatchedSectorSamples,
+  restoreHiddenSectorCompareBoards,
+  editSectorCompareBoard,
+  enableAllSectorCompareSources,
+  toggleSectorCardConstituents,
+  showSectorSourceConnectionGuide,
+  saveCustomSectorBoardFromForm,
+  deleteCustomSectorBoard,
+  syncWatchGroupsToSectorStrength,
+  importCustomSectorBoards,
+  installCommonSectorTemplates,
+  openSectorMovementLab,
+  openSectorMovementLite,
+  openSectorFullAnalysisGate,
+  clearSectorSnapshotCache
 });
 
+function xiaokeMetricToNumber(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return 0;
+  const match = text.match(/([\d.]+)/);
+  if (!match) return 0;
+  const num = Number(match[1]);
+  if (!Number.isFinite(num)) return 0;
+  return /万|w/i.test(text) ? num * 10000 : num;
+}
+
+function xiaokeAnalysisFieldMap(text = "") {
+  const fields = {};
+  const names = "关注标的|总结重点|核心观点|观点提炼|股票/板块关联|操作建议|风险提示|风险边界|哲学关联|哲学/心法|置信度评分|视频质量评分|评分理由|等级";
+  let current = "";
+  String(text || "").split(/\r?\n/).forEach(line => {
+    const row = line.trim();
+    if (!row) return;
+    const match = row.match(new RegExp(`^(${names})[：:]\\s*(.*)$`));
+    if (match) {
+      current = match[1];
+      fields[current] = match[2] || "";
+    } else if (current) {
+      fields[current] = `${fields[current] || ""} ${row}`.trim();
+    }
+  });
+  return fields;
+}
+
+function xiaokeField(fields = {}, names = []) {
+  for (const name of names) {
+    if (fields[name]) return fields[name];
+  }
+  return "";
+}
+
+function xiaokeAiGrade(score) {
+  const value = Number(score || 0);
+  if (value >= 85) return "A";
+  if (value >= 70) return "B";
+  if (value >= 55) return "C";
+  return "D";
+}
+
+function xiaokeAiStatusLabel(model = {}) {
+  if (model.reviewStatus === "risk") return "风险预警";
+  if (model.reviewStatus === "high") return "高置信";
+  if (model.reviewStatus === "review") return "待复核";
+  return "已分析";
+}
+
+function xiaokeScoreColor(grade = "") {
+  if (grade === "A") return "#ef476f";
+  if (grade === "B") return "#f5a623";
+  if (grade === "C") return "#3c82f6";
+  return "#19c98b";
+}
+
+function xiaokeLooksRisky(video = {}, model = {}) {
+  const blob = [
+    getVideoDetailTitle(video),
+    getVideoDetailTranscript(video),
+    video.topic,
+    video.focus,
+    model.summary,
+    model.opinion,
+    model.advice,
+    model.risk,
+    model.philosophy
+  ].filter(Boolean).join(" ");
+  return /回避|谨慎|追高|高位|退潮|风控|亏损|验证失败|不要盲目|警惕|不追|避免|补跌|过热|波动放大|不可|失败/.test(blob);
+}
+
+function xiaokeEnsureAnalysisScore(video = {}, input = {}, savedText = "") {
+  const fields = xiaokeAnalysisFieldMap(savedText);
+  const base = input && typeof input === "object" ? { ...input } : {};
+  const transcript = getVideoDetailTranscript(video);
+  const transcriptLen = String(transcript || "").trim().length;
+  const title = getVideoDetailTitle(video);
+  const links = typeof videoLinksFor === "function" ? videoLinksFor(video.id) : { stocks: [], sectors: [], groups: [] };
+  const commentsCount = typeof finalVideoComments === "function" ? finalVideoComments(video).length : 0;
+  const interactionsCount = typeof finalVideoInteractions === "function" ? finalVideoInteractions(video).length : 0;
+  const savedLen = String(savedText || "").trim().length;
+  let score = Number(base.score || base.qualityScore || 0);
+  if (!Number.isFinite(score) || score <= 0) {
+    score = 45;
+    if (transcriptLen >= 1200) score += 20;
+    else if (transcriptLen >= 450) score += 14;
+    else if (transcriptLen >= 120) score += 8;
+    else score -= 12;
+    if (title && !isGenericVideoTitle(title) && !xiaokeLooksGarbledTitle(title)) score += 10;
+    else score -= 8;
+    if (savedLen >= 300) score += 10;
+    else if (savedLen >= 120) score += 5;
+    if (commentsCount || interactionsCount) score += Math.min(8, commentsCount + interactionsCount * 2);
+    if (xiaokeMetricToNumber(video.likes) >= 10000) score += 5;
+    else if (xiaokeMetricToNumber(video.likes) >= 3000) score += 3;
+    if (uniqueClean([...(links.stocks || []), ...(links.sectors || []), ...(links.groups || []), video.topic, video.focus]).length) score += 8;
+    if (xiaokeVideoMissingAudio(video)) score -= 18;
+    if (!video.videoUrl && !video.documentUrl && !video.originalUrl) score -= 10;
+    score = Math.max(0, Math.min(100, Math.round(score)));
+  }
+  const grade = base.grade || xiaokeAiGrade(score);
+  const risk = xiaokeLooksRisky(video, base);
+  const reviewStatus = base.reviewStatus || (risk ? "risk" : score >= 85 ? "high" : score < 60 ? "review" : "normal");
+  const confidence = base.confidence || (score >= 85 ? "high" : score >= 70 ? "medium" : "low");
+  return {
+    ...base,
+    targets: base.targets || base.focus || xiaokeField(fields, ["关注标的"]) || video.focus || video.topic || "待识别",
+    focus: base.focus || base.targets || xiaokeField(fields, ["关注标的"]) || video.focus || video.topic || "待识别",
+    summary: base.summary || xiaokeField(fields, ["总结重点", "核心观点"]) || compactPlainText(savedText || transcript || title || "暂无结构化分析", 180),
+    opinion: base.opinion || base.viewpoint || xiaokeField(fields, ["观点提炼"]) || "",
+    advice: base.advice || xiaokeField(fields, ["操作建议"]) || "只作为复盘观察，不直接形成买卖指令。",
+    risk: base.risk || xiaokeField(fields, ["风险提示", "风险边界"]) || "缺少直接证据时，不做确定性判断。",
+    philosophy: base.philosophy || xiaokeField(fields, ["哲学关联", "哲学/心法"]) || "记录、验证、修正，再回到市场。",
+    directory: base.directory || xiaokeField(fields, ["股票/板块关联"]) || video.topic || video.focus || "",
+    score,
+    grade,
+    reviewStatus,
+    confidence,
+    confidenceScore: Math.max(0, Math.min(10, Math.round(score / 10))),
+    scoreReason: base.scoreReason || xiaokeField(fields, ["评分理由"]) || (transcriptLen < 120 ? "正文较少，先按低置信复盘。" : "已结合标题、正文和互动完整度评分。")
+  };
+}
+
+const xiaokeAnalysisModelBase = analysisModel;
+analysisModel = function xiaokeScoredAnalysisModel(video = {}, savedText = "", structured = null) {
+  const model = xiaokeAnalysisModelBase(video, savedText, structured);
+  return xiaokeEnsureAnalysisScore(video, model, savedText);
+};
+
+const xiaokeConfidenceNumberBase = confidenceNumber;
+confidenceNumber = function xiaokeScoredConfidenceNumber(value) {
+  if (value && typeof value === "object" && Number.isFinite(Number(value.score))) return Math.max(0, Math.min(10, Number(value.score) / 10));
+  const text = String(value ?? "").trim().toLowerCase();
+  if (text === "high") return 8.5;
+  if (text === "medium") return 6.5;
+  if (text === "low") return 4;
+  return xiaokeConfidenceNumberBase(value);
+};
+
+function xiaokeVideoAiModel(video = {}) {
+  return analysisModel(video, readVideoAnalyses()[video.id] || "", readStructuredAnalyses()[video.id] || null);
+}
+
+function xiaokeAnalysisScoreHtml(model = {}) {
+  const score = Math.round(Number(model.score || 0));
+  const grade = model.grade || xiaokeAiGrade(score);
+  const color = xiaokeScoreColor(grade);
+  return `<div class="analysis-card" style="border-color:${color};background:linear-gradient(180deg,rgba(25,201,139,.10),rgba(18,24,31,.92))">
+    <h3>AI评分：<span style="color:${color};font-size:22px">${escapeHtml(grade)} · ${score}/100</span></h3>
+    <p><b>${escapeHtml(xiaokeAiStatusLabel(model))}</b> ｜ ${escapeHtml(model.scoreReason || "按标题、转写、互动、风险边界和信息完整度综合评分。")}</p>
+  </div>`;
+}
+
+const xiaokeBuildVideoAnalysisPromptBase = buildVideoAnalysisPrompt;
+buildVideoAnalysisPrompt = function xiaokeBuildScoredVideoAnalysisPrompt(video = {}) {
+  const base = xiaokeBuildVideoAnalysisPromptBase(video);
+  if (/视频质量评分/.test(base)) return base;
+  return `${base}
+
+视频质量评分：请给 0-100 分，衡量“这条素材是否值得优先复盘”，不是买卖评级。
+等级：请给 A/B/C/D。A=优先复盘沉淀，B=有价值但需验证，C=信息不足或一般，D=噪声/缺证据。
+评分理由：一句话说明为什么这样打分。`;
+};
+
+async function xiaokeRunAiAnalysisForVideo(video = {}, force = false) {
+  if (!video || !video.id) throw new Error("没有找到视频");
+  let provider = localStorage.getItem(AGENT_PROVIDER_KEY) || "workbuddy";
+  if (provider === "auto") provider = "workbuddy";
+  let answer = "";
+  try {
+    answer = await callAgentProvider(provider, buildVideoAnalysisPrompt(video));
+  } catch {
+    answer = await callAgentProvider("mock", buildVideoAnalysisPrompt(video));
+    answer = "当前大模型调用失败，先用本地分析占位：\n\n" + answer;
+  }
+  saveVideoAnalysis(video.id, answer);
+  const model = analysisModel(video, answer, null);
+  saveStructuredAnalysis(video.id, model);
+  if (typeof saveSuggestedLinks === "function") {
+    try { saveSuggestedLinks(video.id, model); } catch {}
+  }
+  if (typeof updatePipeline === "function") {
+    updatePipeline(video.id, { ai: "done", confidence: confidenceNumber(model), error: "" });
+  }
+  return model;
+}
+
+generateVideoAIAnalysis = async function xiaokeGenerateVideoAIAnalysisWithScore(id, force = false) {
+  const video = (state.videos || []).find(item => item.id === id) || restoredAllLibraryVideos().find(item => item.id === id);
+  const content = document.getElementById("detailContent");
+  if (!video || !content) return;
+  const saved = readVideoAnalyses()[id] || "";
+  const structured = readStructuredAnalyses()[id] || null;
+  if (!force && (saved || structured)) {
+    if (!structured && saved) saveStructuredAnalysis(id, analysisModel(video, saved, null));
+    content.innerHTML = analysisHtml(video);
+    return;
+  }
+  content.innerHTML = `<div class="analysis-card pending"><h3>小可正在分析...</h3><p>正在补齐结构化结论、评分等级和风险边界。</p></div>`;
+  try {
+    await xiaokeRunAiAnalysisForVideo(video, force);
+    content.innerHTML = analysisHtml(video);
+  } catch (error) {
+    content.innerHTML = `<div class="analysis-card red"><h3>AI 分析失败</h3><p>${escapeHtml(error.message || "未知错误")}</p></div>`;
+  }
+};
+
+xiaokeGenerateVideoAIQuiet = async function xiaokeGenerateVideoAIQuietWithScore(video = {}, force = false) {
+  if (!video.id) return false;
+  const saved = readVideoAnalyses()[video.id] || "";
+  const structured = readStructuredAnalyses()[video.id] || null;
+  if (!force && (saved || structured)) {
+    if (!structured && saved) saveStructuredAnalysis(video.id, analysisModel(video, saved, null));
+    return false;
+  }
+  await xiaokeRunAiAnalysisForVideo(video, force);
+  return true;
+};
+
+analysisHtml = function xiaokeStableAnalysisHtmlWithScore(video = {}) {
+  const savedText = readVideoAnalyses()[video.id] || video.analysis || "";
+  const structured = readStructuredAnalyses()[video.id] || null;
+  const model = analysisModel(video, savedText, structured);
+  const title = getVideoDetailTitle(video);
+  const transcript = getVideoDetailTranscript(video);
+  const links = videoLinksFor(video.id);
+  const linkedText = uniqueClean([...(links.stocks || []), ...(links.sectors || []), ...(links.groups || []), model.directory, video.topic, video.focus].filter(Boolean)).join(" / ") || "待补充";
+  const insufficient = !savedText && !structured && String(transcript || "").trim().length < 30;
+  return `
+    <div class="analysis-actions">
+      <button class="open-btn" style="width:auto;padding:0 14px" onclick="generateAiForCurrent()">生成 AI 分析</button>
+      <button class="small-btn" onclick="saveCurrentAsPrinciple()">沉淀原则</button>
+      <button class="small-btn" onclick='openAgentWithQuestion(${JSON.stringify("结合素材分析：" + title)}, "investment", true)'>问 Agent</button>
+      ${video.documentUrl || video.originalUrl ? `<button class="small-btn" onclick='window.open(${JSON.stringify(video.documentUrl || video.originalUrl)}, "_blank")'>打开原文</button>` : ""}
+    </div>
+    ${xiaokeAnalysisScoreHtml(model)}
+    ${insufficient ? restoredAnalysisCardHtml("blue", "先补充正文/转录", `这条素材目前主要只有标题：${title}。补充视频转录、PDF/Word 摘要或读书笔记后，分析会更准。`) : ""}
+    ${restoredAnalysisCardHtml("green", "关注标的", model.targets || model.focus || linkedText || "待识别")}
+    ${restoredAnalysisCardHtml("blue", "核心观点", model.summary || transcript || title || "暂无内容")}
+    ${restoredAnalysisCardHtml("blue", "观点提炼", model.opinion || model.viewpoint || model.summary || "先把素材正文补齐，再提炼观点。")}
+    ${restoredAnalysisCardHtml("green", "股票/板块关联", linkedText)}
+    ${restoredAnalysisCardHtml("blue", "操作建议", model.advice || "只作为复盘观察，不直接形成买卖指令。")}
+    ${restoredAnalysisCardHtml("red", "风险边界", model.risk || "缺少直接证据时，不做确定性判断。")}
+    ${restoredAnalysisCardHtml("gold", "哲学/心法", model.philosophy || "记录、验证、修正，再回到市场。")}
+  `;
+};
+
+pipelineSummary = function xiaokePipelineSummaryWithScore(videos = []) {
+  return (videos || []).reduce((acc, video) => {
+    acc.total += 1;
+    const transcript = getVideoDetailTranscript(video);
+    const hasTranscript = !isEmptyTranscript(transcript);
+    const hasAi = xiaokeHasVideoAI(video);
+    const model = hasAi ? xiaokeVideoAiModel(video) : null;
+    const score = model ? Number(model.score || 0) : 0;
+    if (hasTranscript) acc.transcribed += 1;
+    else acc.pendingTranscript += 1;
+    if (hasAi) acc.ai += 1;
+    else acc.pendingAi += 1;
+    if (hasAi && score >= 85) acc.highConfidence += 1;
+    if (hasAi && xiaokeLooksRisky(video, model)) acc.risk += 1;
+    if (!hasAi || score < 60) acc.low += 1;
+    return acc;
+  }, { total: 0, transcribed: 0, pendingTranscript: 0, ai: 0, pendingAi: 0, low: 0, failed: 0, highConfidence: 0, risk: 0 });
+};
+
+restoredDashboardFeedHtml = function xiaokeDashboardFeedHtmlWithScore(video) {
+  const title = getVideoDetailTitle(video);
+  const model = xiaokeVideoAiModel(video);
+  const badges = uniqueClean([`${model.grade || xiaokeAiGrade(model.score)} ${Math.round(Number(model.score || 0))}分`, xiaokeAiStatusLabel(model), video.topic, video.focus].filter(Boolean)).slice(0, 3);
+  return `<article class="feed-card" onclick='openDetail(${JSON.stringify(video.id)})' style="cursor:pointer">
+    <div class="date">${escapeHtml(video.date || "-")}</div>
+    <h3>${escapeHtml(title)}</h3>
+    <div class="tagline">${badges.map(t => `<span>${escapeHtml(t)}</span>`).join("")}</div>
+    <a href="javascript:void(0)">查看详情 →</a>
+  </article>`;
+};
+
+restoredMetadataRows = function xiaokeMetadataRowsWithScore(videos = []) {
+  return videos.slice(0, 8).map(video => {
+    const hasAi = xiaokeHasVideoAI(video);
+    const model = hasAi ? xiaokeVideoAiModel(video) : null;
+    const label = hasAi ? `${model.grade || xiaokeAiGrade(model.score)} ${Math.round(Number(model.score || 0))}分` : "待 AI";
+    const cls = hasAi && Number(model.score || 0) >= 70 ? "ok" : "warn";
+    return `<tr onclick='openDetail(${JSON.stringify(video.id)})'>
+      <td>${escapeHtml(video.date || "-")}</td>
+      <td>${escapeHtml(getVideoDetailTitle(video))}</td>
+      <td>${escapeHtml(video.topic || video.focus || "模型先生")}</td>
+      <td>${escapeHtml(`${video.likes || 0}赞 / ${video.comments || 0}评`)}</td>
+      <td><span class="status-badge ${cls}">${escapeHtml(label)}</span></td>
+      <td><button class="small-btn" onclick='event.stopPropagation();openDetail(${JSON.stringify(video.id)})'>进入</button></td>
+    </tr>`;
+  }).join("");
+};
+
+renderDashboard = function xiaokeDashboardWithAiScores() {
+  state.view = "dashboard";
+  renderTopChips();
+  const main = document.getElementById("main");
+  if (!main) return;
+  const videos = restoredAllLibraryVideos();
+  const linked = readVideoLinks();
+  const scored = videos.map(video => ({ video, hasAi: xiaokeHasVideoAI(video), model: xiaokeVideoAiModel(video) }));
+  const targetCount = Math.max(19, flattenWatchlist().filter(item => !/指数|大盘/.test(item.sector || item.group || "")).length || 0);
+  const today = new Date().toISOString().slice(0, 10);
+  const todayCount = videos.filter(video => String(video.date || "") === today).length;
+  const highCount = scored.filter(row => row.hasAi && Number(row.model.score || 0) >= 85).length;
+  const riskCount = scored.filter(row => row.hasAi && xiaokeLooksRisky(row.video, row.model)).length;
+  const pendingCount = scored.filter(row => !row.hasAi || Number(row.model.score || 0) < 60).length;
+  const linkedCount = Object.values(linked || {}).filter(item => uniqueClean([...(item.stocks || []), ...(item.sectors || []), ...(item.groups || [])]).length).length;
+  const recent = videos.slice().sort((a, b) => String(b.date || "").localeCompare(String(a.date || ""))).slice(0, 4);
+  const rows = videos.slice().sort((a, b) => String(b.date || "").localeCompare(String(a.date || ""))).slice(0, 8);
+  const sectorItems = restoredSectorRows(8);
+  main.innerHTML = `
+    <section class="stats">
+      <button class="stat" onclick="openStockProfiles()"><div><b>${targetCount}</b><span>关注标的</span></div></button>
+      <button class="stat" onclick="openVideoLibrary()"><div><b>${videos.length}</b><span>分析视频</span></div></button>
+      <button class="stat" onclick="openModelFramework()"><div><b>${scored.filter(row => row.hasAi).length}</b><span>已AI评分</span></div></button>
+    </section>
+    <section class="signal-grid">
+      <button class="signal-card" onclick="openDailyReview()"><strong>今日新增观点</strong><b>${todayCount}</b><span>按视频日期统计，方便每天复盘。</span></button>
+      <button class="signal-card" onclick="openPipelineCenter()"><strong>高置信度视频</strong><b>${highCount}</b><span>A级或 85 分以上，优先沉淀为笔记。</span></button>
+      <button class="signal-card" onclick="openVideoLibrary()"><strong>风险预警视频</strong><b>${riskCount}</b><span>含风险、回避、追高、退潮等提示。</span></button>
+      <button class="signal-card" onclick="openVideoLibrary()"><strong>待复核视频</strong><b>${pendingCount}</b><span>未 AI 分析或低于 60 分的内容。</span></button>
+      <button class="signal-card" onclick="openPipelineCenter()"><strong>已关联素材</strong><b>${linkedCount}</b><span>已进入标的/板块知识库。</span></button>
+    </section>
+    <section class="dash-grid">
+      <div class="panel">
+        <div class="panel-title">热门标的 TOP10</div>
+        <div class="bars">${restoredDashboardBars()}</div>
+      </div>
+      <div class="panel">
+        <div class="metadata-head" style="margin-bottom:8px"><div class="panel-title">行业分布 TOP8</div><button class="small-btn" onclick="openVideoGroupManager()">编辑</button></div>
+        <div class="donut-wrap">
+          <div class="donut"></div>
+          <div class="legend">${sectorItems.map((row, i) => `<div onclick='filterByTag(${JSON.stringify(row.tag?.name || row.name)})'><span class="sw" style="background:${["#3c82f6","#8d5cf6","#19c98b","#f5a623","#ef4444","#22c3d6","#ec4899","#84cc16"][i]}"></span>${escapeHtml(row.name)}(${row.count})</div>`).join("")}</div>
+        </div>
+      </div>
+    </section>
+    <section class="feed">${recent.map(restoredDashboardFeedHtml).join("")}</section>
+    <section class="panel" style="margin-top:12px">
+      <div class="metadata-head">
+        <div><div class="panel-title">最近评价</div><div class="date">直接看每条视频的 A/B/C/D 与 0-100 分，低分或待 AI 的优先复核。</div></div>
+        <button class="small-btn" onclick="openVideoLibrary()">打开素材库</button>
+      </div>
+      <div class="metadata-table-wrap">
+        <table class="metadata-table">
+          <thead><tr><th>日期</th><th>视频标题</th><th>题材</th><th>互动</th><th>AI评分</th><th>操作</th></tr></thead>
+          <tbody>${restoredMetadataRows(rows) || `<tr><td colspan="6">暂无素材。</td></tr>`}</tbody>
+        </table>
+      </div>
+    </section>
+  `;
+};
+
+Object.assign(globalThis, {
+  xiaokeAiGrade,
+  xiaokeRunAiAnalysisForVideo,
+  xiaokeGenerateVideoAIQuiet,
+  generateVideoAIAnalysis,
+  analysisHtml,
+  pipelineSummary,
+  renderDashboard,
+  exportSectorMappingRegistryCsv,
+  importSectorMappingRegistry,
+  lockSectorMapping,
+  editSectorMappingRegistry,
+  resetSectorMappingRegistry
+});
+
+function xiaokeWithTimeout(promise, ms = 5000, label = "任务") {
+  return Promise.race([
+    Promise.resolve(promise),
+    new Promise(resolve => setTimeout(() => resolve({ timeout: true, label }), ms))
+  ]).catch(error => ({ error, label }));
+}
+
+function xiaokeSafeMainFallback(reason = "") {
+  try {
+    if (typeof xiaokeTrueFinalCss === "function") xiaokeTrueFinalCss();
+    if (typeof renderTopChips === "function") renderTopChips();
+    if (typeof restoredRenderLeftPane === "function") restoredRenderLeftPane();
+    if (typeof restoredRenderRightPane === "function") restoredRenderRightPane();
+  } catch {}
+  const main = document.getElementById("main");
+  if (!main) return;
+  const msg = reason && reason.message ? reason.message : String(reason || "页面启动时某个模块响应过慢，已进入安全模式。");
+  const videoCount = Array.isArray(state?.videos) ? state.videos.length : 0;
+  main.innerHTML = `
+    <section class="review-head panel">
+      <div><div class="panel-title">小可课堂 · 安全首页</div><div class="date">主页面已自动恢复。后台数据会继续加载；如果某个接口卡住，也不会再让页面空白。</div></div>
+      <div class="review-actions"><button class="small-btn primary" onclick="renderDashboard()">重载看板</button><button class="small-btn" onclick="renderSectorStrength({ skipFetch: true })">板块强弱</button><button class="small-btn" onclick="openSectorMovementLab()">轨迹规律</button><button class="small-btn" onclick="location.reload()">刷新页面</button></div>
+    </section>
+    <section class="signal-grid">
+      <button class="signal-card" onclick="openVideoLibrary()"><strong>素材库</strong><b>${escapeHtml(videoCount)}</b><span>先保证入口可用，再后台补全素材。</span></button>
+      <button class="signal-card" onclick="renderSectorStrength({ skipFetch: true })"><strong>板块强弱</strong><b>快照</b><span>优先显示最近成功快照，避免实时接口拖住页面。</span></button>
+      <button class="signal-card" onclick="openDailyReview()"><strong>每日复盘</strong><b>记录</b><span>复盘和任务记录不依赖实时行情。</span></button>
+      <button class="signal-card" onclick="openStrategy()"><strong>我的策略</strong><b>规则</b><span>查看策略与交易纪律。</span></button>
+    </section>
+    <section class="panel" style="margin-top:12px;border-color:rgba(245,166,35,.35);background:rgba(245,166,35,.08)">
+      <div class="panel-title">恢复原因</div>
+      <p style="color:#ffdca0;line-height:1.7">${escapeHtml(msg)}</p>
+    </section>`;
+}
+
+function xiaokeMainLooksBlank() {
+  const main = document.getElementById("main");
+  if (!main) return false;
+  const text = (main.innerText || "").replace(/\s+/g, "");
+  const rect = main.getBoundingClientRect();
+  return rect.width > 200 && rect.height > 200 && text.length < 8 && !/正在刷新今日榜/.test(main.innerText || "");
+}
+
+function xiaokeInstallBlankPageGuard() {
+  if (window.__xiaokeBlankPageGuardInstalled) return;
+  window.__xiaokeBlankPageGuardInstalled = true;
+  let blankTicks = 0;
+  const guardStartedAt = Date.now();
+  const rescue = reason => setTimeout(() => {
+    if (xiaokeMainLooksBlank()) xiaokeSafeMainFallback(reason);
+  }, 50);
+  window.addEventListener("error", event => rescue(event.error || event.message || "页面脚本错误"));
+  window.addEventListener("unhandledrejection", event => rescue(event.reason || "异步任务失败"));
+  const guardTimer = setInterval(() => {
+    if (Date.now() - guardStartedAt > 12000) {
+      clearInterval(guardTimer);
+      return;
+    }
+    if (xiaokeMainLooksBlank()) blankTicks += 1;
+    else blankTicks = 0;
+    if (blankTicks >= 2) {
+      blankTicks = 0;
+      xiaokeSafeMainFallback("检测到主内容区连续为空，已自动恢复安全首页。");
+    }
+  }, 2500);
+}
+
+init = async function xiaokeResilientInit() {
+  xiaokeInstallBlankPageGuard();
+  try {
+    state.videos = [...sampleVideos, ...readUserVideos()];
+  } catch {
+    state.videos = Array.isArray(sampleVideos) ? [...sampleVideos] : [];
+  }
+  try {
+    renderShell();
+    render();
+    if (typeof xiaokeApplyRouteFromLocation === "function") xiaokeApplyRouteFromLocation({ replace: true });
+  } catch (error) {
+    xiaokeSafeMainFallback(error);
+  }
+  try {
+    tickClock();
+    if (!window.__xiaokeClockInterval) window.__xiaokeClockInterval = setInterval(tickClock, 1000 * 30);
+    setupAutoRefresh();
+  } catch {}
+  Promise.allSettled([
+    xiaokeWithTimeout(scanMetadataVideos(), 5000, "扫描元数据"),
+    xiaokeWithTimeout(scanLocalVideos(), 5000, "扫描本地视频"),
+    xiaokeWithTimeout(scanLocalDocuments(), 5000, "扫描本地文档"),
+    xiaokeWithTimeout(refreshMarketIndexes(), 4500, "刷新行情")
+  ]).then(() => {
+    try {
+      if (xiaokeMainLooksBlank()) xiaokeSafeMainFallback("后台数据加载完成后检测到主内容区为空，已自动恢复安全首页。");
+    } catch (error) {
+      xiaokeSafeMainFallback(error);
+    }
+  });
+};
+
 init();
-
-
-
-
 
 
 

@@ -4,8 +4,15 @@ import os
 import sys
 import tempfile
 
-import pypdfium2 as pdfium
-from rapidocr_onnxruntime import RapidOCR
+try:
+    import pypdfium2 as pdfium
+except ModuleNotFoundError:
+    pdfium = None
+
+try:
+    from rapidocr_onnxruntime import RapidOCR
+except ModuleNotFoundError:
+    RapidOCR = None
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -57,6 +64,12 @@ def main():
     if not os.path.exists(args.pdf_path):
         print(json.dumps({"success": False, "error": "PDF not found"}, ensure_ascii=False))
         return 2
+    if pdfium is None or RapidOCR is None:
+        print(json.dumps({
+            "success": False,
+            "error": "PDF OCR依赖缺失：请安装 pypdfium2 和 rapidocr-onnxruntime，或重启服务后再试。"
+        }, ensure_ascii=False))
+        return 3
 
     doc = pdfium.PdfDocument(args.pdf_path)
     total_pages = len(doc)

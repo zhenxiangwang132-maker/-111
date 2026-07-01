@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const os = require("os");
-const { execFile, spawn } = require("child_process");
+const { execFile, spawn, spawnSync } = require("child_process");
 const { Readable } = require("stream");
 
 const PORT = 3000;
@@ -22,6 +22,7 @@ const AGENT_LOG_FILE = path.join(ROOT, "agent_call_logs.json");
 const STOCK_PROFILE_FILE = path.join(ROOT, "stock_profiles.json");
 const TRANSCRIPTS_DIR = path.join(ROOT, "transcripts");
 const OCR_FRAMES_DIR = path.join(ROOT, "ocr_frames");
+const VIDEO_COVERS_DIR = path.join(ROOT, "video_covers");
 const OCR_TITLE_CACHE_FILE = path.join(ROOT, "ocr_titles.json");
 const OCR_TITLE_SCRIPT = path.join(ROOT, "tools", "ocr_video_title.py");
 const OCR_PDF_SCRIPT = path.join(ROOT, "tools", "ocr_pdf_document.py");
@@ -31,9 +32,14 @@ const QMT_BRIDGE_CODES_FILE = path.join(ROOT, "qmt_bridge_codes.json");
 const QMT_BRIDGE_QUOTES_FILE = path.join(ROOT, "qmt_bridge_quotes.json");
 const QMT_BRIDGE_STRATEGY_FILE = path.join(ROOT, "tools", "qmt_bridge_strategy.py");
 const QMT_BRIDGE_QMT_STRATEGY_FILE = path.join(os.homedir(), "国信iQuant策略交易平台", "python", "xiaoke_qmt_bridge.py");
+const QMT_BRIDGE_QMT_STRATEGY_CN_FILE = path.join(os.homedir(), "国信iQuant策略交易平台", "python", "小可QMT日线仓库桥接.py");
 const QMT_DATA_DIR = path.join(ROOT, "qmt_data");
 const QMT_DAILY_DIR = path.join(QMT_DATA_DIR, "daily");
+const QMT_WEEKLY_DIR = path.join(QMT_DATA_DIR, "weekly");
+const QMT_MONTHLY_DIR = path.join(QMT_DATA_DIR, "monthly");
 const QMT_DAILY_INDEX_FILE = path.join(QMT_DATA_DIR, "daily_index.json");
+const QMT_WEEKLY_INDEX_FILE = path.join(QMT_DATA_DIR, "weekly_index.json");
+const QMT_MONTHLY_INDEX_FILE = path.join(QMT_DATA_DIR, "monthly_index.json");
 const DOCUMENTS_DIR = path.join(ROOT, "documents");
 const DOCUMENT_METADATA_FILE = path.join(ROOT, "documents_metadata.json");
 const ANNOUNCEMENTS_DIR = path.join(ROOT, "announcements");
@@ -44,8 +50,19 @@ const DOCUMENT_TEXT_LIMIT = 160000;
 const DOCUMENT_CLIENT_TEXT_LIMIT = 80000;
 const DOCUMENT_OCR_DEFAULT_PAGES = 60;
 const VIDEO_EXTS = [".mp4", ".webm", ".mov", ".m4v", ".mkv", ".avi", ".flv", ".wmv"];
+const MIN_LOCAL_VIDEO_BYTES = 256 * 1024;
 const IMAGE_EXTS = [".jpg", ".jpeg", ".png", ".webp"];
 const DOCUMENT_EXTS = [".pdf", ".doc", ".docx"];
+const REJECTED_DOUYIN_VIDEO_IDS = new Set([
+  "7656361330445765931"
+]);
+const MODEL_VIDEO_DESKTOP_DIR_NAMES = [
+  "抖音-模型",
+  "模型-视频",
+  "模型视频",
+  "模型先生视频",
+  "模型先生-视频"
+];
 const douyinCache = new Map();
 let marketIndexCache = { at: 0, data: [] };
 let institutionalCapabilityCache = { at: 0, hasProvider: false, result: null };
@@ -61,9 +78,12 @@ function decodeTencentQuote(buffer) {
 if (!fs.existsSync(VIDEOS_DIR)) fs.mkdirSync(VIDEOS_DIR, { recursive: true });
 if (!fs.existsSync(TRANSCRIPTS_DIR)) fs.mkdirSync(TRANSCRIPTS_DIR, { recursive: true });
 if (!fs.existsSync(OCR_FRAMES_DIR)) fs.mkdirSync(OCR_FRAMES_DIR, { recursive: true });
+if (!fs.existsSync(VIDEO_COVERS_DIR)) fs.mkdirSync(VIDEO_COVERS_DIR, { recursive: true });
 if (!fs.existsSync(DOCUMENTS_DIR)) fs.mkdirSync(DOCUMENTS_DIR, { recursive: true });
 if (!fs.existsSync(ANNOUNCEMENTS_DIR)) fs.mkdirSync(ANNOUNCEMENTS_DIR, { recursive: true });
 if (!fs.existsSync(QMT_DAILY_DIR)) fs.mkdirSync(QMT_DAILY_DIR, { recursive: true });
+if (!fs.existsSync(QMT_WEEKLY_DIR)) fs.mkdirSync(QMT_WEEKLY_DIR, { recursive: true });
+if (!fs.existsSync(QMT_MONTHLY_DIR)) fs.mkdirSync(QMT_MONTHLY_DIR, { recursive: true });
 
 function pythonToolInvocation() {
   const configured = String(process.env.PYTHON_BIN || "").trim();
@@ -660,6 +680,33 @@ function textToSectorMatrix(text) {
     .filter(row => row.some(Boolean));
 }
 
+function runImageOcrText(buffer, ext = ".png") {
+  const tempPath = path.join(OCR_FRAMES_DIR, `sector_${Date.now()}_${crypto.randomBytes(4).toString("hex")}${ext}`);
+  fs.writeFileSync(tempPath, buffer);
+  return new Promise((resolve, reject) => {
+    execPythonTool(OCR_TITLE_SCRIPT, [tempPath], { cwd: ROOT, maxBuffer: 8 * 1024 * 1024 }, (error, stdout, stderr) => {
+      fs.promises.unlink(tempPath).catch(() => {});
+      if (error) {
+        reject(new Error((stderr || stdout || error.message || "图片 OCR 失败").trim()));
+        return;
+      }
+      try {
+        const parsed = JSON.parse(stdout || "{}");
+        if (!parsed.success) throw new Error(parsed.error || "图片 OCR 失败");
+        const rows = Array.isArray(parsed.rows) ? parsed.rows : [];
+        const text = rows
+          .filter(row => Number(row.score || 0) >= 0.35 && row.text)
+          .map(row => String(row.text || "").trim())
+          .filter(Boolean)
+          .join("\n") || parsed.title || "";
+        resolve({ text, rows });
+      } catch (parseError) {
+        reject(new Error((stderr || parseError.message || "图片 OCR 结果解析失败").trim()));
+      }
+    });
+  });
+}
+
 async function parseSectorMapPayload(payload) {
   const originalName = sanitizeFilename(payload.filename || payload.name || "sector-map.txt");
   const ext = path.extname(originalName).toLowerCase();
@@ -684,10 +731,24 @@ async function parseSectorMapPayload(payload) {
     } finally {
       if (parser && typeof parser.destroy === "function") await parser.destroy();
     }
-    if (!normalizeDocumentText(text)) warnings.push("PDF文字层较少，可能是扫描图。请先在书籍页OCR，或导入Excel版产业链表。");
+    if (!normalizeDocumentText(text)) {
+      const tempPdf = path.join(OCR_FRAMES_DIR, `sector_${Date.now()}_${crypto.randomBytes(4).toString("hex")}.pdf`);
+      fs.writeFileSync(tempPdf, buffer);
+      try {
+        const ocrInfo = await runPdfOcrDocument(tempPdf, { maxPages: 20, startPage: 1 });
+        text = ocrInfo.text || "";
+        warnings.push(`PDF文字层较少，已尝试 OCR 前 ${ocrInfo.pagesRead || 20} 页。`);
+      } catch (ocrError) {
+        warnings.push(`PDF文字层较少，OCR 未成功：${ocrError.message}`);
+      } finally {
+        fs.promises.unlink(tempPdf).catch(() => {});
+      }
+    }
     matrix = textToSectorMatrix(text);
   } else if (IMAGE_EXTS.includes(ext)) {
-    warnings.push("图片OCR入口已预留；当前请优先导入Excel/CSV/PDF文字版，或把OCR后的文字粘贴到文本框。");
+    const ocrInfo = await runImageOcrText(buffer, ext);
+    text = ocrInfo.text || "";
+    warnings.push(`图片已 OCR 识别 ${ocrInfo.rows?.length || 0} 行文字；表格截图越清晰，识别越准。`);
     matrix = textToSectorMatrix(text);
   } else {
     text = text || buffer.toString("utf8");
@@ -887,6 +948,25 @@ function qmtDailyFileForCode(code) {
   return path.join(QMT_DAILY_DIR, `${String(code || "").replace(/[^\w.-]/g, "_")}.json`);
 }
 
+function qmtDerivedConfig(period) {
+  if (period === "weekly") return { period: "weekly", label: "周线", dir: QMT_WEEKLY_DIR, indexFile: QMT_WEEKLY_INDEX_FILE };
+  if (period === "monthly") return { period: "monthly", label: "月线", dir: QMT_MONTHLY_DIR, indexFile: QMT_MONTHLY_INDEX_FILE };
+  return null;
+}
+
+function qmtDerivedFileForCode(period, code) {
+  const config = qmtDerivedConfig(period);
+  if (!config) return "";
+  return path.join(config.dir, `${String(code || "").replace(/[^\w.-]/g, "_")}.json`);
+}
+
+function writeJsonAtomic(file, payload) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(payload, null, 2), "utf8");
+  fs.renameSync(tmp, file);
+}
+
 function normalizeQmtDailyRow(row = {}) {
   const date = String(row.date || row.time || row.datetime || "").replace(/-/g, "").slice(0, 8);
   const open = Number(row.open);
@@ -904,6 +984,173 @@ function normalizeQmtDailyRow(row = {}) {
     close,
     volume: Number.isFinite(volume) ? volume : 0,
     amount: Number.isFinite(amount) ? amount : 0
+  };
+}
+
+function qmtDateToUtc(dateText) {
+  const text = String(dateText || "").replace(/[^\d]/g, "").slice(0, 8);
+  if (text.length !== 8) return null;
+  const year = Number(text.slice(0, 4));
+  const month = Number(text.slice(4, 6));
+  const day = Number(text.slice(6, 8));
+  if (!year || !month || !day) return null;
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function qmtIsoWeekKey(dateText) {
+  const date = qmtDateToUtc(dateText);
+  if (!date) return "";
+  const day = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((date - yearStart) / 86400000) + 1) / 7);
+  return `${date.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+
+function qmtPeriodKey(row, period) {
+  const date = String(row.date || "").slice(0, 8);
+  if (period === "monthly") return date.slice(0, 6);
+  if (period === "weekly") return qmtIsoWeekKey(date);
+  return date;
+}
+
+function aggregateQmtRows(rows = [], period = "weekly") {
+  const normalized = rows
+    .map(normalizeQmtDailyRow)
+    .filter(Boolean)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const buckets = [];
+  const byKey = new Map();
+  for (const row of normalized) {
+    const key = qmtPeriodKey(row, period);
+    if (!key) continue;
+    let item = byKey.get(key);
+    if (!item) {
+      item = {
+        date: row.date,
+        startDate: row.date,
+        endDate: row.date,
+        open: row.open,
+        high: row.high,
+        low: row.low,
+        close: row.close,
+        volume: 0,
+        amount: 0,
+        count: 0
+      };
+      byKey.set(key, item);
+      buckets.push(item);
+    }
+    item.date = row.date;
+    item.endDate = row.date;
+    item.high = Math.max(item.high, row.high);
+    item.low = Math.min(item.low, row.low);
+    item.close = row.close;
+    item.volume += Number(row.volume || 0);
+    item.amount += Number(row.amount || 0);
+    item.count += 1;
+  }
+  return buckets;
+}
+
+function qmtWarehousePeriodStatus(period) {
+  const config = qmtDerivedConfig(period);
+  if (!config) return { fileCount: 0, updatedAt: "" };
+  const files = fs.existsSync(config.dir)
+    ? fs.readdirSync(config.dir).filter(name => name.toLowerCase().endsWith(".json"))
+    : [];
+  let index = {};
+  try {
+    if (fs.existsSync(config.indexFile)) index = JSON.parse(fs.readFileSync(config.indexFile, "utf8"));
+  } catch {}
+  return {
+    dir: config.dir,
+    indexFile: config.indexFile,
+    fileCount: files.length,
+    updatedAt: index.updatedAt || "",
+    rowCount: index.rowCount || 0,
+    skipped: index.skipped || 0,
+    sampleCodes: files.slice(0, 8).map(name => name.replace(/\.json$/i, "")),
+    indexCount: index.count || 0
+  };
+}
+
+function buildQmtDerivedWarehouse(period) {
+  const config = qmtDerivedConfig(period);
+  if (!config) throw new Error("不支持的周期：" + period);
+  fs.mkdirSync(config.dir, { recursive: true });
+  const files = fs.existsSync(QMT_DAILY_DIR)
+    ? fs.readdirSync(QMT_DAILY_DIR).filter(name => name.toLowerCase().endsWith(".json"))
+    : [];
+  const indexItems = {};
+  let wrote = 0;
+  let skipped = 0;
+  let rowCount = 0;
+  for (const name of files) {
+    const code = name.replace(/\.json$/i, "");
+    const dailyFile = path.join(QMT_DAILY_DIR, name);
+    try {
+      const payload = JSON.parse(fs.readFileSync(dailyFile, "utf8"));
+      const rows = aggregateQmtRows(payload.rows || [], period);
+      if (!rows.length) {
+        skipped += 1;
+        continue;
+      }
+      const output = {
+        updatedAt: new Date().toISOString(),
+        code: payload.code || code,
+        period: period === "weekly" ? "1w" : "1M",
+        sourcePeriod: "1d",
+        sourceUpdatedAt: payload.updatedAt || "",
+        rows
+      };
+      writeJsonAtomic(qmtDerivedFileForCode(period, code), output);
+      indexItems[code] = {
+        count: rows.length,
+        startDate: rows[0]?.startDate || rows[0]?.date || "",
+        endDate: rows[rows.length - 1]?.endDate || rows[rows.length - 1]?.date || "",
+        sourceUpdatedAt: payload.updatedAt || "",
+        updatedAt: output.updatedAt
+      };
+      wrote += 1;
+      rowCount += rows.length;
+    } catch {
+      skipped += 1;
+    }
+  }
+  const index = {
+    updatedAt: new Date().toISOString(),
+    period,
+    source: "QMT local daily warehouse",
+    sourceDir: QMT_DAILY_DIR,
+    count: wrote,
+    skipped,
+    rowCount,
+    items: indexItems
+  };
+  writeJsonAtomic(config.indexFile, index);
+  return {
+    period,
+    label: config.label,
+    dir: config.dir,
+    indexFile: config.indexFile,
+    fileCount: wrote,
+    skipped,
+    rowCount,
+    updatedAt: index.updatedAt
+  };
+}
+
+function buildQmtDerivedWarehouses() {
+  const daily = readQmtDataWarehouseStatus();
+  const weekly = buildQmtDerivedWarehouse("weekly");
+  const monthly = buildQmtDerivedWarehouse("monthly");
+  return {
+    success: true,
+    dailyFileCount: daily.dailyFileCount || 0,
+    weekly,
+    monthly,
+    warehouse: readQmtDataWarehouseStatus()
   };
 }
 
@@ -934,16 +1181,31 @@ function readQmtDataWarehouseStatus() {
     ? fs.readdirSync(QMT_DAILY_DIR).filter(name => name.toLowerCase().endsWith(".json"))
     : [];
   let index = {};
+  let attempts = {};
+  let debug = {};
   try {
     if (fs.existsSync(QMT_DAILY_INDEX_FILE)) index = JSON.parse(fs.readFileSync(QMT_DAILY_INDEX_FILE, "utf8"));
+  } catch {}
+  try {
+    if (fs.existsSync(path.join(QMT_DATA_DIR, "daily_attempts.json"))) attempts = JSON.parse(fs.readFileSync(path.join(QMT_DATA_DIR, "daily_attempts.json"), "utf8"));
+  } catch {}
+  try {
+    if (fs.existsSync(QMT_BRIDGE_DEBUG_FILE)) debug = JSON.parse(fs.readFileSync(QMT_BRIDGE_DEBUG_FILE, "utf8"));
   } catch {}
   return {
     success: true,
     dir: QMT_DAILY_DIR,
     dailyFileCount: files.length,
+    weeklyFileCount: qmtWarehousePeriodStatus("weekly").fileCount,
+    monthlyFileCount: qmtWarehousePeriodStatus("monthly").fileCount,
+    attemptedEmptyCount: attempts && attempts.items ? Object.keys(attempts.items).length : 0,
     updatedAt: index.updatedAt || "",
+    attemptsUpdatedAt: attempts.updatedAt || "",
+    latestDebug: debug,
     sampleCodes: files.slice(0, 8).map(name => name.replace(/\.json$/i, "")),
-    index
+    indexCount: index.count || files.length,
+    weekly: qmtWarehousePeriodStatus("weekly"),
+    monthly: qmtWarehousePeriodStatus("monthly")
   };
 }
 
@@ -976,6 +1238,7 @@ function readQmtBridgeStatus() {
     quotesFile: QMT_BRIDGE_QUOTES_FILE,
     strategySourceFile: QMT_BRIDGE_STRATEGY_FILE,
     qmtStrategyFile: QMT_BRIDGE_QMT_STRATEGY_FILE,
+    qmtStrategyChineseFile: QMT_BRIDGE_QMT_STRATEGY_CN_FILE,
     strategyInstalled,
     hasQuotes,
     quoteCount,
@@ -984,6 +1247,54 @@ function readQmtBridgeStatus() {
     stale: !hasQuotes || ageSeconds == null || ageSeconds > 30,
     warehouse: readQmtDataWarehouseStatus(),
     error
+  };
+}
+
+async function prepareQmtDailyWarehouse() {
+  fs.mkdirSync(QMT_DAILY_DIR, { recursive: true });
+  let universe = [];
+  let source = "";
+  let warning = "";
+  try {
+    universe = await getEastmoneyAShareUniverse(false);
+    source = "东方财富 A 股全市场";
+  } catch (error) {
+    warning = error.message || String(error);
+    try {
+      universe = await getSinaAShareUniverse();
+      source = "新浪 A 股全市场";
+    } catch (fallbackError) {
+      const cached = readMarketCache(A_SHARE_UNIVERSE_CACHE_FILE);
+      universe = Array.isArray(cached?.items) ? cached.items : [];
+      source = universe.length ? "本地 A 股缓存" : "";
+      warning = [warning, fallbackError.message || String(fallbackError)].filter(Boolean).join("；");
+    }
+  }
+  if (!universe.length) throw new Error(warning || "无法获取 A 股全市场代码。");
+  const result = writeQmtBridgeCodes(universe);
+  if (!fs.existsSync(QMT_BRIDGE_STRATEGY_FILE)) throw new Error("桥接策略源文件不存在。");
+  fs.mkdirSync(path.dirname(QMT_BRIDGE_QMT_STRATEGY_FILE), { recursive: true });
+  fs.copyFileSync(QMT_BRIDGE_STRATEGY_FILE, QMT_BRIDGE_QMT_STRATEGY_FILE);
+  fs.copyFileSync(QMT_BRIDGE_STRATEGY_FILE, QMT_BRIDGE_QMT_STRATEGY_CN_FILE);
+  const bridge = readQmtBridgeStatus();
+  const bridgeSummary = { ...bridge };
+  delete bridgeSummary.codes;
+  const warehouse = readQmtDataWarehouseStatus();
+  return {
+    success: true,
+    source,
+    warning,
+    universeCount: universe.length,
+    synced: result.codes.length,
+    ready: Number(warehouse.dailyFileCount || 0) >= 1000,
+    bridge: bridgeSummary,
+    warehouse,
+    steps: [
+      `已写入 QMT 代码清单：${QMT_BRIDGE_CODES_FILE}`,
+      `已安装桥接策略：${QMT_BRIDGE_QMT_STRATEGY_FILE}`,
+      `请在国信 QMT / iQuant 策略开发里运行 xiaoke_qmt_bridge.py，让它写入：${QMT_DAILY_DIR}`,
+      "运行几分钟后回到数据筛选页点“刷新质量”，QMT日线超过1000只后再做全市场技术筛选"
+    ]
   };
 }
 
@@ -4099,6 +4410,8 @@ function normalizeDouyinMetadata(info, shareUrl, parseError = "") {
   const timestamp = info && info.timestamp ? new Date(info.timestamp * 1000).toISOString() : new Date().toISOString();
   return {
     id: "meta_" + id,
+    sourceId: id,
+    awemeId: id,
     source: "douyin",
     originalUrl: shareUrl,
     title: (info && (info.title || info.fulltitle)) || "抖音视频（待补充）",
@@ -4131,8 +4444,22 @@ function metadataCsv(items) {
   return [columns.join(","), ...items.map(item => columns.map(col => esc(item[col])).join(","))].join("\n");
 }
 
+function defaultLocalVideoDirs() {
+  const desktopRoots = [
+    path.join(os.homedir(), "Desktop"),
+    path.join(os.homedir(), "OneDrive", "Desktop")
+  ];
+  const dirs = [];
+  for (const root of desktopRoots) {
+    for (const name of MODEL_VIDEO_DESKTOP_DIR_NAMES) {
+      dirs.push(path.join(root, name));
+    }
+  }
+  return dirs;
+}
+
 function getVideoDirs() {
-  const dirs = [VIDEOS_DIR, LEGACY_VIDEOS_DIR];
+  const dirs = [VIDEOS_DIR, ...defaultLocalVideoDirs()];
   if (fs.existsSync(VIDEO_FOLDERS_FILE)) {
     const extra = fs.readFileSync(VIDEO_FOLDERS_FILE, "utf8")
       .split(/\r?\n/)
@@ -4143,9 +4470,15 @@ function getVideoDirs() {
   return [...new Set(dirs.map(dir => path.resolve(dir)))].filter(dir => fs.existsSync(dir));
 }
 
+function isRejectedDouyinVideoId(value = "") {
+  const id = extractDouyinIdFromText(String(value || "")) || String(value || "");
+  return REJECTED_DOUYIN_VIDEO_IDS.has(id);
+}
+
 function isAllowedVideoPath(filePath) {
   const resolved = path.resolve(filePath);
-  return getVideoDirs().some(dir => resolved === dir || resolved.startsWith(dir + path.sep));
+  const allowedDirs = [...getVideoDirs(), VIDEO_COVERS_DIR].map(dir => path.resolve(dir));
+  return allowedDirs.some(dir => resolved === dir || resolved.startsWith(dir + path.sep));
 }
 
 function sendJson(res, status, data) {
@@ -4158,26 +4491,32 @@ function sendJson(res, status, data) {
 
 async function getEastmoneySectorQuotes(names = []) {
   const wanted = [...new Set((names || []).map(name => String(name || "").trim()).filter(Boolean))];
-  const params = new URLSearchParams({
-    pn: "1",
-    pz: "100",
-    po: "1",
-    np: "1",
-    fltt: "2",
-    invt: "2",
-    fid: "f3",
-    fs: "m:90+t:2,m:90+t:3",
-    fields: "f12,f14,f2,f3,f6,f8,f20,f24,f25,f104,f105,f128,f136"
-  });
-  const response = await fetch(`https://82.push2.eastmoney.com/api/qt/clist/get?${params.toString()}`, {
-    headers: {
-      "User-Agent": "Mozilla/5.0",
-      Referer: "https://quote.eastmoney.com/"
-    }
-  });
-  if (!response.ok) throw new Error(`东方财富板块接口失败 ${response.status}`);
-  const data = await response.json();
-  const rows = Array.isArray(data?.data?.diff) ? data.data.diff : [];
+  const sourceAt = new Date().toISOString();
+  const pageCount = 20;
+  const fetchPage = async pn => {
+    const params = new URLSearchParams({
+      pn: String(pn),
+      pz: "100",
+      po: "1",
+      np: "1",
+      fltt: "2",
+      invt: "2",
+      fid: "f3",
+      fs: "m:90+t:2,m:90+t:3",
+      fields: "f12,f14,f2,f3,f6,f8,f20,f24,f25,f104,f105,f128,f136"
+    });
+    const response = await fetch(`https://82.push2.eastmoney.com/api/qt/clist/get?${params.toString()}`, {
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        Referer: "https://quote.eastmoney.com/"
+      }
+    });
+    if (!response.ok) throw new Error(`东方财富板块接口失败 ${response.status}`);
+    const data = await response.json();
+    return Array.isArray(data?.data?.diff) ? data.data.diff : [];
+  };
+  const pages = await Promise.all(Array.from({ length: pageCount }, (_, index) => index + 1).map(fetchPage));
+  const rows = pages.flat();
   const normalized = rows.map(row => ({
     code: String(row.f12 || ""),
     name: String(row.f14 || ""),
@@ -4192,17 +4531,485 @@ async function getEastmoneySectorQuotes(names = []) {
     downCount: Number(row.f105),
     leader: String(row.f128 || ""),
     leaderPct: Number(row.f136),
-    source: "东方财富板块"
+    source: "东方财富板块",
+    sourceAt,
+    quoteMode: "intraday"
   })).filter(row => row.name);
   writeMarketCache(SECTOR_QUOTE_CACHE_FILE, normalized);
-  if (!wanted.length) return normalized.slice(0, 200);
+  if (!wanted.length) return normalized.slice(0, 1200);
   return wanted.map(name => {
     const compact = name.replace(/\s+/g, "");
-    const matched = normalized.find(row => row.name === name)
+    const code = String(name || "").trim().toUpperCase();
+    const matched = normalized.find(row => String(row.code || "").toUpperCase() === code)
+      || normalized.find(row => row.name === name)
       || normalized.find(row => row.name.includes(compact) || compact.includes(row.name))
       || normalized.find(row => compact.includes(row.name.replace(/概念|板块|指数|ETF/gi, "")));
     return matched ? { ...matched, query: name } : { name, query: name, source: "未匹配东方财富板块" };
   });
+}
+
+async function getEastmoneySectorConstituents(code = "") {
+  const boardCode = String(code || "").trim().toUpperCase();
+  if (!/^BK\d{4,6}$/.test(boardCode)) return [];
+  const params = new URLSearchParams({
+    pn: "1",
+    pz: "300",
+    po: "1",
+    np: "1",
+    fltt: "2",
+    invt: "2",
+    fid: "f3",
+    fs: `b:${boardCode}`,
+    fields: "f12,f14,f2,f3,f6,f8,f20,f21,f62"
+  });
+  const response = await fetch(`https://82.push2.eastmoney.com/api/qt/clist/get?${params.toString()}`, {
+    headers: {
+      "User-Agent": "Mozilla/5.0",
+      Referer: "https://quote.eastmoney.com/"
+    }
+  });
+  if (!response.ok) throw new Error(`东方财富板块成分接口失败 ${response.status}`);
+  const data = await response.json();
+  const rows = Array.isArray(data?.data?.diff) ? data.data.diff : [];
+  return rows.map(row => ({
+    code: String(row.f12 || ""),
+    name: String(row.f14 || ""),
+    price: row.f2,
+    pct: Number(row.f3),
+    amount: Number(row.f6),
+    turnoverRate: Number(row.f8),
+    marketCap: row.f20,
+    circulationMarketCap: row.f21,
+    mainNetInflow: row.f62,
+    source: "东方财富板块成分"
+  })).filter(row => row.name);
+}
+
+function eastmoneySectorFetchSleep(ms = 180) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function fetchEastmoneyJsonViaNodeHttp(url, options = {}) {
+  const timeoutMs = Math.max(3000, Number(options.timeoutMs || 12000));
+  const headers = options.headers || {
+    Referer: "https://quote.eastmoney.com/",
+    "User-Agent": "Mozilla/5.0"
+  };
+  return new Promise((resolve, reject) => {
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch (error) {
+      reject(error);
+      return;
+    }
+    const client = parsed.protocol === "https:" ? require("https") : http;
+    const req = client.get(parsed, { headers, timeout: timeoutMs }, response => {
+      let body = "";
+      response.setEncoding("utf8");
+      response.on("data", chunk => {
+        body += chunk;
+        if (body.length > 5 * 1024 * 1024) req.destroy(new Error("东方财富响应过大"));
+      });
+      response.on("end", () => {
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          reject(new Error(`东方财富接口失败 ${response.statusCode}`));
+          return;
+        }
+        try {
+          resolve(JSON.parse(body));
+        } catch (error) {
+          reject(new Error("东方财富返回JSON解析失败"));
+        }
+      });
+    });
+    req.on("timeout", () => req.destroy(new Error("东方财富历史接口超时")));
+    req.on("error", reject);
+  });
+}
+
+function fetchEastmoneyJsonViaCurl(url, options = {}) {
+  const timeoutMs = Math.max(3000, Number(options.timeoutMs || 12000));
+  const timeoutSec = Math.max(3, Math.ceil(timeoutMs / 1000));
+  const headers = options.headers || {
+    Referer: "https://quote.eastmoney.com/",
+    "User-Agent": "Mozilla/5.0"
+  };
+  const curl = process.platform === "win32" ? "curl.exe" : "curl";
+  const args = [
+    "--silent",
+    "--show-error",
+    "--max-time",
+    String(timeoutSec)
+  ];
+  Object.entries(headers).forEach(([key, value]) => {
+    args.push("-H", `${key}: ${value}`);
+  });
+  args.push(url);
+  return new Promise((resolve, reject) => {
+    execFile(curl, args, { maxBuffer: 6 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error((stderr || error.message || "curl请求失败").trim()));
+        return;
+      }
+      try {
+        resolve(JSON.parse(stdout));
+      } catch {
+        reject(new Error("curl返回JSON解析失败"));
+      }
+    });
+  });
+}
+
+async function fetchEastmoneyJsonWithRetry(urls = [], options = {}) {
+  const uniqueUrls = [...new Set((urls || []).filter(Boolean))];
+  const timeoutMs = Math.max(3000, Number(options.timeoutMs || 12000));
+  const retry = Math.max(1, Number(options.retry || 2));
+  const headers = options.headers || {
+    Referer: "https://quote.eastmoney.com/",
+    "User-Agent": "Mozilla/5.0"
+  };
+  let lastError = null;
+  for (let attempt = 0; attempt < retry; attempt += 1) {
+    for (const url of uniqueUrls) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const response = await fetch(url, { headers, signal: controller.signal });
+        if (!response.ok) throw new Error(`东方财富接口失败 ${response.status}`);
+        return await response.json();
+      } catch (error) {
+        lastError = error;
+        try {
+          return await fetchEastmoneyJsonViaNodeHttp(url, { headers, timeoutMs });
+        } catch (fallbackError) {
+          lastError = fallbackError;
+          try {
+            return await fetchEastmoneyJsonViaCurl(url, { headers, timeoutMs });
+          } catch (curlError) {
+            lastError = curlError;
+          }
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+      await eastmoneySectorFetchSleep(120 + attempt * 160);
+    }
+  }
+  throw new Error(lastError?.name === "AbortError" ? "东方财富历史接口超时" : (lastError?.message || "东方财富历史接口失败"));
+}
+
+async function getEastmoneySectorKline(code = "", options = {}) {
+  const boardCode = String(code || "").trim().toUpperCase();
+  if (!/^BK\d{4,6}$/.test(boardCode)) return [];
+  const end = String(options.end || "20500101").replace(/[^\d]/g, "") || "20500101";
+  const days = Math.max(20, Math.min(260, Number(options.days || 90)));
+  const begDate = new Date(Date.now() - Math.ceil(days * 1.8) * 86400000);
+  const beg = String(options.beg || `${begDate.getFullYear()}${String(begDate.getMonth() + 1).padStart(2, "0")}${String(begDate.getDate()).padStart(2, "0")}`).replace(/[^\d]/g, "");
+  const params = new URLSearchParams({
+    secid: `90.${boardCode}`,
+    fields1: "f1,f2,f3,f4,f5,f6",
+    fields2: "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+    klt: "101",
+    fqt: "1",
+    beg,
+    end
+  });
+  const path = `/api/qt/stock/kline/get?${params.toString()}`;
+  const data = await fetchEastmoneyJsonWithRetry([
+    `http://push2his.eastmoney.com${path}`,
+    `https://push2his.eastmoney.com${path}`
+  ], { timeoutMs: 8000, retry: 1 });
+  const rows = Array.isArray(data?.data?.klines) ? data.data.klines : [];
+  return rows.map((line, index) => {
+    const parts = String(line || "").split(",");
+    const close = Number(parts[2]);
+    const close20 = index >= 20 ? Number(String(rows[index - 20] || "").split(",")[2]) : null;
+    return {
+      date: parts[0],
+      open: Number(parts[1]),
+      close,
+      high: Number(parts[3]),
+      low: Number(parts[4]),
+      volume: Number(parts[5]),
+      amount: Number(parts[6]),
+      amplitude: Number(parts[7]),
+      pct: Number(parts[8]),
+      change: Number(parts[9]),
+      turnoverRate: Number(parts[10]),
+      pct20: Number.isFinite(close20) && close20 > 0 ? (close / close20 - 1) * 100 : null
+    };
+  }).filter(row => row.date && Number.isFinite(row.close)).slice(-days);
+}
+
+async function getEastmoneySectorRealtimeQuote(code = "") {
+  const boardCode = String(code || "").trim().toUpperCase();
+  if (!/^BK\d{4,6}$/.test(boardCode)) return null;
+  const params = new URLSearchParams({
+    secid: `90.${boardCode}`,
+    fields: "f43,f44,f45,f46,f47,f48,f57,f58,f60,f169,f170,f171,f292"
+  });
+  const hosts = ["https://push2.eastmoney.com", "https://82.push2.eastmoney.com", "https://91.push2.eastmoney.com"];
+  let lastError = null;
+  for (const host of hosts) {
+    try {
+      const response = await fetch(`${host}/api/qt/stock/get?${params.toString()}`, {
+        headers: {
+          Referer: "https://quote.eastmoney.com/",
+          "User-Agent": "Mozilla/5.0"
+        }
+      });
+      if (!response.ok) throw new Error(`东方财富板块实时Quote失败 ${response.status}`);
+      const data = await response.json().catch(() => ({}));
+      const row = data?.data || {};
+      const pct = Number(row.f170) / 100;
+      const price = Number(row.f43) / 100;
+      if (!Number.isFinite(pct) || !Number.isFinite(price)) throw new Error("东方财富板块实时Quote无有效涨跌");
+      return {
+        code: String(row.f57 || boardCode).toUpperCase(),
+        name: String(row.f58 || boardCode),
+        price,
+        pct,
+        amount: Number(row.f48),
+        change: Number(row.f169) / 100,
+        previousClose: Number(row.f60) / 100,
+        volume: Number(row.f47),
+        source: "东方财富板块实时Quote校准",
+        sourceAt: new Date().toISOString(),
+        quoteMode: "intraday"
+      };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (lastError) throw lastError;
+  return null;
+}
+
+const eastmoneySectorLookupCache = new Map();
+const EASTMONEY_SECTOR_STATIC_MAP = new Map([
+  ["钼", { code: "BK1623", name: "钼" }],
+  ["有机硅", { code: "BK1431", name: "有机硅" }],
+  ["半导体材料", { code: "BK1325", name: "半导体材料" }],
+  ["半导体设备", { code: "BK1326", name: "半导体设备" }],
+  ["半导体", { code: "BK1036", name: "半导体" }],
+  ["玻纤", { code: "BK0546", name: "玻纤" }],
+  ["中芯概念", { code: "BK0935", name: "中芯概念" }],
+  ["中心概念", { code: "BK0935", name: "中芯概念" }],
+  ["高带宽内存", { code: "BK1152", name: "高带宽内存" }],
+  ["HBM", { code: "BK1152", name: "高带宽内存" }]
+]);
+
+const EASTMONEY_SECTOR_HISTORY_PRIORITY = [
+  { code: "BK1136", name: "光通信模块" },
+  { code: "BK1325", name: "半导体材料" },
+  { code: "BK1326", name: "半导体设备" },
+  { code: "BK1137", name: "存储芯片" },
+  { code: "BK1152", name: "高带宽内存" },
+  { code: "BK1036", name: "半导体" },
+  { code: "BK0935", name: "中芯概念" },
+  { code: "BK1623", name: "钼" }
+];
+
+function mergeSectorHistoryPrioritySectors(rows = [], limit = 180) {
+  const byCode = new Map();
+  EASTMONEY_SECTOR_HISTORY_PRIORITY.forEach(row => byCode.set(String(row.code).toUpperCase(), { ...row, priority: true }));
+  (rows || []).forEach(row => {
+    const code = String(row.code || "").trim().toUpperCase();
+    if (!/^BK\d{4,6}$/.test(code)) return;
+    byCode.set(code, { ...row, code });
+  });
+  return Array.from(byCode.values()).slice(0, Math.max(EASTMONEY_SECTOR_HISTORY_PRIORITY.length, limit));
+}
+
+function findStaticEastmoneySector(name = "") {
+  const query = String(name || "").trim();
+  const compact = query.replace(/\s+/g, "").toUpperCase();
+  if (!compact) return null;
+  for (const [key, sector] of EASTMONEY_SECTOR_STATIC_MAP.entries()) {
+    const normalizedKey = String(key || "").replace(/\s+/g, "").toUpperCase();
+    if (compact === normalizedKey || compact.includes(normalizedKey) || normalizedKey.includes(compact)) {
+      return { ...sector, staticMatched: true };
+    }
+  }
+  return null;
+}
+
+async function findEastmoneySectorByName(name = "") {
+  const query = String(name || "").trim();
+  if (!query) return null;
+  if (eastmoneySectorLookupCache.has(query)) return eastmoneySectorLookupCache.get(query);
+  const staticMatched = findStaticEastmoneySector(query);
+  if (staticMatched) {
+    eastmoneySectorLookupCache.set(query, staticMatched);
+    return staticMatched;
+  }
+  const url = `https://searchapi.eastmoney.com/api/suggest/get?input=${encodeURIComponent(query)}&type=14&token=44c9d251add88e27b65ed86506f6e5da`;
+  let result = null;
+  try {
+    const response = await fetch(url, {
+      headers: {
+        Referer: "https://www.eastmoney.com/",
+        "User-Agent": "Mozilla/5.0"
+      }
+    });
+    if (!response.ok) throw new Error(`东方财富板块搜索失败 ${response.status}`);
+    const data = await response.json().catch(() => ({}));
+    const rows = Array.isArray(data?.QuotationCodeTable?.Data) ? data.QuotationCodeTable.Data : [];
+    const compactName = query.replace(/\s+/g, "");
+    const matched = rows.find(row => /^BK\d{4,6}$/i.test(row.Code || "") && row.Name === query)
+      || rows.find(row => /^BK\d{4,6}$/i.test(row.Code || "") && (String(row.Name || "").includes(compactName) || compactName.includes(String(row.Name || ""))))
+      || rows.find(row => /^BK\d{4,6}$/i.test(row.Code || ""));
+    result = matched ? {
+      code: String(matched.Code || "").toUpperCase(),
+      name: String(matched.Name || query),
+      quoteId: String(matched.QuoteID || "")
+    } : null;
+  } catch {
+    result = findStaticEastmoneySector(query);
+  }
+  eastmoneySectorLookupCache.set(query, result);
+  return result;
+}
+
+async function eastmoneySectorQuoteFromLatestKline(sector = {}, fallback = {}) {
+  if (!/^BK\d{4,6}$/i.test(sector.code || "")) return fallback;
+  const realtime = await getEastmoneySectorRealtimeQuote(sector.code).catch(() => null);
+  const rows = await getEastmoneySectorKline(sector.code, { days: 70 }).catch(() => []);
+  const latest = rows[rows.length - 1] || null;
+  if (!realtime && !latest) return fallback;
+  const fallbackPct = Number(fallback.pct);
+  const eastmoneyPct = Number(realtime?.pct ?? latest?.pct);
+  const sourceDiff = Number.isFinite(fallbackPct) && Number.isFinite(eastmoneyPct)
+    ? Number((eastmoneyPct - fallbackPct).toFixed(2))
+    : null;
+  const sourceDiffAbs = sourceDiff === null ? null : Math.abs(sourceDiff);
+  return {
+    ...fallback,
+    code: sector.code,
+    name: realtime?.name || sector.name || fallback.name,
+    price: realtime?.price ?? latest.close,
+    pct: realtime?.pct ?? latest.pct,
+    amount: realtime?.amount ?? latest.amount,
+    turnoverRate: latest?.turnoverRate ?? fallback.turnoverRate ?? null,
+    pct60: latest?.pct20 ?? fallback.pct60 ?? null,
+    source: realtime ? "东方财富板块实时Quote校准" : "东方财富板块历史K线校准",
+    sourceAt: realtime?.sourceAt || (latest?.date ? `${latest.date}T15:00:00+08:00` : new Date().toISOString()),
+    quoteMode: realtime ? "intraday" : "close",
+    fallbackSource: fallback.source || "",
+    fallbackName: fallback.name || "",
+    fallbackCode: fallback.code || "",
+    fallbackPct: Number.isFinite(fallbackPct) ? fallbackPct : null,
+    sourceDiff,
+    sourceDiffAbs,
+    sourceDiffLevel: sourceDiffAbs === null ? "" : sourceDiffAbs >= 5 ? "严重" : sourceDiffAbs >= 2 ? "偏离" : "正常",
+    klineDate: latest?.date || "",
+    eastmoneyMatched: true
+  };
+}
+
+async function enrichSectorRowsWithEastmoneyKline(rows = [], options = {}) {
+  const limit = Math.max(0, Math.min(120, Number(options.limit || 80)));
+  const sourceRows = (rows || []).slice(0, limit);
+  const rest = (rows || []).slice(limit);
+  const concurrency = 5;
+  const enriched = [];
+  for (let i = 0; i < sourceRows.length; i += concurrency) {
+    const batch = sourceRows.slice(i, i + concurrency);
+    const settled = await Promise.allSettled(batch.map(async row => {
+      const sector = await findEastmoneySectorByName(row.name);
+      if (!sector) return row;
+      return eastmoneySectorQuoteFromLatestKline(sector, row);
+    }));
+    settled.forEach((result, index) => {
+      enriched.push(result.status === "fulfilled" ? result.value : batch[index]);
+    });
+  }
+  const merged = [...enriched, ...rest];
+  const calibrated = merged.filter(row => row.eastmoneyMatched).length;
+  if (calibrated) writeMarketCache(SECTOR_QUOTE_CACHE_FILE, merged);
+  return { items: merged, calibrated };
+}
+
+function sectorHistoryScore(row = {}) {
+  const clamp = (value, min, max) => Math.max(min, Math.min(max, Number(value) || 0));
+  const daily = (clamp(row.pct, -5, 5) + 5) / 10 * 60;
+  const trend = (clamp(row.pct20, -20, 40) + 20) / 60 * 30;
+  const activity = Math.max(0, Math.min(10, Math.log10(Math.max(1, Number(row.amount || 0))) - 8));
+  return Math.round(Math.max(0, Math.min(100, daily + trend + activity)));
+}
+
+async function buildEastmoneySectorHistorySnapshots(options = {}) {
+  const days = Math.max(20, Math.min(120, Number(options.days || 90)));
+  const limit = Math.max(40, Math.min(260, Number(options.limit || 180)));
+  const wantedCodes = String(options.codes || "")
+    .split(/[,，\s]+/)
+    .map(code => code.trim().toUpperCase())
+    .filter(code => /^BK\d{4,6}$/.test(code));
+  let quoteRows = [];
+  let quoteWarning = "";
+  if (!wantedCodes.length) {
+    try {
+      quoteRows = await getEastmoneySectorQuotes([]);
+    } catch (error) {
+      quoteWarning = error.message || "东方财富板块列表获取失败";
+      const cached = readMarketCache(SECTOR_QUOTE_CACHE_FILE);
+      quoteRows = Array.isArray(cached?.items) ? cached.items : [];
+    }
+  }
+  const sectors = wantedCodes.length
+    ? wantedCodes.map(code => EASTMONEY_SECTOR_HISTORY_PRIORITY.find(item => item.code === code) || { code, name: code })
+    : mergeSectorHistoryPrioritySectors(quoteRows.filter(row => /^BK\d{4,6}$/i.test(row.code)), limit);
+  if (!sectors.length) throw new Error(quoteWarning || "没有可回填的东方财富标准板块");
+  const rows = [];
+  const failures = [];
+  const concurrency = 4;
+  for (let i = 0; i < sectors.length; i += concurrency) {
+    const batch = sectors.slice(i, i + concurrency);
+    const settled = await Promise.allSettled(batch.map(async sector => {
+      const history = await getEastmoneySectorKline(sector.code, { days });
+      return { sector, history };
+    }));
+    settled.forEach((result, index) => {
+      if (result.status === "fulfilled") rows.push(result.value);
+      else failures.push({ code: batch[index]?.code, name: batch[index]?.name, error: result.reason?.message || String(result.reason) });
+    });
+    if (!rows.length && failures.length >= Math.min(8, sectors.length)) {
+      quoteWarning = [quoteWarning, "东方财富历史接口连续失败，已停止后续回填以避免页面卡顿"].filter(Boolean).join("；");
+      break;
+    }
+  }
+  const byDate = new Map();
+  rows.forEach(({ sector, history }) => {
+    history.forEach(day => {
+      if (!byDate.has(day.date)) byDate.set(day.date, []);
+      byDate.get(day.date).push({
+        name: sector.name,
+        code: sector.code,
+        pct: day.pct,
+        pct60: day.pct20,
+        score: sectorHistoryScore(day),
+        breadth: null,
+        leader: "",
+        amount: day.amount,
+        source: "东方财富板块历史K线",
+        historyClose: day.close
+      });
+    });
+  });
+  const snapshots = Array.from(byDate.entries())
+    .sort(([a], [b]) => String(b).localeCompare(String(a)))
+    .slice(0, days)
+    .map(([date, items]) => ({
+      date,
+      at: new Date(`${date}T15:30:00+08:00`).toISOString(),
+      source: "东方财富板块历史K线",
+      items: items
+        .sort((a, b) => Number(b.score || 0) - Number(a.score || 0) || Number(b.pct || -999) - Number(a.pct || -999))
+        .slice(0, Math.min(limit, 600))
+        .map((item, index) => ({ ...item, rank: index + 1 }))
+    }));
+  return { success: true, days, sectorCount: sectors.length, fetched: rows.length, failures, snapshots, warning: quoteWarning };
 }
 
 async function getSinaSectorQuotes(names = []) {
@@ -5571,9 +6378,122 @@ function compactCount(value) {
   return String(num);
 }
 
+function normalizeDateParts(year, month, day) {
+  const mm = String(month || "").padStart(2, "0");
+  const dd = String(day || "").padStart(2, "0");
+  const date = `${year}-${mm}-${dd}`;
+  const parsed = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return "";
+  if (parsed.toISOString().slice(0, 10) !== date) return "";
+  return date;
+}
+
+function formatDateInShanghai(date) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date).reduce((acc, part) => {
+    if (part.type !== "literal") acc[part.type] = part.value;
+    return acc;
+  }, {});
+  return parts.year && parts.month && parts.day ? `${parts.year}-${parts.month}-${parts.day}` : "";
+}
+
+function parsePublishedDateFromAwemeId(id) {
+  if (!/^\d{16,22}$/.test(String(id || ""))) return "";
+  try {
+    const timestamp = Number(BigInt(id) >> 32n);
+    const date = new Date(timestamp * 1000);
+    if (Number.isNaN(date.getTime())) return "";
+    const year = Number(formatDateInShanghai(date).slice(0, 4));
+    if (year < 2020 || year > 2035) return "";
+    return formatDateInShanghai(date);
+  } catch {
+    return "";
+  }
+}
+
+function parsePublishedDateFromText(text = "") {
+  const value = String(text || "");
+  const compact = value.match(/(20\d{2})(\d{2})(\d{2})/);
+  if (compact) return normalizeDateParts(compact[1], compact[2], compact[3]);
+  const separated = value.match(/(20\d{2})[.\-/年](\d{1,2})[.\-/月](\d{1,2})日?/);
+  if (separated) return normalizeDateParts(separated[1], separated[2], separated[3]);
+  return "";
+}
+
+function generatedCoverPathFor(id) {
+  const safeId = String(id || "video").replace(/[^\w.-]+/g, "_").slice(0, 80) || "video";
+  return path.join(VIDEO_COVERS_DIR, `${safeId}.jpg`);
+}
+
+function ensureGeneratedVideoCover(filePath, id) {
+  const outFile = generatedCoverPathFor(id || path.basename(filePath, path.extname(filePath)));
+  if (fs.existsSync(outFile) && fs.statSync(outFile).size > 1024) return outFile;
+  const args = [
+    "-y",
+    "-ss", "00:00:01",
+    "-i", filePath,
+    "-frames:v", "1",
+    "-vf", "scale=480:-1",
+    "-q:v", "4",
+    outFile
+  ];
+  const result = spawnSync(process.env.FFMPEG_BIN || "ffmpeg", args, {
+    windowsHide: true,
+    timeout: 30000,
+    stdio: "ignore"
+  });
+  if (result.error || result.status !== 0) return "";
+  return fs.existsSync(outFile) && fs.statSync(outFile).size > 1024 ? outFile : "";
+}
+
+const mediaAudioCache = new Map();
+
+function localVideoHasAudio(filePath) {
+  try {
+    const stat = fs.statSync(filePath);
+    const key = `${path.resolve(filePath)}|${stat.size}|${Math.round(stat.mtimeMs)}`;
+    if (mediaAudioCache.has(key)) return mediaAudioCache.get(key);
+    const result = spawnSync(process.env.FFPROBE_BIN || "ffprobe", [
+      "-v", "error",
+      "-select_streams", "a",
+      "-show_entries", "stream=codec_type",
+      "-of", "json",
+      filePath
+    ], {
+      windowsHide: true,
+      encoding: "utf8",
+      timeout: 30000,
+      maxBuffer: 2 * 1024 * 1024
+    });
+    const ok = !result.error && result.status === 0 && (() => {
+      try {
+        const parsed = JSON.parse(result.stdout || "{}");
+        return Array.isArray(parsed.streams) && parsed.streams.some(stream => stream.codec_type === "audio");
+      } catch {
+        return false;
+      }
+    })();
+    mediaAudioCache.set(key, ok);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+function ensureDownloadedVideoHasAudio(filePath) {
+  if (localVideoHasAudio(filePath)) return;
+  try { fs.unlinkSync(filePath); } catch {}
+  throw new Error("下载结果没有音频流，已丢弃这个无声视频并尝试其它来源。");
+}
+
 function findCoverForVideo(filePath, id, facts) {
   const sameDir = path.dirname(filePath);
   const candidates = [
+    generatedCoverPathFor(id),
     path.join(sameDir, `${id}.jpg`),
     path.join(path.dirname(sameDir), "封面", `${id}.jpg`)
   ];
@@ -5589,16 +6509,38 @@ function readLocalLibraryInfo(filePath, factsCache, ocrTitles = {}) {
   const dir = path.dirname(filePath);
   if (!factsCache.has(dir)) factsCache.set(dir, readFactsForDir(dir));
   const facts = factsCache.get(dir);
-  if (!facts || !facts.videos || !facts.videos[id]) return { sourceId: id };
+  if (!facts || !facts.videos || !facts.videos[id]) {
+    const awemeId = (id.match(/\d{16,22}/) || [])[0] || id;
+    const ocrTitle = String(ocrTitles[awemeId] || ocrTitles[id] || "").trim();
+    const titleFromName = id
+      .replace(new RegExp(awemeId, "g"), "")
+      .replace(/[_-]+/g, " ")
+      .trim();
+    const title = ocrTitle || titleFromName || awemeId;
+    const publishedAt = parsePublishedDateFromText(`${titleFromName} ${filePath}`) || parsePublishedDateFromAwemeId(awemeId);
+    const coverPath = dir === VIDEOS_DIR ? (findCoverForVideo(filePath, awemeId, facts) || ensureGeneratedVideoCover(filePath, awemeId)) : "";
+    return {
+      sourceId: awemeId,
+      title,
+      topic: classifyVideo(title),
+      author: "模型先生",
+      originalUrl: /^\d{10,}$/.test(awemeId) ? `https://www.douyin.com/video/${awemeId}` : "",
+      publishedAt,
+      transcript: ocrTitle || titleFromName || "新同步视频，待识别标题/转写。",
+      focus: classifyVideo(title),
+      confidence: "新同步",
+      thumbnailPath: coverPath
+    };
+  }
 
   const video = facts.videos[id] || {};
   const author = facts.authors && facts.authors[video.authorId] ? facts.authors[video.authorId] : {};
   const description = String((facts.videoDescriptions && facts.videoDescriptions[id]) || "").trim();
-  const publishedAt = video.createTime ? new Date(video.createTime * 1000).toISOString().slice(0, 10) : "";
+  const publishedAt = video.createTime ? formatDateInShanghai(new Date(video.createTime * 1000)) : parsePublishedDateFromAwemeId(id);
   const ocrTitle = String(ocrTitles[id] || "").trim();
   const title = ocrTitle || description || `${publishedAt || "未知日期"}｜${compactCount(video.diggCount)}赞｜模型先生视频`;
   const topic = classifyVideo(title);
-  const coverPath = findCoverForVideo(filePath, id, facts);
+  const coverPath = findCoverForVideo(filePath, id, facts) || (dir === VIDEOS_DIR ? ensureGeneratedVideoCover(filePath, id) : "");
 
   return {
     sourceId: id,
@@ -5633,7 +6575,13 @@ function getLocalVideos() {
         }
         if (!entry.isFile() || !VIDEO_EXTS.includes(path.extname(entry.name).toLowerCase())) return;
         const stat = fs.statSync(filePath);
+        if (dir === VIDEOS_DIR && stat.size < MIN_LOCAL_VIDEO_BYTES) return;
+        const hasAudio = localVideoHasAudio(filePath);
         const info = readLocalLibraryInfo(filePath, factsCache, ocrTitles);
+        if (isRejectedDouyinVideoId(info.sourceId || entry.name || filePath)) return;
+        const thumbnailVersion = info.thumbnailPath && fs.existsSync(info.thumbnailPath)
+          ? String(Math.round(fs.statSync(info.thumbnailPath).mtimeMs))
+          : "";
         videos.push({
           filename: entry.name,
           sourceDir: dir,
@@ -5650,11 +6598,12 @@ function getLocalVideos() {
           focus: info.focus || info.topic || "本地素材",
           confidence: info.confidence || "待确认",
           originalUrl: info.originalUrl || "",
-          thumbnail: info.thumbnailPath ? `/api/local-video-file?path=${encodeURIComponent(info.thumbnailPath)}` : "",
+          thumbnail: info.thumbnailPath ? `/api/local-video-file?path=${encodeURIComponent(info.thumbnailPath)}${thumbnailVersion ? `&v=${thumbnailVersion}` : ""}` : "",
           sizeLabel: info.sizeLabel || "",
           size: stat.size,
           mtime: stat.mtime.toISOString(),
-          url: `/api/local-video-file?path=${encodeURIComponent(filePath)}`
+          url: `/api/local-video-file?path=${encodeURIComponent(filePath)}`,
+          hasAudio
         });
       });
     } catch {
@@ -5804,6 +6753,21 @@ function normalizeOcrTitle(text) {
     .trim();
 }
 
+function cleanMediaToolError(detail, fallback = "媒体处理失败") {
+  const text = String(detail || "").trim();
+  if (!text) return fallback;
+  if (/moov atom not found|Invalid data found when processing input/i.test(text)) {
+    return "这个本地视频文件可能不完整或已损坏，无法抽帧识别。";
+  }
+  if (/ModuleNotFoundError|No module named/i.test(text)) {
+    return "OCR依赖缺失，请重启服务或重新安装 OCR 依赖。";
+  }
+  if (/Traceback/i.test(text)) {
+    return "OCR运行失败，请重启服务后再试。";
+  }
+  return text.split(/\r?\n/).filter(Boolean).slice(-2).join(" ").slice(0, 260) || fallback;
+}
+
 function frameNameForVideo(filePath) {
   const hash = require("crypto").createHash("md5").update(path.resolve(filePath)).digest("hex").slice(0, 12);
   return path.join(OCR_FRAMES_DIR, `${hash}.jpg`);
@@ -5822,7 +6786,7 @@ function extractOcrFrame(filePath) {
     ];
     execFile(process.env.FFMPEG_BIN || "ffmpeg", args, { timeout: 45000, maxBuffer: 12 * 1024 * 1024 }, (error, stdout, stderr) => {
       if (error) {
-        reject(new Error((stderr || stdout || error.message || "ffmpeg frame extraction failed").trim()));
+        reject(new Error(cleanMediaToolError(stderr || stdout || error.message, "ffmpeg frame extraction failed")));
         return;
       }
       if (!fs.existsSync(outFile)) {
@@ -5842,11 +6806,16 @@ function runFrameOcr(imagePath) {
       env: { ...process.env, PYTHONIOENCODING: "utf-8" }
     }, (error, stdout, stderr) => {
       if (error) {
-        reject(new Error((stderr || stdout || error.message || "OCR failed").trim()));
+        reject(new Error(cleanMediaToolError(stderr || stdout || error.message, "OCR failed")));
         return;
       }
       try {
-        resolve(JSON.parse(stdout || "{}"));
+        const parsed = JSON.parse(stdout || "{}");
+        if (parsed && parsed.success === false) {
+          reject(new Error(parsed.error || "OCR failed"));
+          return;
+        }
+        resolve(parsed);
       } catch {
         reject(new Error("OCR returned invalid JSON."));
       }
@@ -5869,30 +6838,73 @@ async function extractVideoTitleByOcr(filePath, options = {}) {
   return { title, cached: false, id, rows: result.rows || [], framePath };
 }
 
-function runWhisperTranscription(filePath) {
-  return new Promise((resolve, reject) => {
-    const name = safeTranscriptName(filePath);
-    const outFile = path.join(TRANSCRIPTS_DIR, `${name}.txt`);
-    if (fs.existsSync(outFile) && fs.statSync(outFile).size > 0) {
-      const rawTranscript = fs.readFileSync(outFile, "utf8").trim();
-      const transcript = normalizeTranscriptText(rawTranscript);
-      if (!transcript) {
-        fs.unlinkSync(outFile);
-      } else {
-        if (transcript !== rawTranscript) fs.writeFileSync(outFile, transcript, "utf8");
-        resolve({ transcript, cached: true, transcriptFile: outFile });
-        return;
+function whisperOutputCandidates(filePath, outFile, startedAt = 0) {
+  const exact = path.resolve(outFile);
+  const baseName = path.basename(filePath, path.extname(filePath));
+  const safeName = safeTranscriptName(filePath);
+  const numericId = (String(filePath).match(/\d{10,}/) || [])[0] || "";
+  const direct = [
+    outFile,
+    path.join(TRANSCRIPTS_DIR, `${baseName}.txt`),
+    path.join(TRANSCRIPTS_DIR, `${safeName}.txt`)
+  ];
+  const rows = [];
+  direct.forEach(candidate => {
+    try {
+      if (candidate && fs.existsSync(candidate) && fs.statSync(candidate).size > 0) {
+        rows.push({ file: candidate, score: path.resolve(candidate) === exact ? 1000 : 900 });
       }
-    }
-    const args = [
-      filePath,
-      "--model", process.env.XIAOKE_WHISPER_MODEL || "base",
-      "--language", process.env.XIAOKE_WHISPER_LANGUAGE || "Chinese",
-      "--task", "transcribe",
-      "--output_format", "txt",
-      "--output_dir", TRANSCRIPTS_DIR,
-      "--verbose", "False"
-    ];
+    } catch {}
+  });
+  try {
+    const recentCutoff = Math.max(0, Number(startedAt || 0) - 5000);
+    fs.readdirSync(TRANSCRIPTS_DIR)
+      .filter(name => /\.txt$/i.test(name))
+      .forEach(name => {
+        const file = path.join(TRANSCRIPTS_DIR, name);
+        try {
+          const stat = fs.statSync(file);
+          if (!stat.size) return;
+          const lower = name.toLowerCase();
+          let score = 0;
+          if (path.resolve(file) === exact) score += 1000;
+          if (lower === `${baseName}.txt`.toLowerCase()) score += 900;
+          if (lower === `${safeName}.txt`.toLowerCase()) score += 900;
+          if (numericId && lower.includes(numericId)) score += 450;
+          if (baseName && lower.includes(baseName.toLowerCase().slice(0, 28))) score += 220;
+          if (stat.mtimeMs >= recentCutoff) score += 180;
+          if (score >= 180) rows.push({ file, score, mtimeMs: stat.mtimeMs });
+        } catch {}
+      });
+  } catch {}
+  rows.sort((a, b) => (b.score - a.score) || ((b.mtimeMs || 0) - (a.mtimeMs || 0)));
+  return rows.map(row => row.file).filter((file, index, all) => file && all.indexOf(file) === index);
+}
+
+function readCanonicalWhisperTranscript(filePath, outFile, startedAt = 0) {
+  const sourceOut = whisperOutputCandidates(filePath, outFile, startedAt)[0];
+  if (!sourceOut) return null;
+  if (path.resolve(sourceOut) !== path.resolve(outFile)) {
+    fs.copyFileSync(sourceOut, outFile);
+  }
+  const rawTranscript = fs.readFileSync(outFile, "utf8").trim();
+  const transcript = normalizeTranscriptText(rawTranscript);
+  if (!transcript) return null;
+  if (transcript !== rawTranscript) fs.writeFileSync(outFile, transcript, "utf8");
+  return { transcript, transcriptFile: outFile };
+}
+
+function runWhisperCli(inputPath) {
+  const args = [
+    inputPath,
+    "--model", process.env.XIAOKE_WHISPER_MODEL || "base",
+    "--language", process.env.XIAOKE_WHISPER_LANGUAGE || "Chinese",
+    "--task", "transcribe",
+    "--output_format", "txt",
+    "--output_dir", TRANSCRIPTS_DIR,
+    "--verbose", "False"
+  ];
+  return new Promise((resolve, reject) => {
     execFile(process.env.WHISPER_BIN || "whisper", args, {
       timeout: Number(process.env.XIAOKE_WHISPER_TIMEOUT_MS || 900000),
       maxBuffer: 24 * 1024 * 1024,
@@ -5903,23 +6915,77 @@ function runWhisperTranscription(filePath) {
         reject(new Error(detail || "Whisper transcription failed."));
         return;
       }
-      const defaultOut = path.join(TRANSCRIPTS_DIR, `${path.basename(filePath, path.extname(filePath))}.txt`);
-      const sourceOut = fs.existsSync(defaultOut) ? defaultOut : outFile;
-      if (sourceOut !== outFile && fs.existsSync(sourceOut)) fs.copyFileSync(sourceOut, outFile);
-      if (!fs.existsSync(outFile)) {
-        reject(new Error("Whisper finished but did not produce a txt file."));
-        return;
-      }
-      const rawTranscript = fs.readFileSync(outFile, "utf8").trim();
-      const transcript = normalizeTranscriptText(rawTranscript);
-      if (!transcript) {
-        reject(new Error("转写完成，但没有识别到语音文字。这个视频可能没有音轨、音量太低，或文件不是完整视频。"));
-        return;
-      }
-      if (transcript !== rawTranscript) fs.writeFileSync(outFile, transcript, "utf8");
-      resolve({ transcript, cached: false, transcriptFile: outFile });
+      resolve({ stdout, stderr });
     });
   });
+}
+
+function extractAudioForWhisper(filePath) {
+  const wavFile = path.join(os.tmpdir(), `${safeTranscriptName(filePath)}.wav`);
+  return new Promise((resolve, reject) => {
+    const args = [
+      "-y",
+      "-i", filePath,
+      "-vn",
+      "-ac", "1",
+      "-ar", "16000",
+      "-f", "wav",
+      wavFile
+    ];
+    execFile(process.env.FFMPEG_BIN || "ffmpeg", args, {
+      timeout: 120000,
+      maxBuffer: 24 * 1024 * 1024
+    }, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error(cleanMediaToolError(stderr || stdout || error.message, "无法从视频提取音频。")));
+        return;
+      }
+      if (!fs.existsSync(wavFile) || fs.statSync(wavFile).size <= 0) {
+        reject(new Error("ffmpeg 没有生成可用于转写的音频文件。"));
+        return;
+      }
+      resolve(wavFile);
+    });
+  });
+}
+
+async function runWhisperTranscription(filePath) {
+  if (!localVideoHasAudio(filePath)) {
+    throw new Error("这个本地视频文件没有音频流，无法语音转文字。请重新同步该抖音视频，或用桌面里带声音的原视频替换。");
+  }
+  const name = safeTranscriptName(filePath);
+  const outFile = path.join(TRANSCRIPTS_DIR, `${name}.txt`);
+  if (fs.existsSync(outFile) && fs.statSync(outFile).size > 0) {
+    const rawTranscript = fs.readFileSync(outFile, "utf8").trim();
+    const transcript = normalizeTranscriptText(rawTranscript);
+    if (!transcript) {
+      fs.unlinkSync(outFile);
+    } else {
+      if (transcript !== rawTranscript) fs.writeFileSync(outFile, transcript, "utf8");
+      return { transcript, cached: true, transcriptFile: outFile };
+    }
+  }
+
+  const startedAt = Date.now();
+  await runWhisperCli(filePath);
+  let result = readCanonicalWhisperTranscript(filePath, outFile, startedAt);
+  if (result) return { ...result, cached: false };
+
+  let wavFile = "";
+  try {
+    wavFile = await extractAudioForWhisper(filePath);
+    const audioStartedAt = Date.now();
+    await runWhisperCli(wavFile);
+    result = readCanonicalWhisperTranscript(wavFile, outFile, audioStartedAt)
+      || readCanonicalWhisperTranscript(filePath, outFile, startedAt);
+    if (result) return { ...result, cached: false, audioFallback: true };
+  } finally {
+    if (wavFile) {
+      try { fs.unlinkSync(wavFile); } catch {}
+    }
+  }
+
+  throw new Error("转写完成但没有找到可用文字文件。已尝试视频直转和音频兜底；请确认视频有清晰音轨。");
 }
 
 function runYtDlp(args, timeout = 90000) {
@@ -6115,30 +7181,94 @@ async function getDouyinComments(shareUrl, limit = 30) {
   }
 }
 
-async function saveDouyin(shareUrl) {
-  const outputTemplate = "%(title).80s_%(id)s.%(ext)s";
-  const stdout = await runWithCookieFallback([
-    "--no-playlist",
-    "--no-warnings",
-    "--restrict-filenames",
-    "--merge-output-format", "mp4",
-    "--print", "after_move:filepath",
-    "-P", VIDEOS_DIR,
-    "-o", outputTemplate,
-    shareUrl
-  ], 180000);
+function findExistingDouyinVideo(awemeId) {
+  const id = String(awemeId || "");
+  if (!id || !fs.existsSync(VIDEOS_DIR)) return null;
+  try {
+    const found = fs.readdirSync(VIDEOS_DIR)
+      .filter(name => VIDEO_EXTS.includes(path.extname(name).toLowerCase()) && name.includes(id))
+      .map(name => {
+        const filePath = path.join(VIDEOS_DIR, name);
+        const stat = fs.statSync(filePath);
+        return { name, filePath, stat };
+      })
+      .filter(item => item.stat.size >= MIN_LOCAL_VIDEO_BYTES)
+      .filter(item => localVideoHasAudio(item.filePath))
+      .sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs)[0];
+    if (!found) return null;
+    return {
+      filename: found.name,
+      size: found.stat.size,
+      mtime: found.stat.mtime.toISOString(),
+      url: `/api/local-video/${encodeURIComponent(found.name)}`,
+      alreadySaved: true
+    };
+  } catch {
+    return null;
+  }
+}
 
-  const lines = stdout.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-  const filePath = [...lines].reverse().find(line => fs.existsSync(line)) || "";
-  if (!filePath) throw new Error("Download finished but no saved file was found.");
-  const filename = path.basename(filePath);
-  const stat = fs.statSync(filePath);
-  return {
-    filename,
-    size: stat.size,
-    mtime: stat.mtime.toISOString(),
-    url: `/api/local-video/${encodeURIComponent(filename)}`
-  };
+function removeSilentDouyinVideos(awemeId) {
+  const id = String(awemeId || "");
+  if (!id || !fs.existsSync(VIDEOS_DIR)) return 0;
+  let removed = 0;
+  try {
+    fs.readdirSync(VIDEOS_DIR)
+      .filter(name => VIDEO_EXTS.includes(path.extname(name).toLowerCase()) && name.includes(id))
+      .forEach(name => {
+        const filePath = path.join(VIDEOS_DIR, name);
+        if (localVideoHasAudio(filePath)) return;
+        try {
+          fs.unlinkSync(filePath);
+          removed += 1;
+        } catch {}
+      });
+  } catch {}
+  return removed;
+}
+
+async function saveDouyin(shareUrl) {
+  const awemeId = extractDouyinIdFromText(shareUrl);
+  if (isRejectedDouyinVideoId(awemeId || shareUrl)) {
+    throw new Error("该作品已被标记为非模型先生来源，已阻止入库。");
+  }
+  const existing = findExistingDouyinVideo(awemeId);
+  if (existing) return existing;
+  removeSilentDouyinVideos(awemeId);
+  const outputTemplate = "%(title).80s_%(id)s.%(ext)s";
+  try {
+    const stdout = await runWithCookieFallback([
+      "--no-playlist",
+      "--no-warnings",
+      "--restrict-filenames",
+      "-f", "bv*+ba/b[ext=mp4]/best",
+      "--merge-output-format", "mp4",
+      "--print", "after_move:filepath",
+      "-P", VIDEOS_DIR,
+      "-o", outputTemplate,
+      shareUrl
+    ], 180000);
+
+    const lines = stdout.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    const filePath = [...lines].reverse().find(line => fs.existsSync(line)) || "";
+    if (!filePath) throw new Error("Download finished but no saved file was found.");
+    ensureDownloadedVideoHasAudio(filePath);
+    const filename = path.basename(filePath);
+    const stat = fs.statSync(filePath);
+    return {
+      filename,
+      size: stat.size,
+      mtime: stat.mtime.toISOString(),
+      url: `/api/local-video/${encodeURIComponent(filename)}`
+    };
+  } catch (error) {
+    try {
+      const result = await downloadDouyinViaBrowser(shareUrl);
+      return { ...result, primaryError: compactDouyinError(error) };
+    } catch (fallbackError) {
+      throw new Error(`${compactDouyinError(error)} / 浏览器兜底下载失败：${compactDouyinError(fallbackError)}`);
+    }
+  }
 }
 
 function readDouyinSideData() {
@@ -6178,6 +7308,27 @@ function writeDouyinSyncState(state) {
   const payload = { ...(state || {}), updatedAt: new Date().toISOString() };
   fs.writeFileSync(DOUYIN_SYNC_STATE_FILE, JSON.stringify(payload, null, 2), "utf8");
   return payload;
+}
+
+function douyinJobTimestamp(value) {
+  const time = new Date(value || 0).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function repairStaleDouyinSyncJob(job = douyinSyncJob) {
+  if (!job || job.status !== "running") return job || { status: "idle" };
+  const last = douyinJobTimestamp(job.updatedAt || job.startedAt);
+  const stale = !last || Date.now() - last > 15 * 60 * 1000;
+  if (!stale) return job;
+  return updateDouyinSyncJob({
+    status: "failed",
+    current: "",
+    finishedAt: new Date().toISOString(),
+    errors: [...(job.errors || []), {
+      step: "timeout",
+      error: "上一次抖音同步任务超过15分钟没有进度，已自动结束。可以更新登录态后继续同步。"
+    }].slice(-200)
+  });
 }
 
 function compactDouyinError(error) {
@@ -6370,7 +7521,16 @@ function cdpSession(webSocketDebuggerUrl) {
       await opened;
       const id = seq++;
       ws.send(JSON.stringify({ id, method, params }));
-      return new Promise(resolve => pending.set(id, resolve));
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          pending.delete(id);
+          reject(new Error(`CDP ${method} 超时`));
+        }, 20000);
+        pending.set(id, data => {
+          clearTimeout(timer);
+          resolve(data);
+        });
+      });
     },
     onEvent(fn) {
       listeners.push(fn);
@@ -6414,6 +7574,23 @@ function readDouyinCookiesForCdp() {
 async function getDouyinDebugPage(videoUrl) {
   await ensureDouyinDebugBrowser();
   try {
+    const tabs = await debugJsonRequest("GET", "http://127.0.0.1:9222/json");
+    const pages = (Array.isArray(tabs) ? tabs : []).filter(tab => tab.type === "page" && tab.webSocketDebuggerUrl);
+    const page = pages.find(tab => /douyin\.com/i.test(String(tab.url || ""))) || pages[0];
+    if (page && page.webSocketDebuggerUrl) {
+      const cdp = cdpSession(page.webSocketDebuggerUrl);
+      try {
+        await cdp.send("Page.enable");
+        await cdp.send("Page.navigate", { url: videoUrl });
+      } finally {
+        cdp.close();
+      }
+      return page;
+    }
+  } catch {
+    // Fall back to opening a controlled page below.
+  }
+  try {
     const target = await debugJsonRequest("PUT", `http://127.0.0.1:9222/json/new?${encodeURIComponent(videoUrl)}`);
     if (target && target.webSocketDebuggerUrl) return target;
   } catch {
@@ -6424,6 +7601,93 @@ async function getDouyinDebugPage(videoUrl) {
     || (Array.isArray(tabs) ? tabs : []).find(tab => tab.webSocketDebuggerUrl);
   if (!page) throw new Error("没有找到可控制的抖音浏览器页面。");
   return page;
+}
+
+function normalizeDouyinProfileEntry(entry = {}) {
+  const url = normalizeDouyinEntryUrl(entry);
+  if (!url) return null;
+  const id = extractDouyinIdFromText(url) || extractDouyinIdFromText(entry.id || "");
+  return {
+    url,
+    id,
+    title: String(entry.title || entry.text || "").replace(/\s+/g, " ").trim().slice(0, 120),
+    source: entry.source || "browser-profile"
+  };
+}
+
+function uniqueDouyinEntries(entries = [], limit = 20) {
+  const seen = new Set();
+  const rows = [];
+  for (const entry of entries) {
+    const normalized = normalizeDouyinProfileEntry(entry);
+    if (!normalized) continue;
+    const key = normalized.id || normalized.url;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push(normalized);
+    if (rows.length >= limit) break;
+  }
+  return rows;
+}
+
+async function listDouyinProfileVideosViaBrowser(profileUrl, limit = 20) {
+  const safeLimit = Math.max(1, Math.min(50, Number(limit) || 20));
+  const page = await getDouyinDebugPage(profileUrl);
+  const cdp = cdpSession(page.webSocketDebuggerUrl);
+  const visibleEntries = [];
+
+  try {
+    await cdp.send("Page.enable");
+    await cdp.send("Network.enable");
+    await cdp.send("Runtime.enable");
+    const cookies = readDouyinCookiesForCdp();
+    if (cookies.length) {
+      try {
+        await cdp.send("Network.setCookies", { cookies });
+      } catch {
+        // Continue with whatever cookies the dedicated browser already has.
+      }
+    }
+    await cdp.send("Page.navigate", { url: profileUrl });
+    await new Promise(resolve => setTimeout(resolve, 6500));
+
+    for (let i = 0; i < 30 && uniqueDouyinEntries(visibleEntries, safeLimit).length < safeLimit; i += 1) {
+      const domResult = await cdp.send("Runtime.evaluate", {
+        expression: `
+          (() => {
+            const rows = [];
+            const push = (id, title, source) => {
+              if (!id) return;
+              rows.push({ id: String(id), url: 'https://www.douyin.com/video/' + String(id), title: title || '', source });
+            };
+            document.querySelectorAll('a[href*="/video/"], a[href*="modal_id="], a[href*="aweme_id="]').forEach(a => {
+              const href = a.href || a.getAttribute('href') || '';
+              const rect = a.getBoundingClientRect();
+              if (rect.width < 80 || rect.height < 100) return;
+              const id = (href.match(/(?:video\\/|modal_id=|aweme_id=)(\\d{16,22})/) || [])[1];
+              push(id, (a.innerText || a.getAttribute('aria-label') || a.title || '').trim(), 'browser-dom-link');
+            });
+            window.scrollBy(0, Math.max(900, window.innerHeight || 900));
+            return rows;
+          })()
+        `,
+        returnByValue: true,
+        awaitPromise: true
+      });
+      const value = domResult.result && domResult.result.result ? domResult.result.result.value : [];
+      if (Array.isArray(value)) visibleEntries.push(...value);
+      await new Promise(resolve => setTimeout(resolve, 1400));
+    }
+
+    const rows = uniqueDouyinEntries(visibleEntries, safeLimit)
+      .filter(row => !isRejectedDouyinVideoId(row.id || row.url));
+    if (!rows.length) {
+      throw new Error("专用浏览器没有从博主主页的可见作品卡片抓到作品。请确认打开的是模型先生主页/合集页，不是单条视频页，并完成抖音验证。");
+    }
+    return rows;
+  } finally {
+    cdp.close();
+  }
 }
 
 function collectDouyinCommentsFromPayload(payload, ownerNames = [], bucket) {
@@ -6545,6 +7809,189 @@ async function stableGetDouyinCommentsViaBrowser(shareUrl, options = {}, meta = 
   };
 }
 
+function douyinSafeFilename(value = "") {
+  return String(value || "")
+    .replace(/[\\/:*?"<>|]+/g, "_")
+    .replace(/\s+/g, "_")
+    .slice(0, 90) || "douyin_video";
+}
+
+function uniqueDouyinClean(values = []) {
+  const seen = new Set();
+  return (values || []).map(value => String(value || "").trim()).filter(value => {
+    if (!value || seen.has(value)) return false;
+    seen.add(value);
+    return true;
+  });
+}
+
+async function downloadDouyinViaBrowser(shareUrl) {
+  const awemeId = extractDouyinIdFromText(shareUrl) || String(Date.now());
+  const videoUrl = awemeId ? `https://www.douyin.com/video/${awemeId}` : shareUrl;
+  const page = await getDouyinDebugPage(videoUrl);
+  const cdp = cdpSession(page.webSocketDebuggerUrl);
+  const mediaItems = [];
+  let pageTitle = "";
+
+  cdp.onEvent(event => {
+    if (event.method !== "Network.responseReceived") return;
+    const response = event.params && event.params.response ? event.params.response : {};
+    const url = response.url || "";
+    const mimeType = response.mimeType || "";
+    const resourceType = event.params ? event.params.type || "" : "";
+    const looksLikeMedia = /video|audio|mpegurl|mp4|webm/i.test(`${mimeType} ${resourceType}`)
+      || /\.(mp4|webm|m4v|m3u8)(\?|$)/i.test(url)
+      || /mime_type=video|video_id=|playwm|play_addr|aweme\/v1\/play/i.test(url);
+    if (!looksLikeMedia || !/^https?:\/\//i.test(url)) return;
+    mediaItems.push({ url, duration: 0, source: `network:${resourceType || mimeType}` });
+  });
+
+  try {
+    await cdp.send("Page.enable");
+    await cdp.send("Network.enable");
+    await cdp.send("Runtime.enable");
+    const cookies = readDouyinCookiesForCdp();
+    if (cookies.length) {
+      try { await cdp.send("Network.setCookies", { cookies }); } catch {}
+    }
+    await cdp.send("Page.navigate", { url: videoUrl });
+    await new Promise(resolve => setTimeout(resolve, 7000));
+    for (let i = 0; i < 12 && !mediaItems.some(item => /\.m3u8(\?|$)|\.mp4(\?|$)|\.webm(\?|$)|mime_type=video|play_addr|aweme\/v1\/play/i.test(item.url)); i += 1) {
+      const result = await cdp.send("Runtime.evaluate", {
+        expression: `
+          (() => {
+            const videos = Array.from(document.querySelectorAll('video')).map(v => {
+              try {
+                v.muted = true;
+                const played = v.play();
+                if (played && typeof played.catch === 'function') played.catch(() => {});
+              } catch {}
+              const rect = v.getBoundingClientRect();
+              const urls = [v.currentSrc, v.src, ...Array.from(v.querySelectorAll('source')).map(s => s.src)].filter(Boolean);
+              return {
+                urls,
+                duration: Number.isFinite(v.duration) ? v.duration : 0,
+                currentTime: Number.isFinite(v.currentTime) ? v.currentTime : 0,
+                paused: !!v.paused,
+                rect: { w: Math.round(rect.width), h: Math.round(rect.height), x: Math.round(rect.x), y: Math.round(rect.y) },
+                visible: rect.width > 120 && rect.height > 160 && rect.bottom > 0 && rect.top < window.innerHeight
+              };
+            });
+            const title = (document.title || '').replace(/ - 抖音$/, '').trim();
+            const href = location.href;
+            const captcha = /captcha|verify|nocaptcha|验证|验证码/i.test(document.body.innerText || '') || /captcha|verify|nocaptcha/i.test(href);
+            const buttons = Array.from(document.querySelectorAll('button, [role=button], svg')).filter(el => /播放|play/i.test(el.getAttribute('aria-label') || el.innerText || el.className || ''));
+            buttons.slice(0, 3).forEach(el => { try { el.click(); } catch {} });
+            return { videos, title, href, captcha };
+          })()
+        `,
+        returnByValue: true
+      });
+      const value = result.result && result.result.result ? result.result.result.value : {};
+      pageTitle = pageTitle || String(value.title || "");
+      if (value.captcha) throw new Error("检测到抖音验证码/风控验证，请先在专用 Edge 窗口完成验证。");
+      if (awemeId && value.href && !String(value.href).includes(awemeId)) {
+        throw new Error("抖音页面没有停留在目标作品，可能被跳转到推荐/广告页面。");
+      }
+      (Array.isArray(value.videos) ? value.videos : [])
+        .filter(item => item.visible && (Number(item.duration || 0) >= 3 || item.urls.length))
+        .sort((a, b) => (b.rect.w * b.rect.h) - (a.rect.w * a.rect.h))
+        .forEach(item => {
+          (Array.isArray(item.urls) ? item.urls : []).forEach(url => {
+            if (/^https?:\/\//i.test(url)) mediaItems.push({ url, duration: Number(item.duration || 0) });
+          });
+        });
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  } finally {
+    cdp.close();
+  }
+
+  if (/红包|领|福利|抽奖|广告/i.test(pageTitle)) {
+    throw new Error(`当前页面标题疑似不是目标作品：${pageTitle}`);
+  }
+  const seen = new Set();
+  const candidates = mediaItems
+    .filter(item => item.url && /^https?:\/\//i.test(item.url))
+    .filter(item => {
+      if (seen.has(item.url)) return false;
+      seen.add(item.url);
+      return true;
+    })
+    .sort((a, b) => {
+      const score = item => {
+        const url = item.url || "";
+        let value = 0;
+        if (awemeId && url.includes(awemeId)) value += 60;
+        if (/__vid=\d{10,}/i.test(url)) value += 40;
+        if (/aweme\/v1\/play|play_addr|mime_type=video|\.mp4(\?|$)|\.webm(\?|$)/i.test(url)) value += 20;
+        if (/\.m3u8(\?|$)/i.test(url)) value += 10;
+        if (/poster|cover|image|avatar|music|audio|douyin-pc-web\/uuu_/i.test(url)) value -= 30;
+        value += Math.min(10, Number(item.duration || 0));
+        return value;
+      };
+      return score(b) - score(a);
+    });
+  const headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
+    "Referer": videoUrl,
+    "Accept": "video/webm,video/mp4,video/*,*/*;q=0.8"
+  };
+  const cookie = douyinCookieHeader();
+  if (cookie) headers.Cookie = cookie;
+  let lastError = "";
+  for (const mediaItem of candidates.slice(0, 16)) {
+    const mediaUrl = mediaItem.url;
+    try {
+      if (/\.m3u8(\?|$)/i.test(mediaUrl)) {
+        const filename = `${douyinSafeFilename(pageTitle || awemeId)}_${awemeId}.mp4`;
+        const filePath = path.join(VIDEOS_DIR, filename);
+        await runYtDlp([
+          "--no-warnings",
+          "--merge-output-format", "mp4",
+          "--add-header", `Referer:${videoUrl}`,
+          "--add-header", `User-Agent:${headers["User-Agent"]}`,
+          "-o", filePath,
+          mediaUrl
+        ], 180000);
+        if (!fs.existsSync(filePath) || fs.statSync(filePath).size < MIN_LOCAL_VIDEO_BYTES) {
+          throw new Error("m3u8 下载结果过小，疑似非目标视频");
+        }
+        ensureDownloadedVideoHasAudio(filePath);
+        const stat = fs.statSync(filePath);
+        return {
+          filename,
+          size: stat.size,
+          mtime: stat.mtime.toISOString(),
+          url: `/api/local-video/${encodeURIComponent(filename)}`,
+          browserFallback: true
+        };
+      }
+      const response = await fetch(mediaUrl, { headers, redirect: "follow" });
+      if (!response.ok) throw new Error(`视频流返回 ${response.status}`);
+      const buffer = Buffer.from(await response.arrayBuffer());
+      const isTargetStream = awemeId && (mediaUrl.includes(awemeId) || /__vid=\d{10,}/i.test(mediaUrl));
+      const minBytes = isTargetStream ? 256 * 1024 : 1024 * 1024;
+      if (buffer.length < minBytes) throw new Error("视频流过小，疑似广告/红包短片，不入库");
+      const filename = `${douyinSafeFilename(pageTitle || awemeId)}_${awemeId}.mp4`;
+      const filePath = path.join(VIDEOS_DIR, filename);
+      fs.writeFileSync(filePath, buffer);
+      ensureDownloadedVideoHasAudio(filePath);
+      const stat = fs.statSync(filePath);
+      return {
+        filename,
+        size: stat.size,
+        mtime: stat.mtime.toISOString(),
+        url: `/api/local-video/${encodeURIComponent(filename)}`,
+        browserFallback: true
+      };
+    } catch (error) {
+      lastError = compactDouyinError(error);
+    }
+  }
+  throw new Error(lastError || "专用浏览器没有抓到可下载的视频流。请确认该视频能在 Edge 窗口正常播放。");
+}
+
 async function stableGetDouyinComments(shareUrl, options = {}) {
   const limit = Math.max(1, Math.min(200, Number(options.limit || 50)));
   const info = await stableDouyinInfo(shareUrl);
@@ -6584,6 +8031,7 @@ async function stableGetDouyinComments(shareUrl, options = {}) {
       const rows = (Array.isArray(replies.comments) ? replies.comments : [])
         .map(row => stableNormalizeDouyinComment(row, ownerNames))
         .filter(row => row.text);
+      if (rows.length) comment.replies = rows.slice(0, 8);
       const authorRows = rows.filter(row => row.isAuthor || ownerNames.some(name => row.user && row.user.includes(name)));
       authorRows.forEach(reply => {
         interactions.push({
@@ -6729,6 +8177,7 @@ function startDouyinCookieJob() {
 }
 
 let douyinSyncJob = readDouyinSyncState() || { status: "idle" };
+let douyinSyncCancelRequested = false;
 
 function normalizeDouyinEntryUrl(entry = {}) {
   const raw = entry.webpage_url || entry.original_url || entry.url || "";
@@ -6739,21 +8188,44 @@ function normalizeDouyinEntryUrl(entry = {}) {
 
 async function listDouyinProfileVideos(profileUrl, limit = 20) {
   const safeLimit = Math.max(1, Math.min(50, Number(limit) || 20));
-  const stdout = await runWithCookieFallback([
-    "--dump-single-json",
-    "--flat-playlist",
-    "--playlist-end", String(safeLimit),
-    "--no-warnings",
-    "--skip-download",
-    profileUrl
-  ], 90000);
-  const info = JSON.parse(stdout);
-  const entries = Array.isArray(info.entries) ? info.entries : [];
-  return entries.map(entry => ({
-    url: normalizeDouyinEntryUrl(entry),
-    title: entry.title || entry.fulltitle || "",
-    id: entry.id || entry.display_id || ""
-  })).filter(item => item.url);
+  const errors = [];
+  const browserFirst = /\/user\//i.test(profileUrl) || !/\/video\//i.test(profileUrl);
+  const viaBrowser = async () => {
+    updateDouyinSyncJob({ current: "正在用专用 Edge 读取博主主页作品列表...", note: "发现最新作品" });
+    const rows = await listDouyinProfileVideosViaBrowser(profileUrl, safeLimit);
+    return rows.map(row => ({ ...row, source: row.source || "browser-profile" }));
+  };
+  const viaYtDlp = async () => {
+    updateDouyinSyncJob({ current: "正在用下载器解析抖音来源...", note: "发现最新作品" });
+    const stdout = await runWithCookieFallback([
+      "--dump-single-json",
+      "--flat-playlist",
+      "--playlist-end", String(safeLimit),
+      "--no-warnings",
+      "--skip-download",
+      profileUrl
+    ], 30000);
+    const info = JSON.parse(stdout);
+    const entries = Array.isArray(info.entries) ? info.entries : [];
+    const rows = uniqueDouyinEntries(entries.map(entry => ({
+      url: normalizeDouyinEntryUrl(entry),
+      title: entry.title || entry.fulltitle || "",
+      id: entry.id || entry.display_id || "",
+      source: "yt-dlp"
+    })), safeLimit);
+    if (!rows.length) throw new Error("yt-dlp 没有返回主页作品列表。");
+    return rows;
+  };
+  const attempts = browserFirst ? [viaBrowser, viaYtDlp] : [viaYtDlp, viaBrowser];
+  for (const attempt of attempts) {
+    try {
+      const rows = await attempt();
+      if (rows.length) return rows;
+    } catch (error) {
+      errors.push(compactDouyinError(error));
+    }
+  }
+  throw new Error(errors.filter(Boolean).join(" / ") || "没有抓到抖音主页作品列表。");
 }
 
 function updateDouyinSyncJob(patch) {
@@ -6767,10 +8239,16 @@ async function runDouyinSyncJob(options = {}) {
   const limit = Math.max(1, Math.min(50, Number(options.limit || 20)));
   const download = options.download !== false;
   const comments = !!options.comments;
+  const fetchMetadata = options.metadata === true;
+  const presetItems = Array.isArray(options.items)
+    ? options.items.map(item => typeof item === "string" ? { url: item } : item).filter(item => item && isDouyinUrl(String(item.url || "")))
+    : [];
+  douyinSyncCancelRequested = false;
   updateDouyinSyncJob({
     status: "running",
     sourceUrl,
     limit,
+    mode: options.mode || "sync",
     download,
     comments,
     startedAt: new Date().toISOString(),
@@ -6780,55 +8258,95 @@ async function runDouyinSyncJob(options = {}) {
     saved: 0,
     failed: 0,
     commentsFailed: 0,
+    metadataSaved: 0,
+    commentsSaved: 0,
+    savedItems: [],
     current: "",
+    note: "",
     errors: []
   });
   try {
     let items = [];
-    if (isDouyinUrl(sourceUrl) && /\/video\//.test(sourceUrl)) {
+    if (presetItems.length) {
+      items = presetItems.slice(0, limit);
+      updateDouyinSyncJob({ current: `正在重试 ${items.length} 条失败视频...`, note: "重试失败项" });
+    } else if (isDouyinUrl(sourceUrl) && /\/video\//.test(sourceUrl)) {
       items = [{ url: sourceUrl }];
     } else {
+      updateDouyinSyncJob({ current: "正在发现博主最新作品...", note: "发现最新作品" });
       items = await listDouyinProfileVideos(sourceUrl, limit);
     }
-    updateDouyinSyncJob({ total: items.length });
+    items = items.filter(item => !isRejectedDouyinVideoId(item.id || item.url));
+    updateDouyinSyncJob({ total: items.length, current: items.length ? `已发现 ${items.length} 条，准备下载...` : "", note: "" });
     for (const item of items.slice(0, limit)) {
+      if (douyinSyncCancelRequested) {
+        updateDouyinSyncJob({ status: "idle", current: "", finishedAt: new Date().toISOString() });
+        return;
+      }
       updateDouyinSyncJob({ current: item.title || item.url });
       try {
         let itemWorked = false;
+        let downloaded = false;
         if (download) {
           try {
-            await saveDouyin(item.url);
+            const downloadResult = await saveDouyin(item.url);
+            downloaded = true;
             itemWorked = true;
+            updateDouyinSyncJob({
+              savedItems: [...(douyinSyncJob.savedItems || []), {
+                id: extractDouyinIdFromText(item.url) || item.id || "",
+                sourceId: extractDouyinIdFromText(item.url) || item.id || "",
+                title: item.title || downloadResult.filename || "",
+                url: item.url,
+                localUrl: downloadResult.url || "",
+                kind: downloadResult.alreadySaved ? "existing-video" : (downloadResult.browserFallback ? "browser-video" : "video")
+              }].slice(-200)
+            });
           } catch (downloadError) {
             const errors = [...(douyinSyncJob.errors || []), {
               url: item.url,
               step: "download",
               error: compactDouyinError(downloadError)
-            }].slice(-20);
+            }].slice(-200);
             updateDouyinSyncJob({ errors });
           }
         }
-        try {
-          await getDouyinMetadata(item.url);
-          itemWorked = true;
-        } catch (metadataError) {
-          const errors = [...(douyinSyncJob.errors || []), {
-            url: item.url,
-            step: "metadata",
-            error: compactDouyinError(metadataError)
-          }].slice(-20);
-          updateDouyinSyncJob({ errors });
+        if (fetchMetadata) {
+          try {
+            const metadata = await getDouyinMetadata(item.url);
+            updateDouyinSyncJob({
+              metadataSaved: Number(douyinSyncJob.metadataSaved || 0) + 1,
+              savedItems: [...(douyinSyncJob.savedItems || []), {
+                id: metadata.id,
+                sourceId: metadata.sourceId || metadata.awemeId || "",
+                title: metadata.title || item.title || "",
+                url: item.url,
+                kind: downloaded ? "metadata" : "metadata-only"
+              }].slice(-200)
+            });
+          } catch (metadataError) {
+            const errors = [...(douyinSyncJob.errors || []), {
+              url: item.url,
+              step: "metadata",
+              error: compactDouyinError(metadataError)
+            }].slice(-200);
+            updateDouyinSyncJob({ errors });
+          }
         }
         if (comments) {
           try {
-            await stableGetDouyinCommentsAndPersist(item.url, { limit: 50 });
+            const commentResult = await stableGetDouyinCommentsAndPersist(item.url, { limit: 50 });
             itemWorked = true;
+            updateDouyinSyncJob({
+              commentsSaved: Number(douyinSyncJob.commentsSaved || 0) + Number((commentResult.comments || []).length),
+              interactionsSaved: Number(douyinSyncJob.interactionsSaved || 0) + Number((commentResult.interactions || []).length)
+            });
           } catch (commentError) {
             const errors = [...(douyinSyncJob.errors || []), {
               url: item.url,
               step: "comments",
               error: compactDouyinError(commentError)
-            }].slice(-20);
+            }].slice(-200);
             updateDouyinSyncJob({
               commentsFailed: Number(douyinSyncJob.commentsFailed || 0) + 1,
               errors
@@ -6841,8 +8359,12 @@ async function runDouyinSyncJob(options = {}) {
           failed: (douyinSyncJob.failed || 0) + (itemWorked ? 0 : 1)
         });
       } catch (error) {
-        const errors = [...(douyinSyncJob.errors || []), { url: item.url, error: compactDouyinError(error) }].slice(-20);
+        const errors = [...(douyinSyncJob.errors || []), { url: item.url, error: compactDouyinError(error) }].slice(-200);
         updateDouyinSyncJob({ done: (douyinSyncJob.done || 0) + 1, failed: (douyinSyncJob.failed || 0) + 1, errors });
+      }
+      if (douyinSyncCancelRequested) {
+        updateDouyinSyncJob({ status: "idle", current: "", finishedAt: new Date().toISOString() });
+        return;
       }
       await new Promise(resolve => setTimeout(resolve, 2500));
     }
@@ -6852,16 +8374,75 @@ async function runDouyinSyncJob(options = {}) {
       status: "failed",
       current: "",
       finishedAt: new Date().toISOString(),
-      errors: [...(douyinSyncJob.errors || []), { url: sourceUrl, error: compactDouyinError(error) }].slice(-20)
+      errors: [...(douyinSyncJob.errors || []), { url: sourceUrl, error: compactDouyinError(error) }].slice(-200)
     });
   }
 }
 
 function startDouyinSyncJob(options = {}) {
+  repairStaleDouyinSyncJob();
   if (douyinSyncJob && douyinSyncJob.status === "running") return douyinSyncJob;
   const sourceUrl = String(options.url || "").trim();
   if (!sourceUrl || !isDouyinUrl(sourceUrl)) throw new Error("请填写抖音博主主页、合集或视频链接。");
   runDouyinSyncJob(options);
+  return douyinSyncJob;
+}
+
+function failedDouyinItemsFromJob(job = {}) {
+  const seen = new Set();
+  return (job.errors || [])
+    .map(row => String(row && row.url || "").trim())
+    .filter(url => isDouyinUrl(url) && /\/video\/\d{10,}/.test(url))
+    .filter(url => {
+      const id = extractDouyinIdFromText(url);
+      if (id && findExistingDouyinVideo(id)) return false;
+      const key = id || url;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .map(url => ({ url, title: "重试失败项" }));
+}
+
+function startDouyinRetryFailedJob() {
+  repairStaleDouyinSyncJob();
+  if (douyinSyncJob && douyinSyncJob.status === "running") return douyinSyncJob;
+  const previous = readDouyinSyncState() || douyinSyncJob || {};
+  const items = failedDouyinItemsFromJob(previous);
+  if (!items.length) {
+    updateDouyinSyncJob({
+      status: "done",
+      mode: "retry-failed",
+      total: 0,
+      done: 0,
+      saved: 0,
+      failed: 0,
+      current: "",
+      note: "没有可重试失败项，可能已经补齐。",
+      errors: []
+    });
+    return douyinSyncJob;
+  }
+  runDouyinSyncJob({
+    url: previous.sourceUrl || items[0].url,
+    limit: items.length,
+    download: true,
+    comments: false,
+    metadata: false,
+    items,
+    mode: "retry-failed"
+  });
+  return douyinSyncJob;
+}
+
+function stopDouyinSyncJob() {
+  douyinSyncCancelRequested = true;
+  updateDouyinSyncJob({
+    status: "idle",
+    current: "",
+    finishedAt: new Date().toISOString(),
+    note: "用户已停止同步。"
+  });
   return douyinSyncJob;
 }
 
@@ -7118,10 +8699,25 @@ const server = http.createServer((req, res) => {
     const url = new URL(req.url, "http://localhost");
     const names = (url.searchParams.get("names") || "").split(",");
     getEastmoneySectorQuotes(names)
-      .then(items => sendJson(res, 200, { success: true, items, source: "东方财富板块", cached: false }))
+      .then(items => sendJson(res, 200, { success: true, items, source: "东方财富板块", cached: false, asOf: new Date().toISOString(), quoteMode: "intraday" }))
       .catch(error => {
         getSinaSectorQuotes(names)
-          .then(items => sendJson(res, 200, { success: true, items, source: "新浪财经行业板块", cached: false, warning: error.message }))
+          .then(items => enrichSectorRowsWithEastmoneyKline(items, { limit: names.some(name => String(name || "").trim()) ? 80 : 80 }))
+          .then(result => {
+            const quoteCalibrated = (result.items || []).some(row => /实时Quote/.test(row.source || ""));
+            sendJson(res, 200, {
+            success: true,
+            items: result.items,
+            source: quoteCalibrated ? "东方财富板块实时Quote校准" : result.calibrated ? "东方财富板块历史K线校准" : "新浪财经行业板块",
+            asOf: new Date().toISOString(),
+            quoteMode: quoteCalibrated ? "intraday" : result.calibrated ? "close" : "fallback",
+            cached: false,
+            warning: result.calibrated
+              ? `${error.message}；实时列表失败，已用${quoteCalibrated ? "东方财富BK实时Quote" : "东方财富BK历史K线"}校准 ${result.calibrated} 个板块`
+              : error.message,
+            calibrated: result.calibrated
+            });
+          })
           .catch(fallbackError => {
             const cached = readMarketCache(SECTOR_QUOTE_CACHE_FILE);
             const wanted = names.map(name => String(name || "").trim()).filter(Boolean);
@@ -7129,9 +8725,46 @@ const server = http.createServer((req, res) => {
             const items = wanted.length
               ? wanted.map(name => rows.find(row => row.name === name || row.name.includes(name) || name.includes(row.name)) || { name, query: name, source: "缓存未匹配" })
               : rows.slice(0, 200);
-            sendJson(res, items.length ? 200 : 502, { success: Boolean(items.length), error: `${error.message}；${fallbackError.message}`, items, source: items.length ? "板块最近成功缓存" : "板块行情", cached: Boolean(items.length), asOf: cached?.at || null });
+            sendJson(res, items.length ? 200 : 502, { success: Boolean(items.length), error: `${error.message}；${fallbackError.message}`, items, source: items.length ? "板块最近成功缓存" : "板块行情", cached: Boolean(items.length), asOf: cached?.at || null, quoteMode: "cache" });
           });
       });
+    return;
+  }
+
+  if (req.url.startsWith("/api/sector-constituents")) {
+    const url = new URL(req.url, "http://localhost");
+    const code = url.searchParams.get("code") || "";
+    getEastmoneySectorConstituents(code)
+      .then(items => sendJson(res, 200, { success: true, code, items, source: "东方财富板块成分" }))
+      .catch(error => sendJson(res, 502, { success: false, code, error: error.message, items: [] }));
+    return;
+  }
+
+  if (req.url.startsWith("/api/sector-kline")) {
+    const url = new URL(req.url, "http://localhost");
+    const code = String(url.searchParams.get("code") || "").trim().toUpperCase();
+    const days = Math.max(20, Math.min(260, Number(url.searchParams.get("days") || 90)));
+    getEastmoneySectorKline(code, { days })
+      .then(rows => sendJson(res, rows.length ? 200 : 404, {
+        success: Boolean(rows.length),
+        code,
+        rows,
+        count: rows.length,
+        source: "东方财富板块历史K线"
+      }))
+      .catch(error => sendJson(res, 502, { success: false, code, error: error.message, rows: [] }));
+    return;
+  }
+
+  if (req.url.startsWith("/api/sector-history-snapshots")) {
+    const url = new URL(req.url, "http://localhost");
+    buildEastmoneySectorHistorySnapshots({
+      days: url.searchParams.get("days") || 90,
+      limit: url.searchParams.get("limit") || 200,
+      codes: url.searchParams.get("codes") || ""
+    })
+      .then(result => sendJson(res, 200, result))
+      .catch(error => sendJson(res, 502, { success: false, error: error.message, snapshots: [] }));
     return;
   }
 
@@ -7273,6 +8906,22 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.method === "POST" && req.url === "/api/qmt-data/bootstrap") {
+    prepareQmtDailyWarehouse()
+      .then(result => sendJson(res, 200, result))
+      .catch(error => sendJson(res, 502, { success: false, error: error.message }));
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/qmt-data/build-derived") {
+    try {
+      sendJson(res, 200, buildQmtDerivedWarehouses());
+    } catch (error) {
+      sendJson(res, 500, { success: false, error: error.message });
+    }
+    return;
+  }
+
   if (req.method === "GET" && req.url.startsWith("/api/qmt-data/daily")) {
     const url = new URL(req.url, "http://localhost");
     const key = url.searchParams.get("key") || url.searchParams.get("code") || "";
@@ -7311,21 +8960,23 @@ const server = http.createServer((req, res) => {
           universe = await getSinaAShareUniverse();
           source = "新浪 A 股全市场";
         } catch (fallbackError) {
-          const cached = readMarketCache(A_SHARE_UNIVERSE_CACHE_FILE, 30 * 86400000);
-          universe = cached.items || [];
-          source = cached.items?.length ? "本地 A 股缓存" : "";
+          const cached = readMarketCache(A_SHARE_UNIVERSE_CACHE_FILE);
+          universe = Array.isArray(cached?.items) ? cached.items : [];
+          source = universe.length ? "本地 A 股缓存" : "";
           warning = [warning, fallbackError.message || String(fallbackError)].filter(Boolean).join("；");
         }
       }
       if (!universe.length) throw new Error(warning || "无法获取 A 股全市场代码。");
       const result = writeQmtBridgeCodes(universe);
+      const status = readQmtBridgeStatus();
+      delete status.codes;
       sendJson(res, 200, {
         success: true,
         source,
         warning,
         universeCount: universe.length,
         synced: result.codes.length,
-        ...readQmtBridgeStatus()
+        ...status
       });
     })().catch(error => sendJson(res, 502, { success: false, error: error.message }));
     return;
@@ -7336,6 +8987,7 @@ const server = http.createServer((req, res) => {
       if (!fs.existsSync(QMT_BRIDGE_STRATEGY_FILE)) throw new Error("桥接策略源文件不存在。");
       fs.mkdirSync(path.dirname(QMT_BRIDGE_QMT_STRATEGY_FILE), { recursive: true });
       fs.copyFileSync(QMT_BRIDGE_STRATEGY_FILE, QMT_BRIDGE_QMT_STRATEGY_FILE);
+      fs.copyFileSync(QMT_BRIDGE_STRATEGY_FILE, QMT_BRIDGE_QMT_STRATEGY_CN_FILE);
       sendJson(res, 200, { success: true, ...readQmtBridgeStatus() });
     } catch (error) {
       sendJson(res, 500, { success: false, error: error.message });
@@ -7605,6 +9257,26 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.method === "POST" && req.url === "/api/repair-video-audio") {
+    readRequestBody(req, 2 * 1024 * 1024)
+      .then(async body => {
+        const payload = JSON.parse(body || "{}");
+        const originalUrl = String(payload.originalUrl || payload.url || "").trim();
+        const sourceId = String(payload.sourceId || extractDouyinIdFromText(originalUrl) || "").trim();
+        if (!originalUrl || !isDouyinUrl(originalUrl)) throw new Error("缺少可重新同步的抖音原链接。");
+        const result = await saveDouyin(originalUrl);
+        const rows = getLocalVideos();
+        const video = rows.find(row => sourceId && String(row.sourceId || "") === sourceId)
+          || rows.find(row => result.filename && row.filename === result.filename)
+          || null;
+        if (!video || video.hasAudio === false) throw new Error("重新同步后仍未获得带音频的视频，请稍后重试或手动放入带声音原视频。");
+        return { result, video };
+      })
+      .then(result => sendJson(res, 200, { success: true, ...result }))
+      .catch(error => sendJson(res, 500, { success: false, error: error.message }));
+    return;
+  }
+
   if (req.method === "POST" && req.url === "/api/ocr-video-title") {
     readRequestBody(req, 2 * 1024 * 1024)
       .then(body => {
@@ -7656,7 +9328,21 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.url.startsWith("/api/douyin-sync-status")) {
-    sendJson(res, 200, { success: true, job: douyinSyncJob || readDouyinSyncState() || { status: "idle" } });
+    sendJson(res, 200, { success: true, job: repairStaleDouyinSyncJob(douyinSyncJob || readDouyinSyncState() || { status: "idle" }) });
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/douyin-sync-stop") {
+    sendJson(res, 200, { success: true, job: stopDouyinSyncJob() });
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/douyin-sync-retry-failed") {
+    try {
+      sendJson(res, 200, { success: true, job: startDouyinRetryFailedJob() });
+    } catch (error) {
+      sendJson(res, 500, { success: false, error: compactDouyinError(error) });
+    }
     return;
   }
 
@@ -8075,8 +9761,12 @@ const server = http.createServer((req, res) => {
     const keywordConditions = [
       ["MACD金叉", "macdGoldenCross"], ["MACD死叉", "macdDeadCross"], ["MACD红柱", "macdPositive"], ["MACD绿柱", "macdNegative"],
       ["KDJ金叉", "kdjGoldenCross"], ["KDJ死叉", "kdjDeadCross"],
-      ["均线多头排列", "maBull"], ["多头排列", "maBull"], ["均线空头排列", "maBear"], ["空头排列", "maBear"],
-      ["站上5日线", "aboveMa5"], ["站上10日线", "aboveMa10"], ["站上20日线", "aboveMa20"], ["站上60日线", "aboveMa60"],
+      ["均线多头排列", "maBull"], ["均线多头", "maBull"], ["均线呈多头", "maBull"], ["多头排列", "maBull"], ["多头趋势", "maBull"],
+      ["均线空头排列", "maBear"], ["均线空头", "maBear"], ["均线呈空头", "maBear"], ["空头排列", "maBear"], ["空头趋势", "maBear"],
+      ["站上5日线", "aboveMa5"], ["站上5日均线", "aboveMa5"], ["收在5日线上", "aboveMa5"], ["价格收在5日线上", "aboveMa5"], ["收盘价在5日线上", "aboveMa5"], ["价格在5日线上", "aboveMa5"], ["站稳5日线", "aboveMa5"],
+      ["站上10日线", "aboveMa10"], ["站上10日均线", "aboveMa10"], ["收在10日线上", "aboveMa10"], ["价格收在10日线上", "aboveMa10"], ["收盘价在10日线上", "aboveMa10"], ["价格在10日线上", "aboveMa10"], ["站稳10日线", "aboveMa10"],
+      ["站上20日线", "aboveMa20"], ["站上20日均线", "aboveMa20"], ["收在20日线上", "aboveMa20"], ["价格收在20日线上", "aboveMa20"], ["收盘价在20日线上", "aboveMa20"], ["价格在20日线上", "aboveMa20"], ["站稳20日线", "aboveMa20"],
+      ["站上60日线", "aboveMa60"], ["站上60日均线", "aboveMa60"], ["收在60日线上", "aboveMa60"], ["价格收在60日线上", "aboveMa60"], ["收盘价在60日线上", "aboveMa60"], ["价格在60日线上", "aboveMa60"], ["站稳60日线", "aboveMa60"],
       ["跌破5日线", "belowMa5"], ["跌破10日线", "belowMa10"], ["跌破20日线", "belowMa20"], ["跌破60日线", "belowMa60"],
       ["突破BOLL上轨", "aboveBollUpper"], ["突破布林上轨", "aboveBollUpper"], ["BOLL上轨上方", "aboveBollUpper"], ["布林上轨上方", "aboveBollUpper"],
       ["站上BOLL中轨", "aboveBollMid"], ["站上布林中轨", "aboveBollMid"], ["BOLL中轨上方", "aboveBollMid"], ["布林中轨上方", "aboveBollMid"],
@@ -8091,6 +9781,28 @@ const server = http.createServer((req, res) => {
         consumed.push(keyword);
       }
     });
+
+    const maPositionPattern = /(?:价格|股价|现价|收盘价)?(?:收在|站上|站稳|突破|位于|在)(5|10|20|60)日(?:线|均线)?上/gi;
+    while ((match = maPositionPattern.exec(text))) {
+      xiaokeAddCondition(conditions, {
+        type: "signal",
+        field: `aboveMa${match[1]}`,
+        scope: "technical",
+        label: match[0]
+      });
+      consumed.push(match[0]);
+    }
+
+    const maBelowPattern = /(?:价格|股价|现价|收盘价)?(?:跌破|低于|收在|位于|在)(5|10|20|60)日(?:线|均线)?下/gi;
+    while ((match = maBelowPattern.exec(text))) {
+      xiaokeAddCondition(conditions, {
+        type: "signal",
+        field: `belowMa${match[1]}`,
+        scope: "technical",
+        label: match[0]
+      });
+      consumed.push(match[0]);
+    }
 
     const crossPattern = /(?:MA)?(5|10|20|60)日?(?:线|均线)?(上穿|下穿)(?:MA)?(5|10|20|60)日?(?:线|均线)?/gi;
     while ((match = crossPattern.exec(text))) {
@@ -8236,7 +9948,7 @@ const server = http.createServer((req, res) => {
     }
     if (/新浪|Sina/i.test(String(source || ""))) warnings.push("当前行情源回退到新浪，财务字段可能缺失，筛选会偏严格。");
     if (conditions.some(condition => condition.scope === "technical" || condition.type === "formula" || condition.type === "cross")) {
-      warnings.push("技术条件会先按基础条件缩小候选，再分批计算日线指标；如需更完整的全市场技术扫描，下一步建议建立本地日线仓库。");
+      warnings.push("技术条件会优先读取 QMT 本地日线仓库；仓库不足时回退公开历史日线并限制扫描范围，避免页面卡死。要全市场技术选股，请先在 QMT 里运行桥接策略写入 qmt_data/daily。");
     }
     if (conditions.some(condition => condition.field === "amount" && /竞价/.test(condition.label || ""))) {
       warnings.push("竞价金额与成交额不同；当前公开快照没有集合竞价金额，建议接入 QMT 分时后再做严格竞价选股。");
@@ -8257,8 +9969,17 @@ const server = http.createServer((req, res) => {
       universe = await getEastmoneyAShareUniverse(Boolean(options.force));
       source = universe[0]?.source || "东方财富A股快照";
     } catch (error) {
-      universe = await getSinaAShareUniverse();
-      source = universe[0]?.source || "新浪A股行情";
+      try {
+        universe = await getSinaAShareUniverse();
+        source = universe[0]?.source || "新浪A股行情";
+      } catch (fallbackError) {
+        const cached = readMarketCache(A_SHARE_UNIVERSE_CACHE_FILE);
+        universe = Array.isArray(cached?.items) ? cached.items : [];
+        source = universe.length ? "本地 A 股缓存" : "";
+        if (!universe.length) {
+          throw new Error(`无法获取A股列表：${error.message || error}；${fallbackError.message || fallbackError}`);
+        }
+      }
     }
 
     const baseConditions = executableConditions.filter(condition => condition.scope === "base");
@@ -8275,7 +9996,21 @@ const server = http.createServer((req, res) => {
       return Number(b.amount || 0) - Number(a.amount || 0);
     });
 
-    const scanLimit = Math.max(30, Math.min(800, Number(options.scanLimit || 240)));
+    const qmtWarehouse = typeof readQmtDataWarehouseStatus === "function" ? readQmtDataWarehouseStatus() : {};
+    const qmtDailyCount = Number(qmtWarehouse.dailyFileCount || 0);
+    const qmtWarehouseReady = qmtDailyCount >= 1000;
+    const rawScanLimit = String(options.scanLimit ?? "all").toLowerCase();
+    const requestedScanLimit = rawScanLimit === "all" || rawScanLimit === "0"
+      ? baseMatched.length
+      : Number(rawScanLimit || 6000);
+    const normalizedScanLimit = Number.isFinite(requestedScanLimit) && requestedScanLimit > 0
+      ? requestedScanLimit
+      : baseMatched.length;
+    const publicFallbackCap = 800;
+    const maxTechnicalScan = qmtWarehouseReady ? 6000 : publicFallbackCap;
+    const scanLimit = technicalConditions.length
+      ? Math.min(baseMatched.length, normalizedScanLimit, maxTechnicalScan)
+      : baseMatched.length;
     const technicalPool = technicalConditions.length ? baseMatched.slice(0, scanLimit) : baseMatched;
     const rows = new Array(technicalPool.length);
     let cursor = 0;
@@ -8292,7 +10027,7 @@ const server = http.createServer((req, res) => {
             };
             continue;
           }
-          const history = await getHistoricalKline(item.key, { days: 220, fqt: 1 });
+          const history = await getHistoricalKline(item.key, { days: 260, fqt: 1, preferQmt: true });
           const technical = calculateTechnicalIndicators(history.rows || [], item);
           const enriched = { ...item, technical, technicalSource: history.source || "前复权历史日线" };
           if (technicalConditions.every(condition => naturalConditionPass(enriched, condition))) {
@@ -8316,7 +10051,21 @@ const server = http.createServer((req, res) => {
         return Number(b.amount || 0) - Number(a.amount || 0);
       });
     }
-    matched = matched.slice(0, Math.max(10, Math.min(200, Number(options.limit || 80))));
+    const rawOutputLimit = String(options.limit ?? "all").toLowerCase();
+    const requestedOutputLimit = rawOutputLimit === "all" || rawOutputLimit === "0"
+      ? 6000
+      : Number(rawOutputLimit || 6000);
+    const outputLimit = Number.isFinite(requestedOutputLimit) && requestedOutputLimit > 0
+      ? Math.max(10, Math.min(6000, requestedOutputLimit))
+      : 6000;
+    matched = matched.slice(0, outputLimit);
+    const warnings = naturalScreenWarnings(parsed, source);
+    if (technicalConditions.length && qmtDailyCount > 0) {
+      warnings.push(`已优先使用 QMT 本地日线仓库（${qmtDailyCount} 只）；缺失个股回退公开历史日线。`);
+    }
+    if (technicalConditions.length && !qmtWarehouseReady && baseMatched.length > scanLimit) {
+      warnings.push(`QMT 日线仓库尚未覆盖全市场，当前按保护上限扫描 ${scanLimit} 只。请在 QMT 运行桥接策略，仓库达到约 1000 只后可放开到全市场/6000。`);
+    }
     return {
       success: true,
       query,
@@ -8327,11 +10076,14 @@ const server = http.createServer((req, res) => {
       technicalScannedCount: technicalPool.length,
       matchedCount: matched.length,
       source,
-      technicalSource: technicalConditions.length ? "东方财富/腾讯前复权历史日线" : "未使用历史日线",
-      warnings: naturalScreenWarnings(parsed, source),
+      technicalSource: technicalConditions.length
+        ? (qmtDailyCount > 0 ? `QMT本地日线优先（${qmtDailyCount}只），缺失回退东方财富/腾讯` : "公开历史日线（QMT本地日线仓库暂无数据）")
+        : "未使用历史日线",
+      qmtWarehouse,
+      warnings,
       asOf: new Date().toISOString(),
       note: technicalConditions.length && baseMatched.length > scanLimit
-        ? `为避免限流，技术指标先在基础命中的前 ${scanLimit} 只中计算。`
+        ? (qmtWarehouseReady ? `已按当前上限扫描 ${scanLimit} 只；QMT 仓库可继续扩容。` : `QMT 日线仓库未完全跑通，公开日线临时扫描前 ${scanLimit} 只，避免接口限流和页面卡死。`)
         : "已执行当前可用条件。"
     };
   };

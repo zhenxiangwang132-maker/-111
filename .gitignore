@@ -21,6 +21,8 @@ server.err.log
 ocr_titles.json
 qmt_bridge_codes.json
 qmt_bridge_quotes.json
+qmt_bridge_debug.json
+qmt_bridge_debug.log
 stock_profiles.json
 a_share_universe_cache.json
 sector_quote_cache.json
@@ -33,8 +35,10 @@ documents/
 transcripts/
 announcements/
 ocr_frames/
+qmt_data/
 restore_snapshots/
 douyin_edge_profile/
+video_covers/
 .tmp_ocr_frame*
 tmp_*
 verification-*.png
